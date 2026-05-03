@@ -1,0 +1,9 @@
+{
+  "name": "Lokal Bharath",
+  "description": "A comprehensive local delivery and services app for Bharat, featuring groceries, dairy, jobs, and home services.",
+  "requestFramePermissions": [
+    "geolocation",
+    "microphone"
+  ],
+  "majorCapabilities": []
+}

@@ -1,0 +1,135 @@
+{
+  "entities": {
+    "MarriageProfile": {
+      "title": "MarriageProfile",
+      "description": "A profile in the marriage bureau.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "surname": { "type": "string" },
+        "age": { "type": "string" },
+        "dob": { "type": "string" },
+        "height": { "type": "string" },
+        "skinTone": { "type": "string", "enum": ["Fair", "Complexion", "Wheatish", "Other"] },
+        "education": { "type": "string" },
+        "profession": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "siblings": { "type": "string" },
+        "siblingsStatus": { "type": "string" },
+        "fatherName": { "type": "string" },
+        "fatherProfession": { "type": "string" },
+        "motherName": { "type": "string" },
+        "motherProfession": { "type": "string" },
+        "gothram": { "type": "string" },
+        "star": { "type": "string" },
+        "raasi": { "type": "string" },
+        "nativePlace": { "type": "string" },
+        "about": { "type": "string" },
+        "image": { "type": "string" },
+        "gender": { "type": "string", "enum": ["Male", "Female"] },
+        "religion": { "type": "string" },
+        "caste": { "type": "string" },
+        "maritalStatus": { "type": "string", "enum": ["Unmarried", "Married", "Divorced", "Widow", "Widower", "3rd Marriage"] },
+        "isApproved": { "type": "boolean" },
+        "rejectionReason": { "type": "string" },
+        "canViewSensisitve": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "phone", "image", "gender", "isApproved"]
+    },
+    "DeliveryPartnerProfile": {
+      "title": "DeliveryPartnerProfile",
+      "description": "A profile for a delivery partner.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "vehicleType": { "type": "string" },
+        "vehicleNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["Online", "Offline", "On Trip", "Banned", "Approved", "Pending"] },
+        "isOnline": { "type": "boolean" },
+        "earnings": { "type": "number" },
+        "pendingPayout": { "type": "number" },
+        "rating": { "type": "number" },
+        "trips": { "type": "number" },
+        "cashInHand": { "type": "number" },
+        "photo": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "phone", "status", "userId"]
+    },
+    "VendorProfile": {
+      "title": "VendorProfile",
+      "description": "A profile for a vendor.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "phone": { "type": "string" },
+        "service": { "type": "string" },
+        "status": { "type": "string", "enum": ["Approved", "Pending", "Terminated"] },
+        "isOnline": { "type": "boolean" },
+        "revenue": { "type": "number" },
+        "pendingPayout": { "type": "number" },
+        "itemsCount": { "type": "number" },
+        "rating": { "type": "number" },
+        "photo": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "businessName", "phone", "status", "userId"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A customer order.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending", "Preparing", "Ready", "PickedUp", "Delivered", "Cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "paymentMethod": { "type": "string" },
+        "deliveryType": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "deliveryPartnerId": { "type": "string" }
+      },
+      "required": ["id", "userId", "totalAmount", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/marriageProfiles/{profileId}": {
+      "schema": "MarriageProfile",
+      "description": "Marriage bureau profiles."
+    },
+    "/deliveryPartners/{partnerId}": {
+      "schema": "DeliveryPartnerProfile",
+      "description": "Delivery partner profiles."
+    },
+    "/vendors/{vendorId}": {
+      "schema": "VendorProfile",
+      "description": "Vendor profiles."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "General orders."
+    },
+    "/pendingApprovals/{appId}": {
+      "schema": "object",
+      "description": "Requests for vendor or delivery partner status."
+    },
+    "/payouts/{payoutId}": {
+      "schema": "object",
+      "description": "Record of settled payouts."
+    }
+  }
+}

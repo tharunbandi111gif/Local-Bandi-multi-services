@@ -1,0 +1,176 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email_verified == true && (request.auth.token.email == "tharunbandi111@gmail.com" || request.auth.token.email == "localbharathkhammam@gmail.com"))
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // --- Collection Helpers ---
+    function incoming() {
+      return request.resource.data;
+    }
+    
+    function existing() {
+      return resource.data;
+    }
+
+    // --- MarriageProfile Validation ---
+    function isValidMarriageProfile(data) {
+      return data.keys().hasAll(['id', 'name', 'phone', 'image', 'gender', 'isApproved']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.phone is string && data.phone.size() <= 15 &&
+             data.image is string && data.image.size() <= 2000000 && // Allow up to 2MB base64
+             data.gender in ['Male', 'Female'] &&
+             data.isApproved is bool;
+    }
+
+    match /marriageProfiles/{profileId} {
+      allow read: if true; // Publicly readable for the bureau
+      allow create: if isSignedIn() && isValidId(profileId) && (
+        isAdmin() || (
+          isValidMarriageProfile(incoming()) &&
+          incoming().userId == request.auth.uid &&
+          incoming().isApproved == false
+        )
+      );
+      allow update: if isSignedIn() && isValidId(profileId) && (
+        isAdmin() || (
+          isOwner(existing().userId) && 
+          isValidMarriageProfile(incoming()) &&
+          incoming().userId == existing().userId &&
+          incoming().isApproved == existing().isApproved && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'surname', 'age', 'dob', 'height', 'skinTone', 'education', 'profession', 'address', 'phone', 'about', 'image', 'gender', 'religion', 'caste', 'maritalStatus', 'partnerPreferences', 'rejectionReason'])
+        )
+      );
+      allow delete: if isAdmin() || isOwner(existing().userId);
+    }
+
+    // --- DeliveryPartnerProfile Validation ---
+    function isValidDeliveryPartner(data) {
+      return data.keys().hasAll(['id', 'name', 'phone', 'status', 'userId']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.phone is string && data.phone.size() <= 15 &&
+             data.status in ['Online', 'Offline', 'On Trip', 'Banned', 'Approved', 'Pending'] &&
+             data.userId is string;
+    }
+
+    match /deliveryPartners/{partnerId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(partnerId) && (
+        isAdmin() || (
+          isValidDeliveryPartner(incoming()) &&
+          incoming().userId == request.auth.uid &&
+          incoming().status == 'Pending'
+        )
+      );
+      allow update: if isSignedIn() && isValidId(partnerId) && (
+        isAdmin() || (
+          isOwner(existing().userId) &&
+          isValidDeliveryPartner(incoming()) &&
+          incoming().userId == existing().userId &&
+          incoming().status == existing().status && // Users cannot approve themselves
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'vehicleType', 'vehicleNumber', 'isOnline', 'photo'])
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // --- VendorProfile Validation ---
+    function isValidVendor(data) {
+      return data.keys().hasAll(['id', 'businessName', 'phone', 'status', 'userId']) &&
+             data.id is string &&
+             data.businessName is string &&
+             data.phone is string &&
+             data.status in ['Approved', 'Pending', 'Terminated'] &&
+             data.userId is string;
+    }
+
+    match /vendors/{vendorId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidId(vendorId) && (
+        isAdmin() || (
+          isValidVendor(incoming()) &&
+          incoming().userId == request.auth.uid &&
+          incoming().status == 'Pending'
+        )
+      );
+      allow update: if isSignedIn() && isValidId(vendorId) && (
+        isAdmin() || (
+          isOwner(existing().userId) &&
+          isValidVendor(incoming()) &&
+          incoming().userId == existing().userId &&
+          incoming().status == existing().status &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['businessName', 'ownerName', 'phone', 'service', 'isOnline', 'photo'])
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // --- Orders ---
+    match /orders/{orderId} {
+      allow read: if isSignedIn() && (
+        isOwner(resource.data.userId) || 
+        isOwner(resource.data.vendorId) || 
+        isOwner(resource.data.deliveryPartnerId) || 
+        isAdmin()
+      );
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (
+        isAdmin() || 
+        isOwner(existing().userId) || 
+        isOwner(existing().vendorId) || 
+        isOwner(existing().deliveryPartnerId)
+      );
+      allow delete: if isAdmin();
+    }
+
+    // --- Pending Approvals ---
+    match /pendingApprovals/{appId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // --- Payouts ---
+    match /payouts/{payoutId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // --- Admins collection (Internal) ---
+    match /admins/{userId} {
+      allow read: if isSignedIn() && request.auth.uid == userId;
+      allow write: if false; // Only manageable via console
+    }
+  }
+}
