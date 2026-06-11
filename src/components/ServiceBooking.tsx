@@ -8,9 +8,10 @@ interface ServiceBookingProps {
   service: Service;
   onBack: () => void;
   onBook: () => void;
+  isAdmin?: boolean;
 }
 
-export default function ServiceBooking({ service, onBack, onBook }: ServiceBookingProps) {
+export default function ServiceBooking({ service, onBack, onBook, isAdmin = false }: ServiceBookingProps) {
   const [selectedDate, setSelectedDate] = useState(0);
   const [selectedTime, setSelectedTime] = useState(-1);
   const [localReviews, setLocalReviews] = useState<Review[]>(service.reviews || [
@@ -28,6 +29,14 @@ export default function ServiceBooking({ service, onBack, onBook }: ServiceBooki
       date: 'Just now'
     };
     setLocalReviews([newReview, ...localReviews]);
+  };
+
+  const handleDeleteReview = (id: string) => {
+    setLocalReviews(prev => prev.filter(r => r.id !== id));
+  };
+
+  const handleEditReview = (id: string, updatedComment: string, updatedRating: number) => {
+    setLocalReviews(prev => prev.map(r => r.id === id ? { ...r, comment: updatedComment, rating: updatedRating } : r));
   };
 
   const generateDates = () => {
@@ -224,7 +233,13 @@ export default function ServiceBooking({ service, onBack, onBook }: ServiceBooki
           <MapPin className="absolute -right-4 -bottom-4 w-24 h-24 text-gray-100 rotate-12" />
         </section>
 
-        <ReviewsSection reviews={localReviews} onAddReview={handleAddReview} />
+        <ReviewsSection 
+          reviews={localReviews} 
+          onAddReview={handleAddReview} 
+          isAdmin={isAdmin}
+          onDeleteReview={handleDeleteReview}
+          onEditReview={handleEditReview}
+        />
       </div>
 
       <div className="p-6 bg-white border-t border-gray-100 fixed bottom-0 inset-x-0 z-20">

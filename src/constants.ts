@@ -15,7 +15,10 @@ import {
   Flame,
   HardHat,
   UserCheck,
-  Shirt,
+  Store,
+  Check,
+  Building2,
+  Home as HomeIcon,
   Search,
   Users,
   Sparkles,
@@ -40,12 +43,32 @@ export const CATEGORIES: Category[] = [
   { id: 'care', name: 'Care & Child Takers', icon: 'Heart', color: 'bg-rose-50' },
   { id: 'marriage', name: 'Marriage Bureau', icon: 'HeartHandshake', color: 'bg-indigo-50' },
   { id: 'bakery', name: 'Bakery & Ice Cream', icon: 'Cake', color: 'bg-pink-50' },
+  { id: 'pharmacy', name: 'Pharmacy & Health', icon: 'ShieldCheck', color: 'bg-rose-100' },
+  { id: 'hospital_op', name: 'Hospital OP', icon: 'Stethoscope', color: 'bg-emerald-100' },
+  { id: 'household', name: 'Household Essentials', icon: 'ShoppingBag', color: 'bg-slate-100' },
+  { id: 'electronics', name: 'Electronics & Mobiles', icon: 'Smartphone', color: 'bg-indigo-100' },
+  { id: 'services', name: 'Home Services', icon: 'Sparkles', color: 'bg-purple-50' },
+  { id: 'emergency', name: 'Emergency Help', icon: 'AlertCircle', color: 'bg-rose-500 text-white' },
+  { id: 'events', name: 'Events & Decor', icon: 'Flower', color: 'bg-fuchsia-100' },
   { id: 'religious', name: 'Pandith @ Priest', icon: 'Flower', color: 'bg-stone-100' },
   { id: 'temple', name: 'Hindu Temples', icon: 'Landmark', color: 'bg-orange-50' },
   { id: 'catering', name: 'Event Catering', icon: 'UtensilsCrossed', color: 'bg-yellow-50' },
   { id: 'jobs', name: 'Job Portal', icon: 'Briefcase', color: 'bg-blue-50' },
   { id: 'handicrafts', name: 'Natural Crafts', icon: 'Sparkles', color: 'bg-amber-50' },
   { id: 'travel', name: 'Travel & Trips', icon: 'Car', color: 'bg-gray-100' },
+  { id: 'realestate', name: 'Real Estate', icon: 'Building2', color: 'bg-indigo-100' },
+  { id: 'driving_school', name: 'Driving School', icon: 'Car', color: 'bg-blue-50' },
+  { id: 'beauty_parlour', name: 'Beauty Parlour', icon: 'Scissors', color: 'bg-pink-100' },
+];
+
+export const REWARDS = [
+  { id: 'icecream_cup', name: 'Ice Cream Cup', originalPrice: 15, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=100&h=100&fit=crop' },
+  { id: 'fivestar', name: '5-Star Chocolate', originalPrice: 10, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1549007994-cb92caebd54b?w=100&h=100&fit=crop' },
+  { id: 'munch', name: 'Munch Large', originalPrice: 15, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1621939514649-280e2ee25f60?w=100&h=100&fit=crop' },
+  { id: 'sugar_500g', name: 'Sugar 1/2 KG', originalPrice: 28, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1581441363689-1f3c3c414635?w=100&h=100&fit=crop' },
+  { id: 'oil_250ml', name: 'Cooking Oil 250ml', originalPrice: 40, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1474979266404-7eaacbad88c5?w=100&h=100&fit=crop' },
+  { id: 'pooja_samagri', name: 'Pooja Samagri Kit', originalPrice: 35, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1582236371565-491d40a59719?w=100&h=100&fit=crop' },
+  { id: 'sprite_500ml', name: 'Cool Drink 500ml', originalPrice: 40, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=100&h=100&fit=crop' }
 ];
 
 export const LANGUAGES: Language[] = [
@@ -634,6 +657,48 @@ export const SERVICES: Service[] = [
     rating: 4.8,
     bookings: 450
   },
+  // DRIVING SCHOOL
+  {
+    id: 's_ds1',
+    name: 'L-Board Driving School',
+    price: 3500,
+    category: 'driving_school',
+    image: 'https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?w=400&h=400&fit=crop',
+    description: 'Complete car driving course with license assistance. 15 days.',
+    rating: 4.9,
+    bookings: 210
+  },
+  {
+    id: 's_ds2',
+    name: '2-Wheeler Training',
+    price: 1500,
+    category: 'driving_school',
+    image: 'https://images.unsplash.com/photo-1558981403-c5f91eb12388?w=400&h=400&fit=crop',
+    description: 'Learn to ride a scooter or bike confidently. 7 days.',
+    rating: 4.7,
+    bookings: 150
+  },
+  // BEAUTY PARLOUR
+  {
+    id: 's_bp1',
+    name: 'Bridal Makeup Package',
+    price: 5000,
+    category: 'beauty_parlour',
+    image: 'https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?w=400&h=400&fit=crop',
+    description: 'Full bridal makeup, hair styling and saree draping.',
+    rating: 5.0,
+    bookings: 85
+  },
+  {
+    id: 's_bp2',
+    name: 'Facial & Skin Care',
+    price: 800,
+    category: 'beauty_parlour',
+    image: 'https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?w=400&h=400&fit=crop',
+    description: 'Gold facial and deep skin cleansing for glowing look.',
+    rating: 4.8,
+    bookings: 340
+  },
 
   // FANCY & TOYS
   {
@@ -720,6 +785,7 @@ export const SERVICES: Service[] = [
 export const MARRIAGE_PROFILES: MarriageProfile[] = [
   {
     id: 'mp1',
+    userId: 'sample1',
     name: 'Rahul',
     surname: 'Verma',
     dob: '1995-06-15',
@@ -728,7 +794,7 @@ export const MARRIAGE_PROFILES: MarriageProfile[] = [
     education: 'B.Tech Computer Science',
     profession: 'Software Engineer',
     address: 'H.No 12-4, Gachibowli, Hyderabad',
-    phone: '9876543210',
+    phone: '7416574197',
     siblings: '1 Younger Brother',
     siblingsStatus: 'Unmarried',
     fatherProfession: 'Retired Teacher',
@@ -744,6 +810,7 @@ export const MARRIAGE_PROFILES: MarriageProfile[] = [
   },
   {
     id: 'mp2',
+    userId: 'sample2',
     name: 'Priyanka',
     surname: 'Reddy',
     dob: '1997-02-20',

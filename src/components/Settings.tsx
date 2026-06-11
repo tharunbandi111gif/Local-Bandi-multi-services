@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Globe, Moon, Bell, HelpCircle, MessageSquare, Info, ChevronRight, Languages, Shield, LogOut, Send, X, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Globe, Moon, Bell, HelpCircle, MessageSquare, Info, ChevronRight, Languages, Shield, LogOut, Send, X, ShieldCheck, Sun } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { LanguageCode } from '../types';
@@ -16,6 +16,8 @@ interface SettingsProps {
   onNavigate: (screen: any) => void;
 }
 
+import { useTheme } from '../contexts/ThemeContext';
+
 export default function Settings({ 
   onBack, 
   onLogout, 
@@ -25,6 +27,7 @@ export default function Settings({
   onToggleNotifications,
   onNavigate
 }: SettingsProps) {
+  const { theme, toggleTheme } = useTheme();
   const t = translations[selectedLanguage].settings;
   const common = translations[selectedLanguage].common;
   const [showFeedback, setShowFeedback] = useState(false);
@@ -35,25 +38,11 @@ export default function Settings({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [showFAQ, setShowFAQ] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
-
-  const toggleDarkMode = () => {
-    setIsDarkMode(!isDarkMode);
-    document.documentElement.classList.toggle('dark');
-  };
 
   const sections = [
     {
       title: t.preferences,
       items: [
-        { 
-          icon: Moon, 
-          label: t.darkMode, 
-          sub: 'Enhance your night experience',
-          type: 'toggle', 
-          value: isDarkMode,
-          action: toggleDarkMode 
-        },
         { 
           icon: Languages, 
           label: t.appLanguage, 
@@ -84,7 +73,7 @@ export default function Settings({
       items: [
         { icon: MessageSquare, label: 'Send Feedback', sub: 'We value your input', type: 'link', action: () => setShowFeedback(true) },
         { icon: HelpCircle, label: 'Payment Issues & FAQ', sub: 'Instant support guides', type: 'link', action: () => setShowFAQ(true) },
-        { icon: Info, label: 'About Lokal Bharath', sub: 'Our mission & story', type: 'link', action: () => setShowAbout(true) },
+        { icon: Info, label: 'About Local Bandi Multi Services', sub: 'Our mission & story', type: 'link', action: () => setShowAbout(true) },
       ]
     },
     {
@@ -105,7 +94,7 @@ export default function Settings({
       a: "We accept UPI (Google Pay, PhonePe, Paytm), Debit/Credit cards, and Net Banking. Cash on Delivery is available for selected services."
     },
     {
-      q: "Is it safe to pay on Lokal Bharath?",
+      q: "Is it safe to pay on Local Bandi Multi Services?",
       a: "Yes, we use 256-bit encryption and partner with top Indian payment gateways to ensure your data is 100% secure."
     }
   ];
@@ -129,17 +118,17 @@ export default function Settings({
   };
 
   return (
-    <div className="h-full w-full bg-white flex flex-col relative text-gray-900 font-sans">
-      <header className="px-6 pt-12 pb-4 flex items-center gap-4 bg-white/90 backdrop-blur-xl border-b border-gray-50 sticky top-0 z-50">
+    <div className="h-full w-full bg-white dark:bg-slate-900 flex flex-col relative text-gray-900 dark:text-white font-sans transition-colors">
+      <header className="px-6 pt-12 pb-4 flex items-center gap-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-gray-50 dark:border-slate-800 sticky top-0 z-50 transition-colors">
         <motion.button 
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.9 }}
           onClick={onBack} 
-          className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
+          className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
         >
-          <ArrowLeft className="w-6 h-6 text-gray-900" />
+          <ArrowLeft className="w-6 h-6 text-gray-900 dark:text-white" />
         </motion.button>
-        <h2 className="text-xl font-black text-gray-900 font-display italic tracking-tight">{t.title}</h2>
+        <h2 className="text-xl font-black text-gray-900 dark:text-white font-display italic tracking-tight">{t.title}</h2>
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-8 pb-10 space-y-10">
@@ -150,28 +139,28 @@ export default function Settings({
             transition={{ delay: idx * 0.1 }}
             key={idx}
           >
-            <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-gray-400 mb-5 px-3">{section.title}</h3>
-            <div className="bg-gray-50/50 rounded-[2.5rem] overflow-hidden border border-gray-100 shadow-sm">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-gray-400 dark:text-gray-500 mb-5 px-3">{section.title}</h3>
+            <div className="bg-gray-50/50 dark:bg-slate-800/50 rounded-[2.5rem] overflow-hidden border border-gray-100 dark:border-slate-800 shadow-sm transition-colors">
               {section.items.map((item, i) => (
                 <motion.button 
                   key={i} 
-                  whileHover={{ backgroundColor: 'rgba(249, 250, 251, 1)' }}
+                  whileHover={{ backgroundColor: theme === 'dark' ? 'rgba(30, 41, 59, 1)' : 'rgba(249, 250, 251, 1)' }}
                   onClick={item.action}
-                  className={`w-full flex items-center gap-5 p-5 text-left transition-all ${i !== section.items.length - 1 ? 'border-b border-white' : ''} group`}
+                  className={`w-full flex items-center gap-5 p-5 text-left transition-all ${i !== section.items.length - 1 ? 'border-b border-white dark:border-slate-800' : ''} group`}
                 >
-                  <div className={`p-4 rounded-2xl shadow-sm transition-all group-hover:scale-105 ${item.danger ? 'bg-rose-50 text-rose-500 group-hover:bg-rose-100' : 'bg-white text-gray-700 group-hover:shadow-md'}`}>
+                  <div className={`p-4 rounded-2xl shadow-sm transition-all group-hover:scale-105 ${item.danger ? 'bg-rose-50 dark:bg-rose-500/10 text-rose-500 group-hover:bg-rose-100 dark:group-hover:bg-rose-500/20' : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 group-hover:shadow-md'}`}>
                     <item.icon className="w-5 h-5" />
                   </div>
                   <div className="flex-1 overflow-hidden">
-                    <p className={`font-black text-sm tracking-tight ${item.danger ? 'text-rose-500' : 'text-gray-900'}`}>{item.label}</p>
-                    {item.sub && <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight mt-1">{item.sub}</p>}
+                    <p className={`font-black text-sm tracking-tight ${item.danger ? 'text-rose-500' : 'text-gray-900 dark:text-white'}`}>{item.label}</p>
+                    {item.sub && <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-tight mt-1">{item.sub}</p>}
                   </div>
                   {item.type === 'toggle' ? (
-                    <div className={`w-12 h-6 rounded-full p-1 transition-all flex-shrink-0 relative ${item.value ? 'bg-yellow-400' : 'bg-gray-200'}`}>
+                    <div className={`w-12 h-6 rounded-full p-1 transition-all flex-shrink-0 relative ${item.value ? 'bg-yellow-400' : 'bg-gray-200 dark:bg-slate-700'}`}>
                       <div className={`w-4 h-4 bg-white rounded-full shadow-lg transition-all absolute top-1 ${item.value ? 'left-7' : 'left-1'}`}></div>
                     </div>
                   ) : (
-                    <ChevronRight className={`w-4 h-4 flex-shrink-0 group-hover:translate-x-1 transition-all ${item.danger ? 'text-rose-300' : 'text-gray-300'}`} />
+                    <ChevronRight className={`w-4 h-4 flex-shrink-0 group-hover:translate-x-1 transition-all ${item.danger ? 'text-rose-300' : 'text-gray-300 dark:text-gray-600'}`} />
                   )}
                 </motion.button>
               ))}
@@ -184,7 +173,7 @@ export default function Settings({
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={onLogout}
-            className="w-full flex items-center justify-center gap-4 p-6 bg-rose-50 rounded-[2.5rem] text-rose-600 font-black uppercase tracking-widest text-[10px] active:bg-rose-100 transition-all border border-rose-100 shadow-xl shadow-rose-100"
+            className="w-full flex items-center justify-center gap-4 p-6 bg-rose-50 dark:bg-rose-500/10 rounded-[2.5rem] text-rose-600 dark:text-rose-400 font-black uppercase tracking-widest text-[10px] active:bg-rose-100 dark:active:bg-rose-500/20 transition-all border border-rose-100 dark:border-rose-500/20 shadow-xl shadow-rose-100 dark:shadow-none"
           >
             <LogOut className="w-5 h-5" />
             Sign Out Securely
@@ -192,7 +181,7 @@ export default function Settings({
         </div>
 
         <div className="text-center py-10 opacity-40">
-          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-loose">App Version 2.4.1 (Stable)<br/>© 2026 Lokal Bharath Tech</p>
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-loose">App Version 2.4.1 (Stable)<br/>© 2026 Local Bandi Multi Services Tech</p>
         </div>
       </div>
 

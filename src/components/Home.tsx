@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { AdminInput } from './common/AdminInput';
 import { compressImage } from '../lib/imageUtils';
 import { 
   MapPin, 
   ChevronDown, 
+  ChevronLeft,
+  ChevronRight,
   Bell, 
   Search, 
   Home as HomeIcon, 
@@ -14,7 +17,9 @@ import {
   Zap,
   TrendingUp,
   ShieldCheck,
-  ChevronRight,
+  ShieldAlert,
+  LayoutDashboard,
+  Building2,
   Milk, 
   Droplet, 
   Apple, 
@@ -31,6 +36,7 @@ import {
   Mic,
   MicOff,
   X,
+  Loader2,
   Flower,
   Check,
   LogOut,
@@ -38,8 +44,10 @@ import {
   Edit3,
   Trash2,
   Plus,
+  Store,
   Shirt,
   UserCheck,
+  Eye,
   HardHat,
   MessageSquare,
   Bike,
@@ -54,15 +62,17 @@ import {
   UtensilsCrossed,
   HeartHandshake,
   Settings,
+  MessageCircle,
+  Landmark,
+  ListTodo,
   RefreshCcw,
+  RefreshCw,
   Clock,
   Package,
   Lock,
   Navigation,
   Compass,
-  Landmark,
   Truck,
-  LayoutDashboard,
   BarChart3,
   PackageSearch,
   ArrowUpRight,
@@ -72,16 +82,41 @@ import {
   Send,
   BellOff,
   HelpCircle,
-  Target
+  Target,
+  Share2,
+  CreditCard,
+  Phone,
+  FileText,
+  Stethoscope,
+  Building,
+  Tag,
+  ArrowRight,
+  HandCoins,
+  Save,
+  Settings2,
+  CheckCircle2,
+  Settings as SettingsIcon,
+  FileCheck,
+  Upload,
+  Headphones,
+  SlidersHorizontal,
+  Filter,
+  Pencil
 } from 'lucide-react';
 import LiveMap from './LiveMap';
+import PartnerOnboarding from './PartnerOnboarding';
+import JoiningLetter from './JoiningLetter';
+import { downloadCSV } from '../lib/exportUtils';
 import { motion, AnimatePresence } from 'motion/react';
-import { Category, Product, Screen, Service, LanguageCode, VendorProfile, DeliveryPartnerProfile, SupportChat, SupportMessage, MarriageProfile } from '../types';
+import { Category, Product, Screen, Service, LanguageCode, VendorProfile, DeliveryPartnerProfile, SupportChat, SupportMessage, MarriageProfile, PlatformSettings, PartnerApplicationType } from '../types';
 import { CATEGORIES, PRODUCTS, SERVICES } from '../constants';
 import { translations } from '../translations';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { HospitalOPForm } from './HospitalOPForm';
+import { useFirebase } from '../contexts/FirebaseContext';
+import { db, auth, handleFirestoreError, OperationType, setupRecaptcha } from '../lib/firebase';
 import { User as AuthUser } from 'firebase/auth';
-import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import type { ConfirmationResult } from '../lib/firebase';
+import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, setDoc, orderBy, limit } from 'firebase/firestore';
 
 interface HomeProps {
   location: string;
@@ -90,12 +125,22 @@ interface HomeProps {
   onProductClick: (prod: Product | Service) => void;
   cartCount: number;
   wishlistCount: number;
-  onNavigate: (screen: Screen) => void;
+  onNavigate: (screen: Screen, id?: string) => void;
   user: AuthUser | null;
+  userProfile?: any;
   isAdmin?: boolean;
+  isSuperAdmin?: boolean;
+  isBranchAdmin?: boolean;
   onAdminAuth?: (isAdmin: boolean) => void;
   localInventory: (Product | Service)[];
   setLocalInventory: React.Dispatch<React.SetStateAction<(Product | Service)[]>>;
+  hospitalPrices: Record<string, { price: number; isActive: boolean }>;
+  setHospitalPrices?: React.Dispatch<React.SetStateAction<Record<string, { price: number; isActive: boolean }>>>;
+  setShowCustomerCare?: (show: boolean) => void;
+  currentBranchId?: string;
+  onLocationChange?: (loc: string) => void;
+  currentBranch?: any;
+  branches?: any[];
 }
 
 const IconMap: Record<string, any> = {
@@ -110,6 +155,9 @@ const IconMap: Record<string, any> = {
   Wrench,
   Car,
   Heart,
+  Smartphone,
+  ShieldCheck,
+  AlertCircle,
   Scissors,
   Flower,
   Shirt,
@@ -121,7 +169,10 @@ const IconMap: Record<string, any> = {
   Church,
   UtensilsCrossed,
   HeartHandshake,
-  Landmark
+  Landmark,
+  Building2,
+  Stethoscope,
+  Headphones
 };
 
 const DocUploadButton = ({ label, isUploaded, onClick }: { label: string, isUploaded: boolean, onClick: () => void }) => {
@@ -156,6 +207,11 @@ const DocUploadButton = ({ label, isUploaded, onClick }: { label: string, isUplo
   );
 };
 
+const Skeleton = ({ className, ...props }: { className: string; [key: string]: any }) => (
+  <div className={`animate-pulse bg-gray-100 rounded-2xl ${className}`} {...props}></div>
+);
+
+
 export default function Home({ 
   location, 
   language, 
@@ -165,20 +221,174 @@ export default function Home({
   wishlistCount, 
   onNavigate, 
   user,
-  isAdmin = false, 
+  userProfile,
+  isAdmin = false,
+  isSuperAdmin = false,
+  isBranchAdmin = false,
   onAdminAuth,
   localInventory,
-  setLocalInventory 
+  setLocalInventory,
+  hospitalPrices,
+  setHospitalPrices,
+  setShowCustomerCare,
+  currentBranchId = 'khammam_main',
+  currentBranch,
+  branches = []
 }: HomeProps) {
+  const { phoneLogin, logout } = useFirebase();
   const [activeBanner, setActiveBanner] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(7200); // 2 hours
-  const [loading, setLoading] = useState(true);
+  const [showHospitalOP, setShowHospitalOP] = useState(false);
+  const [propertyChats, setPropertyChats] = useState<any[]>([]);
+  const [allReviews, setAllReviews] = useState<any[]>([]);
+  const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
+  const [editingComment, setEditingComment] = useState('');
+  const [editingRating, setEditingRating] = useState(5);
+
+  const integratedCategoryClick = (cat: Category) => {
+    if (cat.id === 'hospital_op') {
+      setShowHospitalOP(true);
+    } else {
+      onCategoryClick(cat);
+    }
+  };
+  const [loading, setLoading] = useState(false);
+  const [showLocationSelector, setShowLocationSelector] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(3600); // 1 hour for deals
+
+  const loadFromStorage = (key: string, defaultValue: any) => {
+    const saved = localStorage.getItem(key);
+    if (!saved) return defaultValue;
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return defaultValue;
+    }
+  };
+
+  const handleSaveHospitalPrices = async (prices: Record<string, { price: number; isActive: boolean }>) => {
+    try {
+      await setDoc(doc(db, 'settings', 'hospital_prices'), prices);
+      setHospitalPrices?.(prices);
+      setAdminSaveStatus("Hospital Config Updated!");
+      alert('Hospital Management: Configuration Saved successfully! ✅');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'settings/hospital_prices');
+    }
+  };
 
   useEffect(() => {
-    // Simulate initial loading for a more app-like feel
-    const loadTimer = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(loadTimer);
+    // Listen to global settings from Firestore
+    const unsubSupport = onSnapshot(doc(db, 'settings', 'support'), (snap) => {
+      if (snap.exists()) {
+        setSupportInfo(snap.data() as any);
+      }
+    });
+
+    return () => {
+      unsubSupport();
+    };
   }, []);
+
+  const [promoCodes, setPromoCodes] = useState<any[]>(loadFromStorage('promoCodes', [
+    { id: 'LOKAL10', type: 'percent', value: 10, label: '10% LOCAL DISCOUNT', minSubtotal: 0, isActive: true },
+    { id: 'WELCOME50', type: 'flat', value: 50, label: '₹50 WELCOME OFFER', minSubtotal: 300, isActive: true },
+    { id: 'FREESHIP', type: 'shipping', value: 0, label: 'FREE DELIVERY CODE', minSubtotal: 200, isActive: true }
+  ]));
+  const [editingPromo, setEditingPromo] = useState<any>(null);
+  const [isEditingPromoMode, setIsEditingPromoMode] = useState(false);
+  const [showPromoModal, setShowPromoModal] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+
+  useEffect(() => {
+    // Listen to promo codes from settings
+    const unsubPromos = onSnapshot(doc(db, 'settings', 'promo_codes'), (snap) => {
+      if (snap.exists()) {
+        setPromoCodes(snap.data().list || []);
+      }
+    });
+
+    return () => {
+      unsubPromos();
+    };
+  }, []);
+
+  const handleSavePromo = async () => {
+    if (!editingPromo || !editingPromo.id) {
+      alert("Promo code is required!");
+      return;
+    }
+
+    const codeId = editingPromo.id.toUpperCase().trim();
+    if (!codeId) {
+      alert("Promo code is required!");
+      return;
+    }
+
+    const newList = [...promoCodes];
+    if (isEditingPromoMode) {
+      const index = newList.findIndex(p => p.id === codeId);
+      if (index >= 0) {
+        newList[index] = {
+          ...editingPromo,
+          id: codeId,
+          value: Number(editingPromo.value) || 0,
+          minSubtotal: Number(editingPromo.minSubtotal) || 0
+        };
+      } else {
+        newList.push({
+          ...editingPromo,
+          id: codeId,
+          value: Number(editingPromo.value) || 0,
+          minSubtotal: Number(editingPromo.minSubtotal) || 0
+        });
+      }
+    } else {
+      // New promo code
+      const exists = newList.some(p => p.id.toUpperCase() === codeId);
+      if (exists) {
+        alert(`Promo code ${codeId} already exists! Please use a different code.`);
+        return;
+      }
+      newList.push({
+        ...editingPromo,
+        id: codeId,
+        value: Number(editingPromo.value) || 0,
+        minSubtotal: Number(editingPromo.minSubtotal) || 0
+      });
+    }
+
+    try {
+      await setDoc(doc(db, 'settings', 'promo_codes'), { list: newList });
+      setAdminSaveStatus("Promo Code Saved!");
+      setShowPromoModal(false);
+      setEditingPromo(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'settings/promo_codes');
+    }
+  };
+
+  const handleDeletePromo = (id: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Promo Code?",
+      message: `Are you sure you want to permanently delete promo code ${id}? This action cannot be undone.`,
+      onConfirm: async () => {
+        const newList = promoCodes.filter(p => p.id !== id);
+        try {
+          await setDoc(doc(db, 'settings', 'promo_codes'), { list: newList });
+          setAdminSaveStatus("Promo Code Deleted!");
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, 'settings/promo_codes');
+        }
+      }
+    });
+  };
+
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -193,22 +403,23 @@ export default function Home({
     const s = seconds % 60;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
+
   const [searchQuery, setSearchQuery] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
-  const loadFromStorage = (key: string, defaultValue: any) => {
-    try {
-      const saved = localStorage.getItem(key);
-      if (!saved) return defaultValue;
-      return JSON.parse(saved);
-    } catch (e) {
-      console.warn(`Failed to parse ${key} from storage`, e);
-      return defaultValue;
-    }
-  };
-
+  const [hasDeliveryApp, setHasDeliveryApp] = useState(false);
   const [recentSearches, setRecentSearches] = useState<string[]>(() => loadFromStorage('recentSearches', []));
+  const [supportInfo, setSupportInfo] = useState(() => {
+    const saved = localStorage.getItem('supportInfo');
+    return saved ? JSON.parse(saved) : { 
+      phone: '7416574197', 
+      secondaryPhone: '8790729816',
+      email: 'localbharathkhammam@gmail.com',
+      address: 'First Head Office, Khammam City, Telangana, India'
+    };
+  });
+  const [adminSaveStatus, setAdminSaveStatus] = useState('');
   const [showRateCard, setShowRateCard] = useState(true);
 
   useEffect(() => {
@@ -216,7 +427,7 @@ export default function Home({
     if (openForm) {
       setPartnerType(openForm as 'vendor' | 'delivery');
       setAgreedToTerms(false);
-      setShowPartnerForm(true);
+      setShowPartnerOnboarding(true);
       localStorage.removeItem('openPartnerForm');
     }
 
@@ -226,6 +437,19 @@ export default function Home({
       localStorage.removeItem('openAdminOnHome');
     }
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const qSelf = query(
+      collection(db, 'partner_applications'),
+      where('userId', '==', user.uid),
+      where('type', '==', 'DeliveryPartner')
+    );
+    const unsubSelf = onSnapshot(qSelf, (snap) => {
+      setHasDeliveryApp(!snap.empty);
+    }, (err) => console.warn("Failed self application query:", err));
+    return unsubSelf;
+  }, [user]);
 
   const saveRecentSearch = (term: string) => {
     if (!term.trim()) return;
@@ -242,11 +466,43 @@ export default function Home({
     saveRecentSearch(searchQuery);
     setIsFocused(false);
   };
+
+  const handleBookHospitalOP = (data: any) => {
+    // Navigate to payment with OP details
+    const finalPrice = data.price + 20; // Inclusive of ₹20 App Charge
+    
+    // Use onNavigate with a special signal or we can use a callback approach if we update App.tsx
+    // For now, let's just use the current onNavigate and we'll fix App.tsx to handle non-cart payments
+    (window as any).pendingLocalPayment = {
+      amount: finalPrice,
+      type: 'hospital_op',
+      metadata: data,
+      onComplete: async () => {
+        try {
+          const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+          await addDoc(collection(db, 'hospital_bookings'), {
+            ...data,
+            finalPrice,
+            status: 'paid',
+            userId: auth.currentUser?.uid || 'anonymous',
+            timestamp: serverTimestamp(),
+          });
+          alert(`OP Booked Successfully at ${data.hospitalName}!\n\nPlease visit on ${new Date(data.dateTime).toLocaleString()}.`);
+          setShowHospitalOP(false);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, 'hospital_bookings');
+        }
+      }
+    };
+    
+    onNavigate('payment');
+  };
   
   // Search Filters
-  const [filterPrice, setFilterPrice] = useState<'low' | 'high' | 'all'>('all');
+  const [filterPriceRange, setFilterPriceRange] = useState<{min: number, max: number} | null>(null);
   const [filterRating, setFilterRating] = useState<number>(0);
   const [filterAvailability, setFilterAvailability] = useState<boolean>(false);
+  const [showFilterModal, setShowFilterModal] = useState(false);
 
   const trendingSearches = ['Fresh Milk', 'Bread', 'AC Service', 'Medicine', 'Pet Food'];
 
@@ -281,11 +537,21 @@ export default function Home({
     recognition.start();
   };
 
-  const topBanners = [
+  const [topBanners, setTopBanners] = useState([
+    { 
+      id: 103, 
+      title: 'Careful Travel Drivers', 
+      sub: 'Safe Car & Bus Rentals for All Vehicles', 
+      desc: 'Professional drivers we have for halting as you wish',
+      color: 'bg-slate-900', 
+      img: 'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?w=800&q=80',
+      categoryId: 'travel',
+      cta: 'Book Driver'
+    },
     { 
       id: 101, 
-      title: 'Pure Buffalo Milk', 
-      sub: 'Direct Farm-to-Home Delivery', 
+      title: 'Fresh Farm Milk', 
+      sub: 'Direct from local farms to your home', 
       color: 'bg-blue-600', 
       img: 'https://images.unsplash.com/photo-1596733430284-f7437764b1a9?w=800&q=80',
       productId: 'd1'
@@ -299,25 +565,21 @@ export default function Home({
       productId: 'w1'
     },
     { 
-      id: 103, 
-      title: 'Handicrafts & Fancy', 
-      sub: 'Unique local treasures', 
-      color: 'bg-indigo-600', 
-      img: 'https://images.unsplash.com/photo-1515871204537-49a5fe66a31f?w=800&q=80',
-      categoryId: 'handicrafts'
-    },
-    { 
       id: 104, 
       title: 'Bharat Marriage Bureau', 
-      sub: 'Get Partner | Join Free Limited Time', 
-      cta: 'Get Partner',
+      sub: 'Marriages are made in heaven let us push for link that connectivity.', 
+      desc: 'We have more profiles. Find your half or join Today!',
+      cta: 'Find Your Half',
       color: 'bg-rose-600', 
       img: 'https://images.unsplash.com/photo-1583939003579-730e3918a45a?w=800&q=80',
-      action: () => onNavigate('marriageBureau')
-    },
-  ];
+      action: () => {
+        localStorage.setItem('open_marriage_reg', 'true');
+        onNavigate('marriageBureau');
+      }
+    }
+  ]);
 
-  const bottomBanners = [
+  const [bottomBanners, setBottomBanners] = useState([
     { 
       id: 201, 
       title: 'Expert Maid Services', 
@@ -333,21 +595,35 @@ export default function Home({
       color: 'bg-orange-600', 
       img: 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=800&q=80',
       categoryId: 'construction'
-    },
-    { 
-      id: 203, 
-      title: 'Heavy Services', 
-      sub: 'AC Repairs & Bore Mechanics', 
-      color: 'bg-gray-800',
-      categoryId: 'mechanics'
-    },
-  ];
+    }
+  ]);
+
+  useEffect(() => {
+    // Sync banners from Firestore if they exist
+    const unsub = onSnapshot(collection(db, 'banners'), (snap) => {
+      if (!snap.empty) {
+        const cloudBanners = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const top = cloudBanners.filter((b: any) => b.type === 'top');
+        const bottom = cloudBanners.filter((b: any) => b.type === 'bottom');
+        if (top.length > 0) setTopBanners(top as any);
+        if (bottom.length > 0) setBottomBanners(bottom as any);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const shouldOpenAdmin = localStorage.getItem('openAdminOnHome');
-    if (shouldOpenAdmin === 'true' && isAdmin) {
-      setIsAdminOpen(true);
-      localStorage.removeItem('openAdminOnHome');
+    const lastView = localStorage.getItem('admin_last_view');
+    if (isAdmin) {
+      const hasAutoOpened = sessionStorage.getItem('admin_auto_opened');
+      if (!hasAutoOpened || shouldOpenAdmin === 'true') {
+        setIsAdminOpen(true);
+        sessionStorage.setItem('admin_auto_opened', 'true');
+        if (lastView) setAdminView(lastView as any);
+        localStorage.removeItem('openAdminOnHome');
+        localStorage.removeItem('admin_last_view');
+      }
     }
   }, [isAdmin]);
 
@@ -364,6 +640,36 @@ export default function Home({
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
     return localStorage.getItem('admin_session_active') === 'true';
   });
+
+  const [paymentConfig, setPaymentConfig] = useState<{
+    upiId: string;
+    bankName: string;
+    accountHolder: string;
+    accountNumber: string;
+    ifscCode: string;
+    merchantId: string;
+    gatewayStatus: 'DirectUPI' | 'ManualLink';
+  } | null>(null);
+
+  useEffect(() => {
+    if (isAdmin) {
+      const q = doc(db, 'settings', 'payment_config');
+      return onSnapshot(q, (snapshot) => {
+        if (snapshot.exists()) {
+          setPaymentConfig(snapshot.data() as any);
+        }
+      });
+    }
+  }, [isAdmin]);
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  useEffect(() => {
+    if (showAdminLogin && adminAuthStep !== 'password') {
+      setupRecaptcha('admin-recaptcha');
+    }
+  }, [showAdminLogin, adminAuthStep]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showPartnerForm, setShowPartnerForm] = useState(false);
   const [formStep, setFormStep] = useState(0);
@@ -372,6 +678,12 @@ export default function Home({
   const [partnerPhoto, setPartnerPhoto] = useState<string | null>(null);
   const [partnerStatus, setPartnerStatus] = useState<string | null>(null);
   const [partnerError, setPartnerError] = useState<string | null>(null);
+
+  // Advanced query and filtering states for Partners
+  const [filterVehicleType, setFilterVehicleType] = useState<string>('all');
+  const [filterServiceCategory, setFilterServiceCategory] = useState<string>('all');
+  const [filterDocStatus, setFilterDocStatus] = useState<string>('all'); // 'all' | 'verified' | 'unverified'
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
 
   const handlePartnerPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -408,6 +720,14 @@ export default function Home({
     otp: '',
     vehicleNumber: '',
     chassisNumber: '',
+    accessCode: '',
+    bankName: '',
+    accountHolder: '',
+    accountNumber: '',
+    ifscCode: '',
+    upiId: '',
+    photo: null as string | null,
+    documentPhoto: null as string | null,
     location: {
       area: '',
       city: '',
@@ -424,13 +744,110 @@ export default function Home({
   const [isOtpSent, setIsOtpSent] = useState(false);
 
   const [isLogisticsOpen, setIsLogisticsOpen] = useState(false);
+  const [showPartnerOnboarding, setShowPartnerOnboarding] = useState(false);
+  const [partnerOnboardingType, setPartnerOnboardingType] = useState<PartnerApplicationType | undefined>(undefined);
+  const [orderIdToCancel, setOrderIdToCancel] = useState<string | null>(null);
+  const [cancelReasonInput, setCancelReasonInput] = useState("");
+
+  const handleManualTestOrder = async () => {
+    if (!user) return;
+    try {
+      const testOrder = {
+        userId: user.uid,
+        customerName: (userProfile?.name || user.displayName || 'Test Customer').slice(0, 30),
+        customerPhone: userProfile?.phone || user.phoneNumber || '',
+        deliveryAddress: location || 'Near clock tower, Khammam, 507001',
+        items: 2,
+        orderItems: [
+          { id: 'mock-1', name: 'Fresh Buffalo Milk', quantity: 1, price: 65 },
+          { id: 'mock-2', name: 'Mineral Water 20L', quantity: 1, price: 40 }
+        ],
+        total: 105,
+        status: 'Pending',
+        createdAt: new Date().toISOString(),
+        timestamp: serverTimestamp(),
+        paymentMethod: 'COD',
+        deliveryType: 'Delivery'
+      };
+      await addDoc(collection(db, 'orders'), testOrder);
+      alert('✅ Test order placed! Check Logistics Hub.');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'orders');
+    }
+  };
   const [logisticsView, setLogisticsView] = useState<'orders' | 'stats' | 'communications'>('orders');
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(() => localStorage.getItem('lokal_maintenance_mode') === 'true');
-  const [supportInfo, setSupportInfo] = useState(() => {
-    const saved = localStorage.getItem('supportInfo');
-    return saved ? JSON.parse(saved) : { phone: '9876543210', email: 'localbharathkhammam@gmail.com' };
-  });
 
+  // Pull-to-Refresh Manual Sync Implementation
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pullProgress, setPullProgress] = useState(0);
+  const [pullY, setPullY] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+  const touchStartRef = useRef<{ x: number, y: number } | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const refreshInventory = async () => {
+    if (!db || isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      const branchId = currentBranchId || 'khammam-main';
+      const { getDocs, query, collection, where, limit } = await import('firebase/firestore');
+      const productsQ = query(collection(db, 'products'), where('branchId', '==', branchId), limit(100));
+      const snap = await getDocs(productsQ);
+      const cloudItems = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product | Service));
+      
+      const { PRODUCTS, SERVICES } = await import('../constants');
+      const merged = new Map<string, any>();
+      [...PRODUCTS, ...SERVICES].forEach(item => {
+        if (!item.branchId || item.branchId === branchId) {
+          merged.set(item.id, item);
+        }
+      });
+      cloudItems.forEach(item => merged.set(item.id, item));
+      setLocalInventory(Array.from(merged.values()));
+      
+      // Minimum duration for pleasant spinner transition feel
+      await new Promise(resolve => setTimeout(resolve, 800));
+    } catch (err) {
+      console.warn("Manual inventory sync failed:", err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const container = scrollContainerRef.current;
+    if (!container || container.scrollTop > 0 || isRefreshing) return;
+    const touch = e.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+    setIsPulling(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!touchStartRef.current || isRefreshing || !scrollContainerRef.current || scrollContainerRef.current.scrollTop > 0) return;
+    const touch = e.touches[0];
+    const diffX = touch.clientX - touchStartRef.current.x;
+    const diffY = touch.clientY - touchStartRef.current.y;
+    if (diffY > 0 && Math.abs(diffY) > Math.abs(diffX)) {
+      const pullDist = Math.min(100, diffY * 0.45);
+      setPullY(pullDist);
+      const progress = Math.min(100, Math.round((pullDist / 50) * 100));
+      setPullProgress(progress);
+      if (e.cancelable) e.preventDefault();
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (!isPulling) return;
+    setIsPulling(false);
+    touchStartRef.current = null;
+    if (pullProgress >= 100 && !isRefreshing) {
+      refreshInventory();
+    }
+    setPullY(0);
+    setPullProgress(0);
+  };
+  
   useEffect(() => {
     localStorage.setItem('lokal_maintenance_mode', isMaintenanceMode.toString());
     window.dispatchEvent(new CustomEvent('maintenance_mode_changed', { detail: isMaintenanceMode }));
@@ -439,7 +856,7 @@ export default function Home({
       const maintenanceNotif = {
         id: `maint-${Date.now()}`,
         title: '⚠️ Scheduled Maintenance',
-        message: 'Lokal Bharath will be undergoing maintenance shortly. Some features may be temporarily unavailable.',
+        message: 'Local Bandi Multi Services will be undergoing maintenance shortly. Some features may be temporarily unavailable.',
         timestamp: Date.now(),
         read: false
       };
@@ -459,7 +876,7 @@ export default function Home({
   const [notifications, setNotifications] = useState<{id: string, title: string, message: string, timestamp: number, read: boolean}[]>(() => {
     const saved = localStorage.getItem('lokal_notifications');
     return saved ? JSON.parse(saved) : [
-      { id: '1', title: 'Welcome to Lokal Bharath!', message: 'Explore pure, healthy products from your neighborhood.', timestamp: Date.now() - 86400000, read: true }
+      { id: '1', title: 'Welcome to Local Bandi Multi Services!', message: 'Explore pure, healthy products from your neighborhood.', timestamp: Date.now() - 86400000, read: true }
     ];
   });
   const [broadcastMessage, setBroadcastMessage] = useState({ title: '', message: '' });
@@ -501,8 +918,60 @@ export default function Home({
   const [allMarriageProfiles, setAllMarriageProfiles] = useState<MarriageProfile[]>([]);
   const [activeOrders, setActiveOrders] = useState<any[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [categories, setCategories] = useState<Category[]>(CATEGORIES);
+  const [activeTrip, setActiveTrip] = useState<any>(null);
+  const [showTripDetails, setShowTripDetails] = useState(false);
   const [vendors, setVendors] = useState<VendorProfile[]>([]);
   const [deliveryPartners, setDeliveryPartners] = useState<DeliveryPartnerProfile[]>([]);
+  const walletBalance = userProfile?.walletBalance || 0;
+
+  useEffect(() => {
+    // Load categories from Firestore collection
+    const loadCategories = async () => {
+      try {
+        const { getDocs, collection, getDoc, doc } = await import('firebase/firestore');
+        const categoriesCol = collection(db, 'categories');
+        const categoriesSnapshot = await getDocs(categoriesCol);
+        
+        if (!categoriesSnapshot.empty) {
+          const loadedCategories = categoriesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+          setCategories(loadedCategories.length > 0 ? loadedCategories : CATEGORIES);
+        } else {
+          // Fallback to legacy single document
+          const settingsDoc = await getDoc(doc(db, 'settings', 'categories'));
+          if (settingsDoc.exists()) {
+            const data = settingsDoc.data();
+            if (data.list && Array.isArray(data.list)) {
+              setCategories(data.list);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load categories", e);
+      }
+    };
+    loadCategories();
+  }, []);
+
+  const saveCategoryToFirestore = async (cat: Category) => {
+    try {
+      const { setDoc, doc } = await import('firebase/firestore');
+      await setDoc(doc(db, 'categories', cat.id), cat);
+    } catch (e) {
+      console.error("Failed to save category", e);
+    }
+  };
+
+  const deleteCategoryFromFirestore = async (categoryId: string) => {
+    try {
+      const { deleteDoc, doc } = await import('firebase/firestore');
+      await deleteDoc(doc(db, 'categories', categoryId));
+    } catch (e) {
+      console.error("Failed to delete category", e);
+    }
+  };
 
   useEffect(() => {
     if (!user) {
@@ -517,36 +986,151 @@ export default function Home({
     // Real-time listeners
     
     // Marriage profiles - public list (approved only for non-admin)
-    const marriageQuery = isAdmin 
-      ? collection(db, 'marriageProfiles')
-      : query(collection(db, 'marriageProfiles'), where('isApproved', '==', true));
+    // Marriage Bureau is currently global but we can add branch filtering later if needed
+    const marriageQuery = isSuperAdmin
+      ? query(collection(db, 'marriageProfiles'), limit(50))
+      : query(collection(db, 'marriageProfiles'), where('isApproved', '==', true), limit(30));
 
     const unsubMarriage = onSnapshot(marriageQuery, (snapshot) => {
       setAllMarriageProfiles(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MarriageProfile)));
-    }, err => handleFirestoreError(err, OperationType.LIST, 'marriageProfiles'));
+    }, err => {
+      console.warn("Marriage profiles fetch failed. Providing local fallback profiles:", err);
+      setAllMarriageProfiles([
+        {
+          id: 'dummy-m1',
+          name: 'Anjali Sharma',
+          gender: 'Female',
+          age: 26,
+          caste: 'Kamma',
+          subcaste: 'None',
+          education: 'M.S. in Computer Science',
+          occupation: 'Senior Software Engineer at Google',
+          income: '₹2,800,000 / Year',
+          height: "5'4\"",
+          photo: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=500&q=80',
+          contactPhone: '9876543210',
+          isApproved: true,
+          createdAt: { seconds: Date.now() / 1000, nanoseconds: 0 } as any,
+          branchId: 'khammam_main'
+        },
+        {
+          id: 'dummy-m2',
+          name: 'Karthik Reddy',
+          gender: 'Male',
+          age: 29,
+          caste: 'Reddy',
+          subcaste: 'Chowdary',
+          education: 'MBA - IIM Bangalore',
+          occupation: 'Investment Banker',
+          income: '₹4,500,000 / Year',
+          height: "5'11\"",
+          photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&q=80',
+          contactPhone: '9988776655',
+          isApproved: true,
+          createdAt: { seconds: Date.now() / 1000, nanoseconds: 0 } as any,
+          branchId: 'khammam_main'
+        }
+      ] as any);
+      handleFirestoreError(err, OperationType.LIST, 'marriageProfiles');
+    });
+
+    // Vendors - public list (filtered by branch for everyone)
+    const vendorsRef = collection(db, 'vendors');
+    // If branch is NOT selected yet, vendors might be empty or show global ones
+    const vendorsQuery = currentBranchId
+      ? query(vendorsRef, where('branchId', '==', currentBranchId), limit(50))
+      : query(vendorsRef, limit(30));
+
+    const unsubVendors = onSnapshot(vendorsQuery, (snapshot) => {
+      setVendors(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as VendorProfile)));
+    }, err => {
+      console.warn("Vendors fetch failed. Falling back to default lists:", err);
+      setVendors([
+        {
+          id: 'admin-store',
+          businessName: 'Local Bandi Multi Services Preparations',
+          ownerName: 'Admin Hub',
+          service: 'groceries',
+          status: 'Approved',
+          revenue: 125000,
+          pendingPayout: 0,
+          itemsCount: 15,
+          rating: 5.0,
+          isOnline: true,
+          phone: '9999999999',
+          branchId: 'khammam_main',
+          accessCode: '12345'
+        } as any,
+        {
+          id: 'srinivasa-provisions',
+          businessName: 'Srinivasa Kirana Store & Provisions',
+          ownerName: 'Srinivasa Rao',
+          service: 'groceries',
+          status: 'Approved',
+          revenue: 34000,
+          pendingPayout: 0,
+          itemsCount: 12,
+          rating: 4.8,
+          isOnline: true,
+          phone: '9885123456',
+          branchId: 'khammam_main',
+          accessCode: '54321'
+        } as any
+      ]);
+      handleFirestoreError(err, OperationType.LIST, 'vendors');
+    });
 
     // Admin-only listeners
     let unsubOrders: () => void = () => {};
     let unsubApprovals: () => void = () => {};
-    let unsubVendors: () => void = () => {};
     let unsubDelivery: () => void = () => {};
+    let unsubUsers: () => void = () => {};
 
-    if (isAdmin) {
-      unsubOrders = onSnapshot(collection(db, 'orders'), (snapshot) => {
+    // Combined admin status for listeners
+    const effectiveIsAdmin = (isSuperAdmin || isBranchAdmin || isAdminLoggedIn) && !!user;
+
+    if (effectiveIsAdmin) {
+      const ordersRef = collection(db, 'orders');
+      const ordersQuery = isBranchAdmin && currentBranchId 
+        ? query(ordersRef, where('branchId', '==', currentBranchId), limit(40))
+        : query(ordersRef, limit(40));
+        
+      unsubOrders = onSnapshot(ordersQuery, (snapshot) => {
         setActiveOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       }, err => handleFirestoreError(err, OperationType.LIST, 'orders'));
 
-      unsubApprovals = onSnapshot(collection(db, 'pendingApprovals'), (snapshot) => {
-        setPendingApprovals(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      }, err => handleFirestoreError(err, OperationType.LIST, 'pendingApprovals'));
+      const applicationsRef = collection(db, 'partner_applications');
+      const applicationsQuery = isBranchAdmin && currentBranchId
+        ? query(applicationsRef, where('branchId', '==', currentBranchId), limit(30))
+        : query(applicationsRef, limit(30));
 
-      unsubVendors = onSnapshot(collection(db, 'vendors'), (snapshot) => {
-        setVendors(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as VendorProfile)));
-      }, err => handleFirestoreError(err, OperationType.LIST, 'vendors'));
+      unsubApprovals = onSnapshot(applicationsQuery, (snapshot) => {
+        const apps = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+        setPendingApprovals(apps.filter(app => app.status === 'Pending' || !app.status));
+      }, err => handleFirestoreError(err, OperationType.LIST, 'partner_applications'));
 
-      unsubDelivery = onSnapshot(collection(db, 'deliveryPartners'), (snapshot) => {
+      // Vendors already handled above for everyone
+
+      const deliveryRef = collection(db, 'deliveryPartners');
+      const deliveryQuery = isBranchAdmin && currentBranchId
+        ? query(deliveryRef, where('branchId', '==', currentBranchId), limit(30))
+        : query(deliveryRef, limit(30));
+
+      unsubDelivery = onSnapshot(deliveryQuery, (snapshot) => {
         setDeliveryPartners(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DeliveryPartnerProfile)));
       }, err => handleFirestoreError(err, OperationType.LIST, 'deliveryPartners'));
+
+      const usersRef = collection(db, 'users');
+      const usersQuery = isBranchAdmin && currentBranchId
+        ? query(usersRef, where('branchId', '==', currentBranchId), limit(30))
+        : query(usersRef, limit(30));
+
+      unsubUsers = onSnapshot(usersQuery, (snapshot) => {
+        const firestoreUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (firestoreUsers.length > 0) {
+          setUsers(firestoreUsers);
+        }
+      }, err => handleFirestoreError(err, OperationType.LIST, 'users'));
     }
 
     return () => {
@@ -555,8 +1139,57 @@ export default function Home({
       unsubApprovals();
       unsubVendors();
       unsubDelivery();
+      unsubUsers();
     };
-  }, [user, isAdmin]);
+  }, [user, isAdmin, isAdminLoggedIn, isSuperAdmin, isBranchAdmin, currentBranchId]);
+
+  const handleResetPlatformData = async () => {
+    if (!confirm("CRITICAL: This will delete ALL orders, vendor applications, and customer bookings. This CANNOT be undone. Proceed?")) return;
+    
+    setAdminSaveStatus("Cleaning Platform Data...");
+    try {
+      const { getDocs, collection, writeBatch } = await import('firebase/firestore');
+      const collectionsToClear = ['orders', 'partner_applications', 'hospital_bookings', 'support_chats', 'order_tracking'];
+      
+      for (const colName of collectionsToClear) {
+        const snap = await getDocs(collection(db, colName));
+        if (!snap.empty) {
+          const batch = writeBatch(db);
+          snap.docs.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+      
+      setAdminSaveStatus("Platform Reset Successful!");
+      alert("Platform cleaned. Old order data deleted.");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, 'bulk-reset');
+    }
+  };
+
+  useEffect(() => {
+    const checkFlags = () => {
+      const openPartnerForm = localStorage.getItem('openPartnerForm');
+      if (openPartnerForm) {
+        setShowPartnerOnboarding(true);
+        localStorage.removeItem('openPartnerForm');
+      }
+
+      const runTestOrder = localStorage.getItem('runTestOrder');
+      if (runTestOrder) {
+        handleManualTestOrder();
+        localStorage.removeItem('runTestOrder');
+      }
+    };
+
+    checkFlags();
+    window.addEventListener('storage', checkFlags);
+    window.addEventListener('check_flags', checkFlags);
+    return () => {
+      window.removeEventListener('storage', checkFlags);
+      window.removeEventListener('check_flags', checkFlags);
+    };
+  }, [user]);
 
   const getOrdersInTimeRange = (range: 'day' | 'week' | 'month' | 'custom') => {
     const now = new Date();
@@ -589,8 +1222,11 @@ export default function Home({
 
   const handleAssignRider = async (orderId: string, riderId: string) => {
     try {
+      const rider = deliveryPartners.find(p => p.id === riderId);
       await updateDoc(doc(db, 'orders', orderId), {
         deliveryPartnerId: riderId,
+        deliveryPartnerName: rider?.name || '',
+        deliveryPartnerPhone: rider?.phone || '',
         status: riderId ? 'Assigned' : 'Pending',
         updatedAt: serverTimestamp()
       });
@@ -643,7 +1279,7 @@ export default function Home({
     const saved = loadFromStorage('lokal_users', null);
     if (saved) return saved;
     return [
-      { id: 'u1', name: 'Tharun Bandi', phone: '9876543210', email: 'tharunbandi@example.com', joinDate: '2024-01-15', totalOrders: 12, status: 'Active' },
+      { id: 'u1', name: 'Tharun Bandi', phone: '', email: 'tharunbandi111@gmail.com', joinDate: '2024-01-15', totalOrders: 12, status: 'Active' },
       { id: 'u2', name: 'Sai Kiran', phone: '9000000001', email: 'sai@example.com', joinDate: '2024-02-10', totalOrders: 5, status: 'Active' }
     ];
   });
@@ -691,11 +1327,11 @@ export default function Home({
 
 
   useEffect(() => {
-    localStorage.setItem('lokal_users', JSON.stringify(users));
+    // Removed localStorage.setItem('lokal_users') to prevent QuotaExceededError as database grows
   }, [users]);
 
   useEffect(() => {
-    localStorage.setItem('local_marriage_profiles', JSON.stringify(allMarriageProfiles));
+    // Removed localStorage.setItem('local_marriage_profiles') to prevent QuotaExceededError
     window.dispatchEvent(new CustomEvent('local_marriage_profiles_updated', { detail: allMarriageProfiles }));
   }, [allMarriageProfiles]);
 
@@ -710,11 +1346,16 @@ export default function Home({
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('pendingApprovals', JSON.stringify(pendingApprovals));
-    window.dispatchEvent(new CustomEvent('pending_approvals_updated', { detail: pendingApprovals }));
+    try {
+      localStorage.setItem('pendingApprovals', JSON.stringify(pendingApprovals));
+      window.dispatchEvent(new CustomEvent('pending_approvals_updated', { detail: pendingApprovals }));
+    } catch (e) {
+      console.warn('Storage quota exceeded for pendingApprovals', e);
+    }
   }, [pendingApprovals]);
 
   const [deliveryAssignmentMode, setDeliveryAssignmentMode] = useState<'automatic' | 'manual'>('automatic');
+  const [riderStatusFilter, setRiderStatusFilter] = useState<'All' | 'Online' | 'Offline' | 'Banned' | 'Approved'>('All');
   const handleTerminateVendor = async (id: string, name: string) => {
     if (confirm(`Are you sure you want to TERMINATE ${name}? They will be banned from the platform instantly and their store will be closed.`)) {
       try {
@@ -764,28 +1405,130 @@ export default function Home({
     }
   };
 
+  const handleDeletePartner = async (id: string, type: 'vendor' | 'delivery') => {
+    if (confirm(`Delete this ${type} permanently? This action cannot be undone.`)) {
+      try {
+        await deleteDoc(doc(db, type === 'vendor' ? 'vendors' : 'deliveryPartners', id));
+        setAdminSaveStatus(`${type.charAt(0).toUpperCase() + type.slice(1)} deleted successfully.`);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `${type === 'vendor' ? 'vendors' : 'deliveryPartners'}/${id}`);
+      }
+    }
+  };
+
+  const handleSavePartnerEdit = async () => {
+    try {
+      const collectionName = partnerType === 'vendor' ? 'vendors' : 'deliveryPartners';
+      
+      if (isPartnerEditMode && editingPartnerId) {
+        // UPDATE EXISTING
+        const updates: any = {
+          phone: partnerData.phone,
+          accessCode: partnerData.accessCode,
+          bankName: partnerData.bankName,
+          accountHolder: partnerData.accountHolder,
+          accountNumber: partnerData.accountNumber,
+          ifscCode: partnerData.ifscCode,
+          upiId: partnerData.upiId,
+          photo: partnerPhoto,
+          documentPhoto: partnerData.documentPhoto,
+          updatedAt: serverTimestamp()
+        };
+        
+        if (partnerType === 'vendor') {
+          updates.businessName = partnerData.name;
+          updates.ownerName = partnerData.ownerName;
+          updates.service = partnerData.service;
+          updates.address = partnerData.businessAddress;
+          updates.gstNumber = partnerData.gstNumber;
+        } else {
+          updates.name = partnerData.name;
+          updates.vehicleType = partnerData.service;
+          updates.vehicleNumber = partnerData.vehicleNumber;
+        }
+
+        await updateDoc(doc(db, collectionName, editingPartnerId), updates);
+        setAdminSaveStatus("Partner updated successfully.");
+      } else {
+        // CREATE NEW
+        const id = `${partnerType === 'vendor' ? 'v' : 'dp'}-${Date.now()}`;
+        const newData: any = {
+          id,
+          phone: partnerData.phone,
+          status: 'Approved',
+          createdAt: serverTimestamp(),
+          isOnline: partnerType === 'delivery', 
+          rating: 5.0,
+          pendingPayout: 0,
+          revenue: 0,
+          earnings: 0,
+          bankName: partnerData.bankName,
+          accountHolder: partnerData.accountHolder,
+          accountNumber: partnerData.accountNumber,
+          ifscCode: partnerData.ifscCode,
+          upiId: partnerData.upiId,
+          photo: partnerPhoto,
+          documentPhoto: partnerData.documentPhoto,
+          accessCode: partnerData.accessCode || Math.floor(10000 + Math.random() * 90000).toString()
+        };
+
+        if (partnerType === 'vendor') {
+          newData.businessName = partnerData.name;
+          newData.ownerName = partnerData.ownerName;
+          newData.service = partnerData.service || 'groceries';
+          newData.address = partnerData.businessAddress;
+          newData.gstNumber = partnerData.gstNumber;
+          newData.itemsCount = 0;
+        } else {
+          newData.name = partnerData.name;
+          newData.vehicleType = partnerData.service || 'Bike';
+          newData.vehicleNumber = partnerData.vehicleNumber;
+          newData.trips = 0;
+        }
+
+        await setDoc(doc(db, collectionName, id), newData);
+        setAdminSaveStatus(`${partnerType === 'vendor' ? 'Vendor' : 'Delivery Partner'} added successfully.`);
+      }
+
+      setIsPartnerEditMode(false);
+      setShowPartnerForm(false);
+      setEditingPartnerId(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `${partnerType === 'vendor' ? 'vendors' : 'deliveryPartners'}/${editingPartnerId || 'new'}`);
+    }
+  };
+
   const handleAdminEditPartner = (partner: any, type: 'vendor' | 'delivery') => {
     setIsPartnerEditMode(true);
+    setShowPartnerForm(true);
     setEditingPartnerId(partner.id);
     setPartnerType(type);
     setPartnerPhoto(partner.photo || partner.img || null);
     setFormStep(1); // Skip role selection
-    if (type === 'vendor') {
-      const details = partner.details || {};
-      setPartnerData({
-        name: partner.businessName || partner.name || '',
-        ownerName: partner.ownerName || details.ownerName || '',
-        service: partner.service || details.service || 'groceries',
-        phone: partner.phone || '',
-        gstNumber: partner.gst || details.gst || '',
-        businessAddress: partner.address || details.address || '',
-        aadhaar: '',
-        rc: '',
-        dl: '',
-        otp: 'XXXX',
-        vehicleNumber: '',
-        chassisNumber: '',
-        location: {
+      if (type === 'vendor') {
+        const details = partner.details || {};
+        setPartnerData({
+          name: partner.businessName || partner.name || '',
+          ownerName: partner.ownerName || details.ownerName || '',
+          service: partner.service || details.service || 'groceries',
+          phone: partner.phone || '',
+          gstNumber: partner.gst || partner.gstNumber || details.gst || '',
+          businessAddress: partner.address || details.address || '',
+          aadhaar: '',
+          rc: '',
+          dl: '',
+          otp: 'XXXX',
+          vehicleNumber: '',
+          chassisNumber: '',
+          accessCode: partner.accessCode || '',
+          bankName: partner.bankName || details.bankName || '',
+          accountHolder: partner.accountHolder || details.accountHolder || '',
+          accountNumber: partner.accountNumber || details.accountNumber || '',
+          ifscCode: partner.ifscCode || details.ifscCode || '',
+          upiId: partner.upiId || details.upiId || '',
+          photo: partner.photo || null,
+          documentPhoto: partner.documentPhoto || null,
+          location: {
           area: partner.area || details.area || 'Hyderabad',
           city: partner.city || details.city || 'Hyderabad',
           pincode: partner.pincode || details.pincode || '500001'
@@ -812,6 +1555,14 @@ export default function Home({
         otp: 'XXXX',
         vehicleNumber: partner.vehicleNumber || details.vehicle || '',
         chassisNumber: partner.chassisNumber || details.chassisNumber || '12345',
+        accessCode: partner.accessCode || '',
+        bankName: partner.bankName || details.bankName || '',
+        accountHolder: partner.accountHolder || details.accountHolder || '',
+        accountNumber: partner.accountNumber || details.accountNumber || '',
+        ifscCode: partner.ifscCode || details.ifscCode || '',
+        upiId: partner.upiId || details.upiId || '',
+        photo: partner.photo || null,
+        documentPhoto: partner.documentPhoto || null,
         location: {
           area: partner.location?.area || details.area || 'Hyderabad',
           city: partner.location?.city || details.city || 'Hyderabad',
@@ -836,15 +1587,33 @@ export default function Home({
   const handleSaveUser = async () => {
     if (!editingUser) return;
     try {
-      await updateDoc(doc(db, 'users', editingUser.id), {
+      await setDoc(doc(db, 'users', editingUser.id), {
         ...editingUser,
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
+      
+      setUsers(prev => prev.map(u => u.id === editingUser.id ? editingUser : u));
       setShowUserModal(false);
       setEditingUser(null);
       setAdminSaveStatus("User updated successfully!");
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${editingUser.id}`);
+    }
+  };
+
+  const handleSaveBanner = async () => {
+    if (!editingBanner) return;
+    try {
+      const bannerId = editingBanner.id?.toString() || `ban-${Date.now()}`;
+      await setDoc(doc(db, 'banners', bannerId), {
+        ...editingBanner,
+        id: bannerId,
+        updatedAt: serverTimestamp()
+      });
+      setShowBannerModal(false);
+      setAdminSaveStatus("Banner Saved to Cloud!");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'banners');
     }
   };
 
@@ -935,49 +1704,473 @@ export default function Home({
     }
   };
 
-  const [adminView, setAdminView] = useState<'dashboard' | 'inventory' | 'partners' | 'marriage' | 'vendors' | 'deliveryPartners' | 'security' | 'settlements' | 'settings' | 'customers' | 'support'>('dashboard');
-  const [selectedApproval, setSelectedApproval] = useState<any | null>(null);
-  const [supportChats, setSupportChats] = useState<Record<string, SupportChat>>(() => {
-    return JSON.parse(localStorage.getItem('lokal_support_chats') || '{}');
+  const handleUpdateRiderStatus = async (id: string, status: 'Approved' | 'Banned' | 'Online' | 'Offline') => {
+    try {
+      const updates: any = { status };
+      if (status === 'Banned') {
+        updates.isOnline = false;
+      } else if (status === 'Online') {
+        updates.isOnline = true;
+        updates.status = 'Approved';
+      } else if (status === 'Offline') {
+        updates.isOnline = false;
+        updates.status = 'Approved';
+      }
+      
+      await updateDoc(doc(db, 'deliveryPartners', id), {
+        ...updates,
+        updatedAt: serverTimestamp()
+      });
+      setAdminSaveStatus("Rider status updated successfully.");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `deliveryPartners/${id}`);
+    }
+  };
+
+  const [platformSettings, setPlatformSettings] = useState<PlatformSettings>({
+    id: 'global',
+    allowBankTransfer: true,
+    allowCashOnRegistration: true,
+    registrationFee: 0,
+    upiId: '8790729816-4@ybl',
+    accountHolder: 'Local Bandi Multi Services'
   });
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+
+  useEffect(() => {
+    return onSnapshot(doc(db, 'settings', 'global'), (snap) => {
+      if (snap.exists()) {
+        setPlatformSettings({ ...snap.data() as PlatformSettings, id: snap.id });
+      }
+    });
+  }, []);
+
+  const [adminView, setAdminView] = useState<any>(() => localStorage.getItem('admin_last_view') || 'dashboard');
+  
+  useEffect(() => {
+    if (adminView) {
+      localStorage.setItem('admin_last_view', adminView);
+    }
+  }, [adminView]);
+
+  useEffect(() => {
+    if (isAdmin && adminView === 'comments') {
+      const q = query(collection(db, 'reviews'));
+      const unsub = onSnapshot(q, (snapshot) => {
+        const list = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setAllReviews(list);
+      }, (err) => {
+        console.error("Failed to fetch reviews:", err);
+      });
+      return unsub;
+    }
+  }, [isAdmin, adminView]);
+  const [editingBanner, setEditingBanner] = useState<any>(null);
+  const [showBannerModal, setShowBannerModal] = useState(false);
+  const [logisticsStats, setLogisticsStats] = useState({
+    marriage: 0,
+    realEstate: 0,
+    hospitals: 0,
+    partners: 0
+  });
+  const [adminLogisticsTab, setAdminLogisticsTab] = useState<'marriage' | 'realEstate' | 'hospitals' | 'partners'>('marriage');
+  const [logisticsItems, setLogisticsItems] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (isAdmin && adminView === 'logistics_hub') {
+      const qMarriage = query(collection(db, 'marriageProfiles'), where('isApproved', '==', false));
+      const unsubMarriage = onSnapshot(qMarriage, 
+        (snap) => {
+          setLogisticsStats(prev => ({ ...prev, marriage: snap.size }));
+          if (adminLogisticsTab === 'marriage') setLogisticsItems(snap.docs.map(d => ({ id: d.id, ...d.data(), type: 'marriage' })));
+        },
+        (err) => console.error("Logistics Marriage Error:", err)
+      );
+      
+      const qProps = query(collection(db, 'properties'), where('isApproved', '==', false));
+      const unsubProps = onSnapshot(qProps, 
+        (snap) => {
+          setLogisticsStats(prev => ({ ...prev, realEstate: snap.size }));
+          if (adminLogisticsTab === 'realEstate') setLogisticsItems(snap.docs.map(d => ({ id: d.id, ...d.data(), type: 'realEstate' })));
+        },
+        (err) => console.error("Logistics Props Error:", err)
+      );
+
+      const qPartners = query(collection(db, 'partner_applications'), where('status', '==', 'Pending'));
+      const unsubPartners = onSnapshot(qPartners, 
+        (snap) => {
+          setLogisticsStats(prev => ({ ...prev, partners: snap.size }));
+          if (adminLogisticsTab === 'partners') setLogisticsItems(snap.docs.map(d => ({ id: d.id, ...d.data(), type: 'partners' })));
+        },
+        (err) => console.error("Logistics Partners Error:", err)
+      );
+
+      const qHospitals = query(collection(db, 'hospital_bookings'), where('status', '==', 'pending'));
+      const unsubHospitals = onSnapshot(qHospitals, 
+        (snap) => {
+          setLogisticsStats(prev => ({ ...prev, hospitals: snap.size }));
+          if (adminLogisticsTab === 'hospitals') setLogisticsItems(snap.docs.map(d => ({ id: d.id, ...d.data(), type: 'hospitals' })));
+        },
+        (err) => console.error("Logistics Hospitals Error:", err)
+      );
+
+      return () => {
+        unsubMarriage();
+        unsubProps();
+        unsubPartners();
+        unsubHospitals();
+      };
+    }
+  }, [isAdmin, adminView, adminLogisticsTab]);
+
+  const handleApproveItem = async (item: any) => {
+    try {
+      const col = item.type === 'marriage' ? 'marriageProfiles' :
+                  item.type === 'realEstate' ? 'properties' :
+                  item.type === 'partners' ? 'partner_applications' : 'hospital_bookings';
+      
+      const updateData: any = { updatedAt: serverTimestamp() };
+      if (item.type === 'partners' || item.type === 'hospitals') {
+        updateData.status = 'Approved';
+      } else {
+        updateData.isApproved = true;
+      }
+
+      await updateDoc(doc(db, col, item.id), updateData);
+
+      // Special handling for partner applications - Create live profile
+      if (item.type === 'partners') {
+        const app = item;
+        const partnerType = app.type; // Vendor, DeliveryPartner, RealEstateSeller
+        const accessCode = Math.floor(10000 + Math.random() * 90000).toString();
+        
+        if (partnerType === 'Vendor') {
+          const vendorId = `v-${Date.now()}`;
+          await setDoc(doc(db, 'vendors', vendorId), {
+            id: vendorId,
+            userId: app.userId,
+            businessName: app.businessName,
+            ownerName: app.fullName,
+            service: app.businessType || 'groceries',
+            phone: app.phone,
+            address: app.businessAddress,
+            gstNumber: app.gstNumber,
+            status: 'Approved',
+            isOnline: false,
+            rating: 5.0,
+            revenue: 0,
+            pendingPayout: 0,
+            itemsCount: app.initialProduct ? 1 : 0,
+            photo: app.photo,
+            documentPhoto: app.documentPhoto,
+            bankName: app.bankName,
+            accountHolder: app.accountHolder,
+            accountNumber: app.accountNumber,
+            ifscCode: app.ifscCode,
+            upiId: app.upiId,
+            createdAt: serverTimestamp(),
+            applicationId: app.id,
+            accessCode: accessCode
+          });
+
+          // Update user role
+          if (app.userId) {
+            await updateDoc(doc(db, 'users', app.userId), {
+              role: 'vendor',
+              vendorId: vendorId,
+              updatedAt: serverTimestamp()
+            });
+          }
+          
+          // Optionally add the first product
+          if (app.initialProduct && app.initialProduct.name) {
+            const productId = `prod-${Date.now()}`;
+            await setDoc(doc(db, 'products', productId), {
+              ...app.initialProduct,
+              id: productId,
+              vendorId: vendorId,
+              vendorName: app.businessName,
+              status: 'Approved',
+              createdAt: serverTimestamp()
+            });
+          }
+        } else if (partnerType === 'DeliveryPartner') {
+          const dpId = `dp-${Date.now()}`;
+          await setDoc(doc(db, 'deliveryPartners', dpId), {
+            id: dpId,
+            userId: app.userId,
+            name: app.fullName,
+            phone: app.phone,
+            vehicleType: app.vehicleType || 'Bike',
+            status: 'Approved',
+            isOnline: false,
+            rating: 5.0,
+            earnings: 0,
+            trips: 0,
+            pendingPayout: 0,
+            photo: app.photo,
+            documentPhoto: app.documentPhoto,
+            rcPhoto: app.rcPhoto,
+            bankName: app.bankName,
+            accountHolder: app.accountHolder,
+            accountNumber: app.accountNumber,
+            ifscCode: app.ifscCode,
+            upiId: app.upiId,
+            createdAt: serverTimestamp(),
+            applicationId: app.id,
+            accessCode: accessCode
+          });
+
+          // Update user role
+          if (app.userId) {
+            await updateDoc(doc(db, 'users', app.userId), {
+              role: 'delivery',
+              deliveryId: dpId,
+              updatedAt: serverTimestamp()
+            });
+          }
+        }
+        
+        // Show the access code to the admin in a more prominent way
+        alert(`PARTNER APPROVED!\n\nAccess Code: ${accessCode}\n\nPlease share this secret PIN with the partner (${app.fullName}) so they can login to their dashboard.`);
+      }
+
+      setAdminSaveStatus(`${item.type} approved successfully!`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'logistics');
+    }
+  };
+
+  const handleRejectItem = async (item: any) => {
+    try {
+      const col = item.type === 'marriage' ? 'marriageProfiles' :
+                  item.type === 'realEstate' ? 'properties' :
+                  item.type === 'partners' ? 'partner_applications' : 'hospital_bookings';
+      
+      const reason = prompt("Enter reason for rejection/decline:");
+      if (reason === null) return; // cancel operation
+
+      const updateData: any = { 
+        updatedAt: serverTimestamp(),
+        rejectionReason: reason || "Standard verification requirements not met."
+      };
+      if (item.type === 'partners' || item.type === 'hospitals') {
+        updateData.status = 'Rejected';
+      } else {
+        updateData.isApproved = false;
+        updateData.status = 'Rejected';
+      }
+
+      await updateDoc(doc(db, col, item.id), updateData);
+      setAdminSaveStatus(`${item.type} rejected.`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'logistics');
+    }
+  };
+
+  const handleDeleteLogisticsItem = async (item: any) => {
+    if (!confirm(`Are you sure you want to delete this ${item.type} request?`)) return;
+    try {
+      const col = item.type === 'marriage' ? 'marriageProfiles' :
+                  item.type === 'realEstate' ? 'properties' :
+                  item.type === 'partners' ? 'partner_applications' : 'hospital_bookings';
+      
+      await deleteDoc(doc(db, col, item.id));
+      setAdminSaveStatus(`${item.type} deleted successfully!`);
+      // Update local logisticsItems if needed, but onSnapshot should handle it
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, 'logistics');
+    }
+  };
+
+  const handleEditLogisticsItem = async (item: any) => {
+    try {
+      const col = item.type === 'marriage' ? 'marriageProfiles' :
+                  item.type === 'realEstate' ? 'properties' :
+                  item.type === 'partners' ? 'partner_applications' : 'hospital_bookings';
+
+      if (item.type === 'hospitals') {
+        const newName = prompt("Edit Patient Name:", item.patientName || "");
+        const newHospital = prompt("Edit Hospital Name:", item.hospitalName || "");
+        const newReason = prompt("Edit Reason:", item.reason || "");
+        const newPrice = prompt("Edit Amount:", item.amount?.toString() || "0");
+
+        if (newName !== null || newHospital !== null || newReason !== null) {
+          await updateDoc(doc(db, col, item.id), {
+            patientName: newName || item.patientName,
+            hospitalName: newHospital || item.hospitalName,
+            reason: newReason || item.reason,
+            amount: Number(newPrice) || item.amount,
+            updatedAt: serverTimestamp()
+          });
+          setAdminSaveStatus("Hospital booking updated!");
+        }
+        return;
+      }
+
+      const fieldMapping: Record<string, string> = {
+        marriage: 'name',
+        realEstate: 'title',
+        partners: 'fullName'
+      };
+      
+      const field = fieldMapping[item.type] || 'name';
+      const currentVal = item[field] || '';
+
+      const newVal = prompt(`Edit ${field}:`, currentVal);
+      if (newVal !== null && newVal !== currentVal) {
+        await updateDoc(doc(db, col, item.id), { [field]: newVal, updatedAt: serverTimestamp() });
+        setAdminSaveStatus("Information updated successfully!");
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'logistics');
+    }
+  };
+  const [showHospitalModal, setShowHospitalModal] = useState(false);
+  const [editingHospitalName, setEditingHospitalName] = useState('');
+  const [hospitalEditData, setHospitalEditData] = useState({ price: 100, isActive: true, name: '' });
+  const [isNewHospital, setIsNewHospital] = useState(false);
+
+  const handleEditHospital = (name: string, data: any) => {
+    setEditingHospitalName(name);
+    setHospitalEditData({ ...data, name });
+    setIsNewHospital(false);
+    setShowHospitalModal(true);
+  };
+
+  const handleAddHospital = () => {
+    setEditingHospitalName('');
+    setHospitalEditData({ name: '', price: 100, isActive: true });
+    setIsNewHospital(true);
+    setShowHospitalModal(true);
+  };
+
+  const handleSaveHospitalConfig = () => {
+    const name = hospitalEditData.name.trim();
+    if (!name) return;
+    
+    const newPrices = { ...hospitalPrices };
+    if (!isNewHospital && editingHospitalName && editingHospitalName !== name) {
+      delete newPrices[editingHospitalName];
+    }
+    newPrices[name] = { price: hospitalEditData.price, isActive: hospitalEditData.isActive };
+    handleSaveHospitalPrices(newPrices);
+    setShowHospitalModal(false);
+  };
   const [adminReply, setAdminReply] = useState('');
 
   useEffect(() => {
-    const handleSupportUpdate = () => {
-      setSupportChats(JSON.parse(localStorage.getItem('lokal_support_chats') || '{}'));
-    };
-    window.addEventListener('support_message_sent', handleSupportUpdate);
-    window.addEventListener('storage', handleSupportUpdate);
-    return () => {
-      window.removeEventListener('support_message_sent', handleSupportUpdate);
-      window.removeEventListener('storage', handleSupportUpdate);
-    };
-  }, []);
+    if (isAdmin && adminView === 'properties') {
+      const q = query(collection(db, 'property_chats'), orderBy('timestamp', 'desc'));
+      const unsub = onSnapshot(q, (snap) => {
+        const chats: any[] = [];
+        snap.forEach(d => chats.push({ id: d.id, ...d.data() }));
+        setPropertyChats(chats);
+      }, (err) => handleFirestoreError(err, OperationType.GET, 'property_chats'));
+      return () => unsub();
+    }
+  }, [isAdmin, adminView]);
 
-  const handleAdminReply = (partnerId: string) => {
+  const handleAdminPropertyChatReply = async (userId: string, propertyId: string) => {
     if (!adminReply.trim()) return;
-    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const newMsg: SupportMessage = {
-      id: `admin-msg-${Date.now()}`,
-      senderId: 'admin',
-      senderName: 'Support',
-      senderType: 'admin',
-      text: adminReply,
-      timestamp: now
-    };
-
-    const allChats = { ...supportChats };
-    const chat = allChats[partnerId];
-    if (chat) {
-      chat.messages.push(newMsg);
-      chat.lastMessageTimestamp = now;
-      chat.unreadCount = 0; // Reset as admin has read/replied
-      allChats[partnerId] = chat;
-      localStorage.setItem('lokal_support_chats', JSON.stringify(allChats));
-      setSupportChats(allChats);
+    try {
+      await addDoc(collection(db, 'property_chats'), {
+        propertyId,
+        userId,
+        text: adminReply,
+        senderId: 'admin',
+        senderName: 'Local Bandi Admin',
+        senderType: 'admin',
+        timestamp: serverTimestamp()
+      });
       setAdminReply('');
-      window.dispatchEvent(new CustomEvent('support_message_received'));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'property_chats');
+    }
+  };
+  const [properties, setProperties] = useState<any[]>([]);
+  const [selectedApproval, setSelectedApproval] = useState<any | null>(null);
+  const [supportChats, setSupportChats] = useState<Record<string, SupportChat>>({});
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const effectiveIsChatAdmin = (isSuperAdmin || isBranchAdmin || isAdminLoggedIn) && !!user;
+    if (effectiveIsChatAdmin) {
+      const chatsRef = collection(db, 'support_chats');
+      const chatsQuery = isBranchAdmin && currentBranchId
+        ? query(chatsRef, where('branchId', '==', currentBranchId), orderBy('timestamp', 'asc'))
+        : query(chatsRef, orderBy('timestamp', 'asc'));
+
+      const unsub = onSnapshot(chatsQuery, (snap) => {
+        const chats: Record<string, SupportChat> = {};
+        snap.forEach(d => {
+          const data = d.data();
+          const userId = data.userId || 'unknown';
+          if (!chats[userId]) {
+            chats[userId] = {
+              userId,
+              userName: data.userName || 'Anonymous User',
+              userEmail: data.userEmail || '',
+              messages: [],
+              lastMessageTimestamp: null,
+              unreadCount: 0
+            };
+          }
+          const msg: SupportMessage = {
+            id: d.id,
+            senderId: data.userId || 'admin',
+            senderName: data.userName || (data.senderType === 'admin' ? 'Admin' : 'User'),
+            senderType: data.senderType,
+            text: data.text,
+            timestamp: data.timestamp,
+            careType: data.careType
+          };
+          chats[userId].messages.push(msg);
+          chats[userId].lastMessageTimestamp = data.timestamp;
+          if (data.senderType !== 'admin' && !data.isRead) {
+            chats[userId].unreadCount = (chats[userId].unreadCount || 0) + 1;
+          }
+        });
+        setSupportChats(chats);
+      }, (err) => handleFirestoreError(err, OperationType.GET, 'support_chats'));
+      return () => unsub();
+    }
+  }, [isSuperAdmin, isBranchAdmin, isAdminLoggedIn, currentBranchId]);
+
+  const handleAdminReply = async (userId: string) => {
+    if (!adminReply.trim()) return;
+    try {
+      const path = 'support_chats';
+      await addDoc(collection(db, path), {
+        userId,
+        userName: 'Local Bandi Admin',
+        text: adminReply,
+        senderType: 'admin',
+        branchId: currentBranchId,
+        timestamp: serverTimestamp(),
+        isRead: true
+      });
+      
+      // Also mark user messages as read
+      const unreadQuery = query(
+        collection(db, path), 
+        where('userId', '==', userId), 
+        where('isRead', '==', false)
+      );
+      
+      // Note: We'll let the user messages be marked as read as they are fetched or via a bulk update
+      // For simplicity here, we'll mark all unread messages for this user as read
+      onSnapshot(unreadQuery, (snap) => {
+         snap.forEach(d => {
+            updateDoc(doc(db, path, d.id), { isRead: true });
+         });
+      }, () => {});
+
+      setAdminReply('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'support_chats');
     }
   };
 
@@ -987,11 +2180,13 @@ export default function Home({
   const [editingPartnerId, setEditingPartnerId] = useState<string | null>(null);
   const [editingUser, setEditingUser] = useState<any>(null);
   const [showUserModal, setShowUserModal] = useState(false);
-  const [adminSaveStatus, setAdminSaveStatus] = useState('');
+  const [selectedLetterPartner, setSelectedLetterPartner] = useState<any>(null);
   const [isVendorMode, setIsVendorMode] = useState(false);
   const [activeVendorProfile, setActiveVendorProfile] = useState<VendorProfile | null>(null);
   const [isDeliveryMode, setIsDeliveryMode] = useState(false);
-  const [activeDeliveryProfile, setActiveDeliveryProfile] = useState<DeliveryPartnerProfile | null>(null);
+  const [activeDeliveryProfile, setActiveDeliveryProfile] = useState<any | null>(null);
+  const [riderShiftTime, setRiderShiftTime] = useState('00h 00m 00s');
+  const [editingAdminMarriageProfile, setEditingAdminMarriageProfile] = useState<any | null>(null);
   const [showPartnerSupportChat, setShowPartnerSupportChat] = useState(false);
   const [partnerChatMessage, setPartnerChatMessage] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
@@ -1009,6 +2204,41 @@ export default function Home({
   useEffect(() => {
     localStorage.setItem('payoutHistory', JSON.stringify(payoutHistory));
   }, [payoutHistory]);
+
+  // Track active shift duration for Rider Hub dashboard based on shiftStartedAt
+  useEffect(() => {
+    if (activeDeliveryProfile?.isOnline && activeDeliveryProfile?.shiftStartedAt) {
+      const updateText = () => {
+        let startMs = 0;
+        if (activeDeliveryProfile.shiftStartedAt.seconds) {
+          startMs = activeDeliveryProfile.shiftStartedAt.seconds * 1000;
+        } else if (typeof activeDeliveryProfile.shiftStartedAt === 'number') {
+          startMs = activeDeliveryProfile.shiftStartedAt;
+        } else {
+          startMs = new Date(activeDeliveryProfile.shiftStartedAt).getTime();
+        }
+        
+        const diffMs = Date.now() - startMs;
+        if (diffMs > 0) {
+          const totalSecs = Math.floor(diffMs / 1000);
+          const hours = Math.floor(totalSecs / 3600);
+          const minutes = Math.floor((totalSecs % 3600) / 60);
+          const seconds = totalSecs % 60;
+          setRiderShiftTime(
+            `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`
+          );
+        } else {
+          setRiderShiftTime('00h 00m 00s');
+        }
+      };
+      
+      updateText();
+      const interval = setInterval(updateText, 1000);
+      return () => clearInterval(interval);
+    } else {
+      setRiderShiftTime('00h 00m 00s');
+    }
+  }, [activeDeliveryProfile?.isOnline, activeDeliveryProfile?.shiftStartedAt]);
 
   const VENDOR_TERMS = [
     "Strict 10% commission on every order for platform maintenance.",
@@ -1058,23 +2288,33 @@ export default function Home({
   }, [adminSaveStatus]);
 
   useEffect(() => {
-    localStorage.setItem('vendors', JSON.stringify(vendors));
+    // Removed localStorage.setItem('vendors') to prevent QuotaExceededError
     window.dispatchEvent(new Event('storage'));
   }, [vendors]);
 
   useEffect(() => {
-    localStorage.setItem('deliveryPartners', JSON.stringify(deliveryPartners));
+    // Removed localStorage.setItem('deliveryPartners') to prevent QuotaExceededError
     window.dispatchEvent(new Event('storage'));
   }, [deliveryPartners]);
 
   useEffect(() => {
-    localStorage.setItem('pendingApprovals', JSON.stringify(pendingApprovals));
+    // Removed localStorage.setItem('pendingApprovals') to prevent QuotaExceededError
   }, [pendingApprovals]);
 
   const handleDeleteItem = (id: string) => {
-    if (confirm("Delete this item permanently?")) {
-      setLocalInventory(prev => prev.filter(item => item.id !== id));
-    }
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Item?",
+      message: "Are you sure you want to permanently delete this item from the cloud? This action cannot be undone.",
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'products', id));
+          setAdminSaveStatus('Item Deleted Successfully.');
+        } catch (e) {
+          handleFirestoreError(e, OperationType.DELETE, `products/${id}`);
+        }
+      }
+    });
   };
 
   const handleEditItem = (item: any) => {
@@ -1095,17 +2335,58 @@ export default function Home({
     setShowItemModal(true);
   };
 
-  const handleCancelOrder = async (id: string) => {
-    if (confirm(`Cancel Order ${id}? This action cannot be undone.`)) {
-      try {
-        await updateDoc(doc(db, 'orders', id), {
-          status: 'Cancelled',
-          updatedAt: serverTimestamp()
-        });
-        setAdminSaveStatus(`Order ${id} cancelled.`);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `orders/${id}`);
-      }
+  const downloadAndExportInventoryCSV = () => {
+    try {
+      let csvContent = `Product ID,Product Name,Category,Price,Original Price,Stock Count,Status,Image URL\n`;
+      localInventory.forEach((item) => {
+        const id = `"${item.id}"`;
+        const name = `"${item.name.replace(/"/g, '""')}"`;
+        const category = `"${item.category.replace(/"/g, '""')}"`;
+        const price = item.price || 0;
+        const originalPrice = item.originalPrice || '';
+        const stock = (item as any).stock !== undefined ? (item as any).stock : '';
+        const active = (item as any).noOrder ? 'No Order' : 'Active';
+        const image = item.image ? `"${item.image}"` : '';
+        
+        csvContent += `${id},${name},${category},${price},${originalPrice},${stock},${active},${image}\n`;
+      });
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Lokal_Bandi_Inventory_Catalog_Export.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Catalog CSV Export Failed:", err);
+      alert("Failed to export catalog CSV: " + (err as Error).message);
+    }
+  };
+
+  const handleCancelOrder = (id: string) => {
+    setOrderIdToCancel(id);
+    setCancelReasonInput("");
+  };
+
+  const confirmCancelOrder = async () => {
+    if (!orderIdToCancel || !cancelReasonInput.trim()) {
+      alert("Please provide a reason for cancellation.");
+      return;
+    }
+    
+    try {
+      await updateDoc(doc(db, 'orders', orderIdToCancel), {
+        status: 'Cancelled',
+        cancellationReason: cancelReasonInput.trim(),
+        updatedAt: serverTimestamp()
+      });
+      setAdminSaveStatus(`Order ${orderIdToCancel} cancelled.`);
+      setOrderIdToCancel(null);
+      setCancelReasonInput("");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderIdToCancel}`);
     }
   };
 
@@ -1124,23 +2405,49 @@ export default function Home({
       setShowPanelSelection(true);
     }
   };
-  const handleSaveItem = () => {
+  const handleSaveItem = async () => {
     if (!editingItem || !editingItem.name || editingItem.price <= 0) {
-      alert("Please fill all mandatory fields correctly.");
+      alert("Please fill all mandatory fields correctly (Name is required, Price must be greater than zero).");
       return;
     }
     
-    setLocalInventory(prev => {
-      const exists = prev.find(i => i.id === editingItem.id);
-      if (exists) {
-        return prev.map(i => i.id === editingItem.id ? editingItem : i);
+    try {
+      // 1. Prepare item with clean fields under the current branch ID
+      const rawItemToSave = {
+        ...editingItem,
+        branchId: currentBranchId,
+        updatedAt: serverTimestamp()
+      };
+
+      // 2. Sanitize to prevent Firebase JS SDK from throwing "Unsupported field value: undefined"
+      const itemToSave: any = {};
+      Object.keys(rawItemToSave).forEach(key => {
+        if (rawItemToSave[key] !== undefined) {
+          itemToSave[key] = rawItemToSave[key];
+        }
+      });
+
+      // 3. Save to Firestore
+      if (editingItem.id.startsWith('new-')) {
+        // Create a new document path first to get a native Firestore ID
+        const newDocRef = doc(collection(db, 'products'));
+        itemToSave.id = newDocRef.id; // Assign actual generated ID instead of leaving it undefined
+        itemToSave.createdAt = serverTimestamp();
+        
+        await setDoc(newDocRef, itemToSave);
+      } else {
+        // Update existing document
+        await setDoc(doc(db, 'products', editingItem.id), itemToSave, { merge: true });
       }
-      return [editingItem, ...prev];
-    });
-    setSearchQuery('');
-    setAdminSaveStatus('Item Saved Successfully!');
-    setShowItemModal(false);
-    setEditingItem(null);
+
+      setSearchQuery('');
+      setAdminSaveStatus('Item Saved Successfully!');
+      setShowItemModal(false);
+      setEditingItem(null);
+    } catch (e) {
+      console.error("Error saving catalog item:", e);
+      handleFirestoreError(e, OperationType.WRITE, 'products');
+    }
   };
 
   const handleBannerClick = (banner: any) => {
@@ -1150,22 +2457,50 @@ export default function Home({
       const product = localInventory.find(p => p.id === banner.productId);
       if (product) onProductClick(product);
     } else if (banner.categoryId) {
-      const category = CATEGORIES.find(c => c.id === banner.categoryId);
-      if (category) onCategoryClick(category);
+      const category = categories.find(c => c.id === banner.categoryId) || CATEGORIES.find(c => c.id === banner.categoryId);
+      if (category) integratedCategoryClick(category);
     }
   };
 
+  const [isBannerPaused, setIsBannerPaused] = useState(false);
+
   useEffect(() => {
+    if (isBannerPaused) return;
     const timer = setInterval(() => {
       setActiveTopBanner(prev => (prev === topBanners.length - 1 ? 0 : prev + 1));
       setActiveBottomBanner(prev => (prev === bottomBanners.length - 1 ? 0 : prev + 1));
-    }, 4000); // 4 seconds as requested
+    }, 6000); // 6 seconds as requested
     return () => clearInterval(timer);
-  }, [topBanners.length, bottomBanners.length]);
+  }, [topBanners.length, bottomBanners.length, isBannerPaused]);
 
-  const [adminPassword, setAdminPassword] = useState(localStorage.getItem('adminPassword') || 'Founder@2026');
+  const [adminPassword, setAdminPassword] = useState('Founder@2026');
   const [newPassword, setNewPassword] = useState('');
   const [passwordChangeStatus, setPasswordChangeStatus] = useState('');
+
+  useEffect(() => {
+    if (isAdmin) {
+      const q = collection(db, 'properties');
+      const unsub = onSnapshot(q, (snapshot) => {
+        const props: any[] = [];
+        snapshot.forEach((doc) => {
+          props.push({ id: doc.id, ...doc.data() });
+        });
+        setProperties(props);
+      });
+      return () => unsub();
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      const unsub = onSnapshot(doc(db, 'settings', 'security_config'), (snapshot) => {
+        if (snapshot.exists()) {
+          setAdminPassword(snapshot.data().adminPasscode || 'Founder@2026');
+        }
+      });
+      return () => unsub();
+    }
+  }, [isAdmin]);
 
   // Device Security Logic
   const [deviceId] = useState(() => {
@@ -1236,25 +2571,38 @@ export default function Home({
     }
   }, [isAdmin, isAdminLoggedIn, vendors]);
 
-  const handleSendOtp = () => {
+  const handleSendOtp = async () => {
     if (!adminPhone || adminPhone.length < 10) {
       setLoginError('Enter a valid phone number');
       return;
     }
-    // Simulate OTP sending
-    setAdminAuthStep('otp');
+    
     setLoginError('');
-    console.log('OTP Sent to', adminPhone);
+    setIsSending(true);
+    try {
+      const appVerifier = (window as any).recaptchaVerifier;
+      const result = await phoneLogin(`+91${adminPhone}`, appVerifier);
+      setConfirmationResult(result);
+      setAdminAuthStep('otp');
+    } catch (err: any) {
+      setLoginError(err.message || 'Failed to send OTP.');
+    } finally {
+      setIsSending(false);
+    }
   };
 
-  const handleVerifyOtp = () => {
-    if (adminOtp === '1234' || adminOtp === '4321') { // Demo OTPs
-      setAdminAuthStep('password');
-      setLoginError('');
-      // In a real app, this would verify the OTP and log them in
+  const handleVerifyOtp = async () => {
+    if (!confirmationResult || adminOtp.length !== 6) return;
+    
+    setIsVerifying(true);
+    setLoginError('');
+    try {
+      await confirmationResult.confirm(adminOtp);
       finalizeAdminLogin();
-    } else {
+    } catch (err: any) {
       setLoginError('Invalid OTP');
+    } finally {
+      setIsVerifying(false);
     }
   };
 
@@ -1277,15 +2625,15 @@ export default function Home({
   const handleAdminAuth = () => {
     const currentDevice = deviceRegistry.find(d => d.id === deviceId);
     
-    // 1. Check if device is banned (brute force protection)
-    if (currentDevice && currentDevice.isBanned) {
-      setLoginError('This device is blocked. Contact Master Admin.');
-      return;
-    }
-
+    // If password is correct, we can bypass the ban (Master Auth)
     if (adminPass === adminPassword) {
-      // Correct password logic
-      
+      // 1. Unban if necessary
+      if (currentDevice && currentDevice.isBanned) {
+        setDeviceRegistry(prev => prev.map(d => 
+          d.id === deviceId ? { ...d, isBanned: false, failedAttempts: 0 } : d
+        ));
+      }
+
       // 2. Check if already part of active sessions
       const isAlreadySession = activeAdminSessions.includes(deviceId);
       
@@ -1354,31 +2702,37 @@ export default function Home({
     }
   };
 
-  const handlePasswordChange = () => {
+  const handlePasswordChange = async () => {
     if (newPassword.length < 4) {
       setPasswordChangeStatus('Password too short');
       return;
     }
-    localStorage.setItem('adminPassword', newPassword);
-    setAdminPassword(newPassword);
-    setNewPassword('');
-    setPasswordChangeStatus('Password updated successfully!');
-    setTimeout(() => setPasswordChangeStatus(''), 3000);
+    try {
+      await setDoc(doc(db, 'settings', 'security_config'), { adminPasscode: newPassword }, { merge: true });
+      setPasswordChangeStatus('Password updated successfully!');
+      setNewPassword('');
+      setTimeout(() => setPasswordChangeStatus(''), 3000);
+    } catch (err) {
+      setPasswordChangeStatus('Failed to update password');
+    }
   };
-
-  const Skeleton = ({ className, ...props }: { className: string; [key: string]: any }) => (
-    <div className={`animate-pulse bg-gray-100 rounded-2xl ${className}`} {...props}></div>
-  );
 
   const t = translations[language].home;
 
   const filteredCategories = React.useMemo(() => 
-    CATEGORIES.filter(cat => 
+    categories.filter(cat => 
       cat.name.toLowerCase().includes(searchQuery.toLowerCase())
-    ), [searchQuery]);
+    ), [searchQuery, categories]);
+
+  const NATIONAL_CATEGORIES = ['marriage', 'realestate', 'hospital_op'];
 
   const filteredProducts = React.useMemo(() => 
     localInventory.filter(item => {
+      const isNational = NATIONAL_CATEGORIES.includes(item.category);
+      
+      // Hyperlocal restriction: Filter by branchId if not a national category
+      if (!isNational && item.branchId && item.branchId !== currentBranchId) return false;
+
       const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           item.description.toLowerCase().includes(searchQuery.toLowerCase());
       
@@ -1387,11 +2741,28 @@ export default function Home({
       // Apply Filters
       const itemRating = (item as any).rating || 0;
       if (filterRating > 0 && itemRating < filterRating) return false;
-      if (filterPrice === 'low' && item.price > 500) return false;
-      if (filterPrice === 'high' && item.price <= 500) return false;
+      if (filterPriceRange) {
+        if (item.price < filterPriceRange.min || item.price > filterPriceRange.max) return false;
+      }
+
+      if (filterAvailability && !(item as any).isOnline) return false;
 
       return true;
-    }), [searchQuery, localInventory, filterRating, filterPrice]);
+    }), [searchQuery, localInventory, filterRating, filterPriceRange, filterAvailability, currentBranchId]);
+
+  const handicraftsItems = React.useMemo(() => 
+    localInventory.filter(p => p.category === 'handicrafts'),
+  [localInventory]);
+
+  const popularAroundYouItems = React.useMemo(() => 
+    localInventory.filter(p => p.category !== 'meat' && p.category !== 'food' && p.category !== 'handicrafts')
+                  .slice(0, 6),
+  [localInventory]);
+
+  const trendingServicesItems = React.useMemo(() => 
+    localInventory.filter(i => ['maids', 'mechanics', 'construction', 'care', 'jobs', 'driving_school', 'beauty_parlour'].includes(i.category))
+                  .slice(0, 4),
+  [localInventory]);
 
   if (loading) {
     return (
@@ -1440,57 +2811,51 @@ export default function Home({
     <div className="flex gap-2 overflow-x-auto scrollbar-hide py-3">
       <motion.button 
         whileTap={{ scale: 0.95 }}
-        onClick={() => setFilterPrice(filterPrice === 'low' ? 'all' : 'low')}
-        className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] whitespace-nowrap transition-all border-2 ${
-          filterPrice === 'low' 
-            ? 'bg-gray-900 text-white border-gray-900 shadow-xl shadow-gray-200' 
-            : 'bg-white text-gray-500 border-gray-100 hover:border-gray-200 active:bg-gray-50'
-        }`}
+        onClick={() => setShowFilterModal(true)}
+        className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] whitespace-nowrap bg-white text-indigo-600 border-2 border-indigo-50 flex items-center gap-2 shadow-sm"
       >
-        <span className="flex items-center gap-2">
-          {filterPrice === 'low' && <Check className="w-3 h-3" />}
-          Budget Friendly
-        </span>
+        <Settings2 className="w-3.5 h-3.5" />
+        Filters {(filterRating > 0 || filterPriceRange || filterAvailability) ? '(Active)' : ''}
       </motion.button>
+
       <motion.button 
         whileTap={{ scale: 0.95 }}
         onClick={() => setFilterRating(filterRating === 4 ? 0 : 4)}
         className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] whitespace-nowrap transition-all border-2 flex items-center gap-2 ${
-          filterRating === 4 
+          filterRating >= 4 
             ? 'bg-gray-900 text-white border-gray-900 shadow-xl shadow-gray-200' 
             : 'bg-white text-gray-500 border-gray-100 hover:border-gray-200 active:bg-gray-50'
         }`}
       >
-        <Star className={`w-3.5 h-3.5 ${filterRating === 4 ? 'text-yellow-400 fill-yellow-400' : 'text-gray-400 group-hover:text-yellow-400'}`} />
-        Top Rated
+        <Star className={`w-3.5 h-3.5 ${filterRating >= 4 ? 'text-yellow-400 fill-yellow-400' : 'text-gray-400'}`} />
+        4.0+ Rated
       </motion.button>
+
       <motion.button 
         whileTap={{ scale: 0.95 }}
-        onClick={() => setFilterAvailability(!filterAvailability)}
+        onClick={() => setFilterPriceRange(filterPriceRange?.max === 200 ? null : {min: 0, max: 200})}
         className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] whitespace-nowrap transition-all border-2 ${
-          filterAvailability 
+          filterPriceRange?.max === 200
             ? 'bg-gray-900 text-white border-gray-900 shadow-xl shadow-gray-200' 
-            : 'bg-white text-gray-500 border-gray-100 hover:border-gray-200 active:bg-gray-50'
+            : 'bg-white text-gray-500 border-gray-100'
         }`}
       >
-        <span className="flex items-center gap-2">
-          {filterAvailability && <Zap className="w-3 h-3 text-yellow-400 fill-yellow-400" />}
-          Lokal Instant
-        </span>
+        Under ₹200
       </motion.button>
-      {(filterPrice !== 'all' || filterRating !== 0 || filterAvailability) && (
+
+      {(filterRating !== 0 || filterPriceRange || filterAvailability) && (
         <motion.button 
           initial={{ opacity: 0, scale: 0.8 }}
           animate={{ opacity: 1, scale: 1 }}
           onClick={() => {
-            setFilterPrice('all');
+            setFilterPriceRange(null);
             setFilterRating(0);
             setFilterAvailability(false);
           }}
           className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-[0.1em] whitespace-nowrap bg-rose-50 text-rose-500 border-2 border-rose-100 flex items-center gap-2"
         >
           <X className="w-3 h-3" />
-          Clear
+          Reset
         </motion.button>
       )}
     </div>
@@ -1498,6 +2863,7 @@ export default function Home({
 
   return (
     <div className="h-full w-full bg-white flex flex-col">
+
       {/* Partner Support Chat Modal */}
       <AnimatePresence>
         {showPartnerSupportChat && (
@@ -1570,13 +2936,25 @@ export default function Home({
                     };
 
                     const allChats = { ...supportChats };
-                    const chat = allChats[partnerId] || { partnerId, partnerName, messages: [], lastMessageTimestamp: now, unreadCount: 0 };
+                    const chat = allChats[partnerId] || { 
+                      userId: partnerId, 
+                      userName: partnerName, 
+                      partnerId, 
+                      partnerName, 
+                      messages: [], 
+                      lastMessageTimestamp: now, 
+                      unreadCount: 0 
+                    };
                     chat.messages.push(newMsg);
                     chat.lastMessageTimestamp = now;
                     chat.unreadCount = (chat.unreadCount || 0) + 1;
                     allChats[partnerId] = chat;
                     
-                    localStorage.setItem('lokal_support_chats', JSON.stringify(allChats));
+                    try {
+                      localStorage.setItem('lokal_support_chats', JSON.stringify(allChats));
+                    } catch (e) {
+                      console.warn('Storage quota exceeded for lokal_support_chats', e);
+                    }
                     setSupportChats(allChats);
                     setPartnerChatMessage('');
                     window.dispatchEvent(new CustomEvent('support_message_sent'));
@@ -1611,7 +2989,7 @@ export default function Home({
           </div>
           <h2 className="text-4xl font-black text-white italic mb-4 font-display">Major Update in Progress</h2>
           <p className="text-indigo-200 font-bold uppercase text-[10px] tracking-[0.3em] max-w-xs leading-relaxed mb-12">
-            Lokal Bharath is getting upgraded with new features. All your data and orders are safe. Check back soon!
+            Local Bandi Multi Services is getting upgraded with new features. All your data and orders are safe. Check back soon!
           </p>
           <button 
             onClick={() => window.location.reload()}
@@ -1669,6 +3047,7 @@ export default function Home({
               <div className="absolute top-0 left-0 w-full h-1.5 bg-yellow-400"></div>
               
               <div className="mb-6 flex flex-col items-center">
+                <div id="admin-recaptcha"></div>
                 <div className="w-16 h-16 bg-gray-900 rounded-3xl flex items-center justify-center mb-4 shadow-xl">
                   <ShieldCheck className="w-8 h-8 text-yellow-400" />
                 </div>
@@ -1681,11 +3060,11 @@ export default function Home({
               {adminAuthStep === 'password' && (
                 <div className="space-y-4">
                   <input 
-                    type="password"
+                    type="text"
                     placeholder="Enter Passcode"
                     value={adminPass}
                     onChange={(e) => setAdminPass(e.target.value)}
-                    className="w-full bg-gray-50 p-4 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-yellow-400 text-center text-lg"
+                    className="w-full bg-gray-50 p-4 rounded-2xl font-bold outline-none border-2 border-transparent focus:border-yellow-400 text-center text-xl tracking-widest text-gray-900"
                   />
                   <button 
                     onClick={() => {
@@ -1814,42 +3193,62 @@ export default function Home({
                   <ShieldCheck className="w-8 h-8 text-yellow-400" />
                 </div>
                 <h2 className="text-3xl font-black text-gray-900 italic tracking-tighter leading-none mb-2">Access Portal</h2>
-                <p className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em]">Choose Administrative Domain</p>
+                <p className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em]">{isSuperAdmin ? 'Master Control Panel' : 'Branch Admin Portal'}</p>
               </div>
 
               <div className="grid gap-4">
-                <button 
-                  onClick={() => {
-                    setShowPanelSelection(false);
-                    setAdminView('dashboard');
-                    setIsAdminOpen(true);
-                  }}
-                  className="w-full p-6 bg-gray-900 text-white rounded-[2.5rem] flex items-center gap-5 group active:scale-95 transition-all shadow-xl shadow-gray-200"
-                >
-                  <div className="p-4 bg-white/10 rounded-2xl group-hover:bg-yellow-400 group-hover:text-gray-900 transition-all">
-                    <LayoutDashboard className="w-6 h-6" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-sm font-black italic text-white">Founder Panel</p>
-                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Master Control & Catalog</p>
-                  </div>
-                </button>
+                {(isSuperAdmin || isBranchAdmin) && (
+                  <button 
+                    onClick={() => {
+                      setShowPanelSelection(false);
+                      setAdminView('dashboard');
+                      setIsAdminOpen(true);
+                    }}
+                    className="w-full p-6 bg-gray-900 text-white rounded-[2.5rem] flex items-center gap-5 group active:scale-95 transition-all shadow-xl shadow-gray-200"
+                  >
+                    <div className="p-4 bg-white/10 rounded-2xl group-hover:bg-yellow-400 group-hover:text-gray-900 transition-all">
+                      <LayoutDashboard className="w-6 h-6" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-sm font-black italic text-white">{isSuperAdmin ? 'Founder Panel' : 'Branch Dashboard'}</p>
+                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{isSuperAdmin ? 'Master Control & Catalog' : 'Local Branch Operations'}</p>
+                    </div>
+                  </button>
+                )}
 
                 <button 
                   onClick={() => {
                     setShowPanelSelection(false);
                     setIsLogisticsOpen(true);
                   }}
-                  className="w-full p-6 bg-indigo-50 border-2 border-indigo-100 text-indigo-900 rounded-[2.5rem] flex items-center gap-5 group active:scale-95 transition-all"
+                  className="w-full p-6 bg-indigo-50 border-2 border-indigo-100 text-indigo-900 rounded-[2.5rem] flex items-center gap-5 group active:scale-95 transition-all shadow-lg shadow-indigo-100/10"
                 >
                   <div className="p-4 bg-indigo-600 text-white rounded-2xl group-hover:scale-110 transition-all">
                     <Truck className="w-6 h-6" />
                   </div>
                   <div className="text-left">
                     <p className="text-sm font-black italic text-indigo-900">Logistics Hub</p>
-                    <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">Orders & Delivery Ops</p>
+                    <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">Order Dispatch & Delivery</p>
                   </div>
                 </button>
+
+                {isSuperAdmin && (
+                  <button 
+                    onClick={() => {
+                      setShowPanelSelection(false);
+                      onNavigate('vendor', 'admin-store');
+                    }}
+                    className="w-full p-6 bg-emerald-50 border-2 border-emerald-100 text-emerald-900 rounded-[2.5rem] flex items-center gap-5 group active:scale-95 transition-all shadow-lg shadow-emerald-100/10"
+                  >
+                    <div className="p-4 bg-emerald-600 text-white rounded-2xl group-hover:scale-110 transition-all">
+                      <Store className="w-6 h-6" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-sm font-black italic text-emerald-900">Admin Store Ops</p>
+                      <p className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">Local Bandi Multi Services Preparations</p>
+                    </div>
+                  </button>
+                )}
               </div>
               
               <p className="text-center mt-8 text-[9px] font-bold text-gray-400 uppercase tracking-[0.2em] opacity-50 italic">Highly Secure Environment</p>
@@ -1868,11 +3267,21 @@ export default function Home({
                   <Truck className="w-6 h-6" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-black italic tracking-tighter leading-none mb-1">Logistics Hub</h2>
-                  <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest leading-none">Order Management Panel</p>
+                  <h2 className="text-xl font-black italic tracking-tighter leading-none mb-1 flex items-center gap-2">
+                    Logistics Hub
+                    <span className="px-2 py-0.5 text-[8px] bg-indigo-600 text-white rounded-md tracking-widest uppercase font-mono">HO Khammam</span>
+                  </h2>
+                  <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest leading-none">AP & Telangana Statewide Operations</p>
                 </div>
               </div>
               <div className="flex gap-3">
+                <button 
+                  onClick={() => downloadCSV(activeOrders, 'logistics_orders')}
+                  className="p-3 bg-white/10 rounded-2xl hover:bg-white/20 transition-colors flex items-center gap-2 text-[8px] font-black uppercase tracking-widest text-indigo-200"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  CSV
+                </button>
                 <button 
                   onClick={() => setIsLogisticsOpen(false)}
                   className="p-3 bg-white/10 rounded-2xl hover:bg-white/20 transition-colors"
@@ -2003,6 +3412,21 @@ export default function Home({
                                     {new Date(order.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                  </p>
                                </div>
+                               {order.deliveryAddress && (
+                                 <div className="flex items-start gap-1 mt-1 text-gray-500">
+                                   <MapPin className="w-2.5 h-2.5 mt-0.5" />
+                                   <p className="text-[8px] font-bold italic leading-tight max-w-[250px]">{order.deliveryAddress}</p>
+                                 </div>
+                               )}
+                               {order.orderItems && order.orderItems.length > 0 && (
+                                 <div className="mt-2 flex flex-wrap gap-x-2 gap-y-0.5">
+                                   {order.orderItems.map((item: any, idx: number) => (
+                                     <span key={idx} className="text-[8px] font-black text-indigo-400/70 border border-indigo-100 px-1.5 py-0.5 rounded-lg">
+                                       {item.quantity}x {item.name}
+                                     </span>
+                                   ))}
+                                 </div>
+                               )}
                              </div>
                           </div>
                           
@@ -2011,18 +3435,47 @@ export default function Home({
                                <>
                                  <button 
                                    onClick={() => {
-                                     setActiveOrders(prev => prev.map(o => o.id === order.id ? {...o, status: 'Accepted'} : o));
+                                     (async () => {
+                                        try {
+                                          await updateDoc(doc(db, 'orders', order.id), {
+                                            status: 'Accepted',
+                                            updatedAt: serverTimestamp()
+                                          });
+                                        } catch (err) {
+                                          handleFirestoreError(err, OperationType.UPDATE, `orders/${order.id}`);
+                                        }
+                                      })();
                                    }}
                                    className="h-10 px-4 bg-emerald-500 text-white rounded-xl text-[9px] font-black uppercase tracking-widest shadow-md shadow-emerald-100 active:scale-95 transition-all"
+                                  >
+                                    Accept
+                                  </button>
+                                  {isSuperAdmin && (
+                                    <button 
+                                      onClick={async () => {
+                                         try {
+                                           await updateDoc(doc(db, 'orders', order.id), {
+                                             status: 'Accepted',
+                                             vendorId: 'admin-store',
+                                             vendorName: 'Bharat Store (Pre-Fulfillment)',
+                                             updatedAt: serverTimestamp()
+                                           });
+                                           alert("Order accepted and reassigned to Bharat Store!");
+                                         } catch (err) {
+                                           handleFirestoreError(err, OperationType.UPDATE, `orders/${order.id}`);
+                                         }
+                                      }}
+                                      className="h-10 px-4 bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest shadow-md shadow-indigo-100 active:scale-95 transition-all"
+                                    >
+                                      Accept (Bharat Store)
+                                    </button>
+                                  )}
+                                  <button style={{ display: 'none' }}
                                  >
                                    Accept
                                  </button>
                                  <button 
-                                   onClick={() => {
-                                     if(confirm('Cancel this order?')) {
-                                       setActiveOrders(prev => prev.map(o => o.id === order.id ? {...o, status: 'Cancelled'} : o));
-                                     }
-                                   }}
+                                   onClick={() => handleCancelOrder(order.id)}
                                    className="h-10 px-4 bg-gray-100 text-gray-400 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
                                  >
                                    Cancel
@@ -2045,16 +3498,44 @@ export default function Home({
                              )}
                              {order.status === 'Delivered' && (
                                <button 
-                                 onClick={() => {
+                                 onClick={async () => {
                                    if(confirm('Mark as Returned?')) {
-                                     setActiveOrders(prev => prev.map(o => o.id === order.id ? {...o, status: 'Returned'} : o));
+                                     try {
+                                        await updateDoc(doc(db, 'orders', order.id), {
+                                          status: 'Returned' as any,
+                                          updatedAt: serverTimestamp()
+                                        });
+                                      } catch (err) {
+                                        handleFirestoreError(err, OperationType.UPDATE, `orders/${order.id}`);
+                                      }
                                    }
                                  }}
                                  className="h-10 px-4 bg-purple-500 text-white rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
-                               >
-                                 Mark Return
-                               </button>
-                             )}
+                                >
+                                  Mark Return
+                                </button>
+                              )}
+                              {isSuperAdmin && !['Delivered', 'Cancelled', 'Returned'].includes(order.status) && (
+                                <button 
+                                  onClick={async () => {
+                                    if (confirm('Directly deliver this order?')) {
+                                      try {
+                                        await updateDoc(doc(db, 'orders', order.id), {
+                                          status: 'Delivered',
+                                          updatedAt: serverTimestamp()
+                                        });
+                                        alert("Order direct-delivered successfully!");
+                                      } catch (err) {
+                                        handleFirestoreError(err, OperationType.UPDATE, `orders/${order.id}`);
+                                      }
+                                    }
+                                  }}
+                                  className="h-10 px-4 bg-emerald-600 text-white rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                                >
+                                  Direct Deliver
+                                </button>
+                              )}
+                              
                           </div>
                         </div>
                       ))}
@@ -2310,38 +3791,61 @@ export default function Home({
                   <ShieldCheck className="w-5 h-5 text-yellow-400" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black text-gray-900 leading-none">Founder Panel</h2>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Admin Control Center</p>
+                  <h2 className="text-lg font-black text-gray-900 leading-none">{isSuperAdmin ? 'Founder Panel' : 'Branch Dashboard'}</h2>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{isSuperAdmin ? 'Admin Control Center' : `Branch ID: ${currentBranchId}`}</p>
                 </div>
               </div>
               <div className="flex gap-2">
                 <button 
-                  onClick={() => {
-                    setIsAdminOpen(false);
-                    setSearchQuery('');
-                  }}
-                  className="p-2 bg-gray-100 rounded-xl"
+                  onClick={() => setIsAdminOpen(false)}
+                  className="p-2 bg-emerald-50 rounded-xl text-emerald-600 flex items-center gap-1.5 hover:bg-emerald-600 hover:text-white transition-all px-3 font-black text-[9px] uppercase tracking-widest cursor-pointer"
+                  title="Close panel to view app"
                 >
-                  <X className="w-5 h-5 text-gray-500" />
+                  <Eye className="w-4 h-4" />
+                  <span>View App</span>
                 </button>
                 <button 
-                  onClick={() => {
+                  onClick={async () => {
                     localStorage.removeItem('admin_session_active');
                     window.dispatchEvent(new Event('maintenance_mode_changed'));
                     setIsAdminLoggedIn(false);
                     onAdminAuth?.(false);
-                    setIsAdminOpen(false);
                     setSearchQuery('');
+                    try {
+                      await logout();
+                    } catch (e) {
+                      console.error("Logout error", e);
+                    }
                   }}
-                  className="p-2 bg-rose-50 rounded-xl text-rose-500"
+                  className="p-2 bg-rose-50 rounded-xl text-rose-500 flex items-center gap-1 hover:bg-rose-500 hover:text-white transition-all px-3 font-black text-[9px] uppercase tracking-widest"
                   title="Logout Admin"
                 >
-                  <LogOut className="w-5 h-5" />
+                  <LogOut className="w-4 h-4" />
+                  <span>Log Out</span>
                 </button>
               </div>
             </header>
             
             <div className="bg-gray-900 px-6 py-3 flex gap-2 overflow-x-auto scrollbar-hide">
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('platformSettings')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'platformSettings' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
+                >
+                  Config
+                </button>
+              )}
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => {
+                    setIsAdminOpen(false);
+                    onNavigate('branchManager');
+                  }}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all bg-indigo-600 text-white shadow-lg shadow-indigo-200`}
+                >
+                  Franchises
+                </button>
+              )}
               <button 
                 onClick={() => setAdminView('dashboard')}
                 className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'dashboard' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
@@ -2354,6 +3858,14 @@ export default function Home({
               >
                 Catalog
               </button>
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('categories')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'categories' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
+                >
+                  Categories
+                </button>
+              )}
               <button 
                 onClick={() => setAdminView('vendors')}
                 className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'vendors' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
@@ -2372,12 +3884,14 @@ export default function Home({
               >
                 Approvals ({pendingApprovals.length})
               </button>
-              <button 
-                onClick={() => setAdminView('marriage')}
-                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'marriage' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
-              >
-                Marriage ({allMarriageProfiles.length})
-              </button>
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('marriage')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'marriage' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
+                >
+                  Marriage ({allMarriageProfiles.length})
+                </button>
+              )}
               <button 
                 onClick={() => setAdminView('customers')}
                 className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'customers' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
@@ -2396,12 +3910,66 @@ export default function Home({
               >
                 Settlements
               </button>
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('hospitals')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'hospitals' ? 'bg-indigo-500 text-white shadow-lg' : 'text-gray-400'}`}
+                >
+                  Hospitals
+                </button>
+              )}
               <button 
-                onClick={() => setAdminView('security')}
-                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'security' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
+                onClick={() => setAdminView('finance')}
+                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'finance' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
               >
-                Security
+                Finance
               </button>
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('maintenance')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'maintenance' ? 'bg-red-500 text-white' : 'text-gray-400'}`}
+                >
+                  Maintenance
+                </button>
+              )}
+              <button 
+                onClick={() => setAdminView('logistics_hub')}
+                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'logistics_hub' ? 'bg-indigo-600 text-white shadow-lg' : 'text-gray-400'}`}
+              >
+                Logistics Hub
+              </button>
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('banners')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'banners' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
+                >
+                  Banners
+                </button>
+              )}
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('security')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'security' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
+                >
+                  Security
+                </button>
+              )}
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('comments')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'comments' ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400'}`}
+                >
+                  Reviews & comments
+                </button>
+              )}
+              {isSuperAdmin && (
+                <button 
+                  onClick={() => setAdminView('settings')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${adminView === 'settings' ? 'bg-yellow-400 text-gray-900' : 'text-gray-400'}`}
+                >
+                  Settings
+                </button>
+              )}
             </div>
 
             <div className="p-6 space-y-6 overflow-y-auto h-[calc(100%-130px)]">
@@ -2430,13 +3998,271 @@ export default function Home({
                 </div>
               )}
 
-              {adminView === 'dashboard' && (
-                <>
+              {adminView === 'finance' && (
+                <div className="space-y-6 max-h-[calc(100vh-200px)] overflow-y-auto pb-20 px-1">
+                  <header className="mb-6">
+                    <h3 className="text-xl font-black text-gray-900 italic">Finance & Payments</h3>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Manage where you receive money</p>
+                  </header>
+
+                  <section className="bg-emerald-50 p-6 rounded-[2.5rem] border border-emerald-100 mb-6">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 bg-emerald-500 text-white rounded-2xl flex items-center justify-center shadow-lg">
+                        <CreditCard className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-emerald-900">Settlement Configuration</p>
+                        <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">Secure Bank & UPI Linkage</p>
+                      </div>
+                    </div>
+
+                    <form 
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        const formData = new FormData(e.currentTarget);
+                        const updates = {
+                          upiId: formData.get('upiId'),
+                          bankName: formData.get('bankName'),
+                          accountHolder: formData.get('accountHolder'),
+                          accountNumber: formData.get('accountNumber'),
+                          ifscCode: formData.get('ifscCode'),
+                          merchantId: formData.get('merchantId'),
+                          gatewayStatus: formData.get('gatewayStatus'),
+                          updatedAt: serverTimestamp()
+                        };
+                        try {
+                          await setDoc(doc(db, 'settings', 'payment_config'), updates, { merge: true });
+                          setAdminSaveStatus("Payment Configuration Secured!");
+                        } catch (err) {
+                          handleFirestoreError(err, OperationType.UPDATE, 'settings/payment_config');
+                        }
+                      }}
+                      className="space-y-4"
+                    >
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.2em] ml-2">Direct UPI ID</label>
+                          <input 
+                            name="upiId"
+                            defaultValue={paymentConfig?.upiId}
+                            placeholder="username@bank"
+                            className="w-full bg-white p-4 rounded-2xl font-bold outline-none border border-emerald-100 focus:border-emerald-500 text-sm"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.2em] ml-2">App Merchant ID</label>
+                          <input 
+                            name="merchantId"
+                            defaultValue={paymentConfig?.merchantId}
+                            placeholder="MID-XXXXXXXX"
+                            className="w-full bg-white p-4 rounded-2xl font-bold outline-none border border-emerald-100 focus:border-emerald-500 text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.2em] ml-2">Account Holder Name</label>
+                        <input 
+                          name="accountHolder"
+                          defaultValue={paymentConfig?.accountHolder}
+                          placeholder="Legal Business Name"
+                          className="w-full bg-white p-4 rounded-2xl font-bold outline-none border border-emerald-100 focus:border-emerald-500 text-sm"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.2em] ml-2">Bank Account Number</label>
+                          <input 
+                            name="accountNumber"
+                            defaultValue={paymentConfig?.accountNumber}
+                            placeholder="000000000000"
+                            className="w-full bg-white p-4 rounded-2xl font-bold outline-none border border-emerald-100 focus:border-emerald-500 text-sm"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.2em] ml-2">IFSC CODE</label>
+                          <input 
+                            name="ifscCode"
+                            defaultValue={paymentConfig?.ifscCode}
+                            placeholder="SBIN0000000"
+                            className="w-full bg-white p-4 rounded-2xl font-bold outline-none border border-emerald-100 focus:border-emerald-500 text-sm uppercase"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.2em] ml-2">Bank Name</label>
+                        <input 
+                          name="bankName"
+                          defaultValue={paymentConfig?.bankName}
+                          placeholder="e.g. State Bank of India"
+                          className="w-full bg-white p-4 rounded-2xl font-bold outline-none border border-emerald-100 focus:border-emerald-500 text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-black text-emerald-800 uppercase tracking-[0.2em] ml-2">Payment Gateway Solution</label>
+                        <select 
+                          name="gatewayStatus"
+                          defaultValue={paymentConfig?.gatewayStatus || 'DirectUPI'}
+                          className="w-full bg-white p-4 rounded-2xl font-bold outline-none border border-emerald-100 focus:border-emerald-500 text-sm appearance-none"
+                        >
+                          <option value="DirectUPI">Direct UPI Intent (Free)</option>
+                          <option value="ManualLink">Manual Verification (Safe)</option>
+                        </select>
+                      </div>
+
+                      <button 
+                        type="submit"
+                        className="w-full py-5 bg-emerald-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-xl shadow-emerald-100 active:scale-95 transition-all mt-4"
+                      >
+                        Securely Save Payment Details
+                      </button>
+                    </form>
+                  </section>
+
+                  <section className="bg-amber-50 p-6 rounded-[2.5rem] border border-amber-100 mb-6">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 bg-amber-500 text-white rounded-2xl flex items-center justify-center shadow-lg">
+                        <User className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-amber-900">Founder Support</p>
+                        <p className="text-[9px] font-bold text-amber-600 uppercase tracking-widest">Master Admin Contacts</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      {[
+                        { name: 'Tharun Bandi', contact: '+91 8790729816' },
+                        { name: 'Admin Secondary', contact: '+91 7416574197' }
+                      ].map((founder, i) => (
+                        <div key={i} className="bg-white p-4 rounded-2xl border border-amber-50 flex items-center justify-between">
+                          <div>
+                            <p className="text-xs font-black text-gray-900">{founder.name}</p>
+                            <p className="text-[10px] font-bold text-amber-600">{founder.contact}</p>
+                          </div>
+                          <button 
+                            onClick={() => window.open(`tel:${founder.contact}`)}
+                            className="p-3 bg-amber-50 text-amber-600 rounded-xl active:scale-90 transition-all"
+                          >
+                            <Phone className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="bg-indigo-50 p-6 rounded-[2.5rem] border border-indigo-100">
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-lg">
+                        <Phone className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-indigo-900">Payment Integration Support</p>
+                        <p className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest">Connect with Gateway Partners</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      {[
+                        { name: 'NPCI (UPI) Helpline', contact: '+91 1800 120 1740', email: 'upi.support@npci.org.in', type: 'UPI' }
+                      ].map((support, i) => (
+                        <div key={i} className="bg-white p-4 rounded-2xl border border-indigo-50 flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="text-xs font-black text-gray-900">{support.name}</p>
+                              <span className="text-[8px] font-black bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded uppercase">{support.type}</span>
+                            </div>
+                            <p className="text-[10px] font-bold text-indigo-500">{support.contact}</p>
+                            <p className="text-[10px] font-bold text-gray-400 italic">{support.email}</p>
+                          </div>
+                          <button 
+                            onClick={() => window.open(`tel:${support.contact}`)}
+                            className="p-3 bg-indigo-50 text-indigo-600 rounded-xl active:scale-90 transition-all"
+                          >
+                            <Phone className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                  
+                  <div className="bg-gray-900 text-white p-6 rounded-[2.5rem] mt-6 flex items-center gap-4 border-2 border-yellow-400">
+                    <div className="p-3 bg-yellow-400 rounded-xl text-gray-900">
+                      <ShieldCheck className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black italic">Security Protocol Active</p>
+                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1 leading-tight">These details are stored in an encrypted vault. Only you have decryption authorization.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {adminView === 'maintenance' && (
+              <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+                <div className="max-w-xl mx-auto space-y-6">
+                  <div className="bg-white p-8 rounded-[3rem] border-2 border-red-100 shadow-xl shadow-red-50 relative overflow-hidden">
+                    <div className="relative z-10">
+                      <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mb-6 shadow-inner">
+                        <AlertCircle className="w-8 h-8 text-red-600" />
+                      </div>
+                      <h3 className="text-xl font-black text-gray-900 italic mb-2">Platform Deep Clean</h3>
+                      <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-8 leading-relaxed">
+                        This tool removes all test orders, partner applications, and support chats. Useful for resetting the platform for production.
+                      </p>
+                      
+                      <button 
+                        onClick={handleResetPlatformData}
+                        className="w-full py-5 bg-red-600 text-white rounded-3xl font-black uppercase tracking-widest text-xs shadow-lg shadow-red-200 active:scale-95 transition-all flex items-center justify-center gap-3"
+                      >
+                         <Trash2 className="w-5 h-5" />
+                         Reset Platform Data & Clear All Orders
+                      </button>
+                      
+                      <p className="text-[10px] font-bold text-red-400 text-center mt-4 uppercase italic">
+                        * Warning: This action is irreversible and affects real-time data.
+                      </p>
+                    </div>
+                    <div className="absolute -right-12 -bottom-12 w-48 h-48 bg-red-50 rounded-full" />
+                  </div>
+
+                  <div className="bg-white p-8 rounded-[3rem] border border-gray-100">
+                    <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-6">System Health</h3>
+                    <div className="space-y-4">
+                       <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                         <div className="flex items-center gap-3">
+                           <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-600">
+                             <Check className="w-4 h-4" />
+                           </div>
+                           <p className="text-[10px] font-black text-gray-900 uppercase">Database Status</p>
+                         </div>
+                         <span className="text-[10px] font-black text-emerald-600 uppercase">Operational</span>
+                       </div>
+                       
+                       <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                         <div className="flex items-center gap-3">
+                           <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-600">
+                             <Check className="w-4 h-4" />
+                           </div>
+                           <p className="text-[10px] font-black text-gray-900 uppercase">File Storage</p>
+                         </div>
+                         <span className="text-[10px] font-black text-emerald-600 uppercase">Online</span>
+                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {adminView === 'dashboard' && (
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-50 space-y-6">
                   <div className="grid grid-cols-2 gap-4">
                     <button 
                       onClick={() => {
                         setIsAdminOpen(false);
-                        onNavigate('delivery');
+                        onNavigate('delivery', deliveryPartners[0]?.id);
                       }}
                       className="bg-white p-6 rounded-[2.5rem] border border-orange-100 flex flex-col items-center gap-3 shadow-sm hover:shadow-lg transition-all active:scale-95 group"
                     >
@@ -2447,9 +4273,7 @@ export default function Home({
                     </button>
                     <button 
                       onClick={() => {
-                        setIsAdminOpen(false);
-                        setIsVendorMode(true);
-                        setActiveVendorProfile(vendors[0]);
+                        setAdminView('vendors');
                       }}
                       className="bg-white p-6 rounded-[2.5rem] border border-indigo-100 flex flex-col items-center gap-3 shadow-sm hover:shadow-lg transition-all active:scale-95 group"
                     >
@@ -2466,6 +4290,13 @@ export default function Home({
                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Live platform activity</p>
                     </div>
                     <div className="flex gap-2">
+                      <button 
+                        onClick={() => downloadCSV(activeOrders, 'live_orders')}
+                        className="bg-white text-gray-500 border border-gray-100 px-4 py-2.5 rounded-2xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all shadow-sm flex items-center gap-2"
+                      >
+                        <Download className="w-3 h-3" />
+                        Export CSV
+                      </button>
                       <button 
                         onClick={() => {
                           const orderId = `ORD-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -2497,7 +4328,40 @@ export default function Home({
                     </div>
                   </header>
 
-                  <section className="grid grid-cols-2 gap-4">
+                    {isSuperAdmin && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        onClick={() => {
+                          setIsAdminOpen(false);
+                          onNavigate('branchManager');
+                        }}
+                        className="bg-indigo-600 p-8 rounded-[3rem] text-white cursor-pointer group shadow-2xl relative overflow-hidden mb-6"
+                      >
+                        <div className="absolute top-0 right-0 p-8 opacity-20 group-hover:scale-110 transition-transform">
+                          <LayoutDashboard className="w-24 h-24" />
+                        </div>
+                        <div className="relative z-10 space-y-4">
+                          <div className="px-3 py-1 bg-white/20 rounded-full text-[8px] font-black uppercase tracking-widest inline-block leading-none">
+                            India Expansion Module
+                          </div>
+                          <h3 className="text-3xl font-black italic tracking-tighter leading-none">
+                            FRANCHISE<br />MANAGER
+                          </h3>
+                          <p className="text-xs font-bold text-indigo-100 uppercase tracking-widest leading-relaxed max-w-[200px]">
+                            Control local admins, pincode locations & operational status.
+                          </p>
+                          <div className="flex items-center gap-3 pt-2">
+                            <div className="px-6 py-2.5 bg-white text-indigo-600 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg active:scale-95 transition-transform">
+                              Open Control Panel
+                            </div>
+                            <p className="text-[8px] font-bold text-indigo-200 uppercase tracking-widest italic tracking-tighter">Founder Access Only</p>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    <section className="grid grid-cols-2 gap-4">
                     <div className="bg-emerald-50 p-5 rounded-[2.5rem] border border-emerald-100 relative overflow-hidden group">
                       <div className="absolute top-0 right-0 p-3 opacity-10">
                         <Briefcase className="w-12 h-12 text-emerald-900" />
@@ -2516,10 +4380,10 @@ export default function Home({
                           <span className="w-1.5 h-1.5 bg-gray-300 rounded-full"></span>
                           {vendors.filter(v => !v.isOnline).length} Offline
                         </p>
-                        {pendingApprovals.filter(p => p.type === 'vendor').length > 0 && (
+                        {pendingApprovals.filter(p => p.type?.toLowerCase() === 'vendor' || p.type === 'vendor' || p.type === 'Vendor').length > 0 && (
                           <p className="text-[9px] font-black text-orange-500 uppercase flex items-center gap-1 mt-1">
                             <AlertCircle className="w-2.5 h-2.5" />
-                            {pendingApprovals.filter(p => p.type === 'vendor').length} Pending
+                            {pendingApprovals.filter(p => p.type?.toLowerCase() === 'vendor' || p.type === 'vendor' || p.type === 'Vendor').length} Pending
                           </p>
                         )}
                       </div>
@@ -2543,10 +4407,10 @@ export default function Home({
                           <span className="w-1.5 h-1.5 bg-gray-300 rounded-full"></span>
                           {deliveryPartners.filter(dp => !dp.isOnline).length} Offline
                         </p>
-                        {pendingApprovals.filter(p => p.type === 'delivery').length > 0 && (
+                        {pendingApprovals.filter(p => p.type?.toLowerCase() === 'delivery' || p.type === 'delivery' || p.type === 'DeliveryPartner').length > 0 && (
                           <p className="text-[9px] font-black text-orange-500 uppercase flex items-center gap-1 mt-1">
                             <AlertCircle className="w-2.5 h-2.5" />
-                            {pendingApprovals.filter(p => p.type === 'delivery').length} Pending
+                            {pendingApprovals.filter(p => p.type?.toLowerCase() === 'delivery' || p.type === 'delivery' || p.type === 'DeliveryPartner').length} Pending
                           </p>
                         )}
                       </div>
@@ -2602,7 +4466,22 @@ export default function Home({
                                 <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
                                 <p className="text-[10px] font-bold text-gray-400">{order.customerName}</p>
                               </div>
-                              <p className="text-xs font-black text-gray-900 leading-tight">{order.items} Items • <span className="text-emerald-600">₹{order.total}</span></p>
+                              <p className="text-xs font-black text-gray-900 leading-tight mb-1">{order.items} Items • <span className="text-emerald-600">₹{order.total}</span></p>
+                              {order.deliveryAddress && (
+                                <div className="flex items-start gap-1 mb-2">
+                                  <MapPin className="w-3 h-3 text-gray-400 mt-0.5" />
+                                  <p className="text-[9px] font-bold text-gray-500 leading-tight">{order.deliveryAddress}</p>
+                                </div>
+                              )}
+                              {order.orderItems && order.orderItems.length > 0 && (
+                                <div className="bg-white/50 p-2 rounded-xl border border-gray-100 flex flex-wrap gap-x-3 gap-y-1">
+                                  {order.orderItems.map((item: any, idx: number) => (
+                                    <p key={idx} className="text-[9px] font-bold text-gray-600 italic">
+                                      <span className="text-gray-900 font-black">{item.quantity}x</span> {item.name}
+                                    </p>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             <div className="flex flex-col items-end gap-1">
                               <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${
@@ -2621,7 +4500,7 @@ export default function Home({
                                     Cancel
                                   </button>
                                   <p className="text-[8px] font-bold text-gray-400">
-                                    {Math.floor((Date.now() - new Date(order.timestamp).getTime()) / 60000)}m ago
+                                    {order.timestamp ? `${Math.floor((Date.now() - new Date(order.timestamp).getTime()) / 60000)}m ago` : 'Just now'}
                                   </p>
                                 </div>
                               )}
@@ -2668,10 +4547,10 @@ export default function Home({
                                       {deliveryPartners.map(dp => {
                                         if (!dp) return null;
                                         const isBusy = activeOrders.some(ao => ao?.deliveryPartnerId === dp.id);
-                                        const canBeAssigned = dp.isOnline && dp.status === 'Approved';
+                                        const isApproved = dp.status === 'Approved' || dp.status === 'Online' || dp.isOnline;
                                         
                                         return (
-                                          <option key={dp.id} value={dp.id} disabled={!canBeAssigned}>
+                                          <option key={dp.id} value={dp.id} disabled={!isApproved}>
                                             {dp.isOnline ? (isBusy ? '🟡 BUSY' : '🟢 READY') : '🔴 AWAY'} | {dp.name}
                                           </option>
                                         );
@@ -2777,6 +4656,24 @@ export default function Home({
                                       photo: req.photo || null,
                                       createdAt: serverTimestamp()
                                     });
+                                  } else if (req.type === 'RealEstateSeller') {
+                                    const sellerId = `re-${Date.now()}`;
+                                    await setDoc(doc(db, 'vendors', sellerId), {
+                                      id: sellerId,
+                                      businessName: req.businessName || req.name,
+                                      ownerName: req.name,
+                                      phone: req.phone,
+                                      service: 'Real Estate',
+                                      type: 'RealEstateSeller',
+                                      status: 'Approved',
+                                      isOnline: true,
+                                      revenue: 0,
+                                      pendingPayout: 0,
+                                      itemsCount: 0,
+                                      rating: 5.0,
+                                      photo: req.photo || null,
+                                      createdAt: serverTimestamp()
+                                    });
                                   } else if (req.type === 'delivery') {
                                     const partnerId = `dp-${Date.now()}`;
                                     await setDoc(doc(db, 'deliveryPartners', partnerId), {
@@ -2819,7 +4716,7 @@ export default function Home({
                         <div key={p.id} className="bg-white p-4 rounded-2xl border border-indigo-200">
                           <div className="flex items-center gap-3 mb-3">
                             <div className="w-10 h-10 bg-indigo-100 rounded-xl overflow-hidden">
-                               {(p.image || p.img) && <img src={p.image || p.img} className="w-full h-full object-cover" />}
+                               {p.image && <img src={p.image} className="w-full h-full object-cover" />}
                             </div>
                             <div>
                               <p className="text-sm font-black text-gray-900">{p.name}</p>
@@ -2829,15 +4726,26 @@ export default function Home({
                           <div className="flex gap-2">
                             <button 
                               onClick={() => handleRejectProfile(p.id)}
-                              className="flex-1 px-3 py-1.5 bg-gray-100 text-gray-500 rounded-lg text-[10px] font-black uppercase"
+                              className="flex-1 px-3 py-1.5 bg-gray-100 text-gray-500 rounded-lg text-[10px] font-black uppercase hover:bg-rose-50 hover:text-rose-600 transition-colors"
                             >
                               Deny
                             </button>
                             <button 
                               onClick={() => handleApproveProfile(p.id)}
-                              className="flex-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase"
+                              className="flex-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-black uppercase hover:bg-indigo-700 transition-colors"
                             >
                               Approve
+                            </button>
+                            <button 
+                              onClick={() => {
+                                if (confirm("Permanently delete this profile?")) {
+                                  handleRejectProfile(p.id);
+                                }
+                              }}
+                              className="p-1.5 bg-gray-100 text-gray-400 rounded-lg hover:bg-rose-500 hover:text-white transition-all shadow-sm"
+                              title="Delete Permanently"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </div>
@@ -2852,10 +4760,13 @@ export default function Home({
                       {[
                         { label: 'Edit Categories', icon: ShoppingBag, view: 'inventory' },
                         { label: 'Manage Items', icon: ClipboardList, view: 'inventory' },
+                        { label: 'Promo Codes', icon: Tag, view: 'promos' },
+                        { label: 'Hospitals', icon: Building, view: 'hospitals' },
                         { label: 'Price Control', icon: TrendingUp, view: 'inventory' },
                         { label: 'Marriage Bureau', icon: HeartHandshake, view: 'marriage' },
-                        { label: 'All Vendors', icon: Utensils, view: 'vendors' },
-                        { label: 'Delivery Staff', icon: Bike, view: 'deliveryPartners' },
+                        { label: 'Real Estate', icon: Building2, view: 'properties' },
+                        { label: 'Merchant Hub', icon: Utensils, view: 'vendors' },
+                        { label: 'Delivery Console', icon: Bike, view: 'deliveryPartners' },
                         { label: 'Waitlist Partners', icon: Briefcase, view: 'partners' },
                         { label: 'System Settings', icon: Settings, view: 'settings' }
                       ].map((item, i) => (
@@ -2901,7 +4812,330 @@ export default function Home({
                       )}
                     </div>
                   </section>
-                </>
+                </div>
+              )}
+
+              {adminView === 'promos' && (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-black text-gray-900 italic">Promo Codes</h3>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Manage discounts and offers</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setEditingPromo({ id: '', type: 'percent', value: 0, label: '', minSubtotal: 0, isActive: true });
+                        setIsEditingPromoMode(false);
+                        setShowPromoModal(true);
+                      }}
+                      className="p-3 bg-indigo-600 text-white rounded-2xl shadow-xl shadow-indigo-100 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                      <Plus className="w-5 h-5" />
+                      <span className="text-[10px] font-black uppercase tracking-widest">New Promo</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {promoCodes.map((promo) => (
+                      <div key={promo.id} className="bg-white p-5 rounded-[2.5rem] border border-gray-100 flex items-center justify-between shadow-sm">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black ${promo.type === 'shipping' ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                            <Tag className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-black text-gray-900">{promo.id}</p>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">{promo.label} | Min: ₹{promo.minSubtotal}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${promo.isActive ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
+                                {promo.isActive ? 'Active' : 'Paused'}
+                              </span>
+                              <span className="text-[9px] font-black text-indigo-600 uppercase">
+                                {promo.type === 'percent' ? `${promo.value}% OFF` : promo.type === 'flat' ? `₹${promo.value} OFF` : 'Free Shipping'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                           <button 
+                             onClick={() => {
+                               setEditingPromo({...promo});
+                               setIsEditingPromoMode(true);
+                               setShowPromoModal(true);
+                             }}
+                             className="p-3 bg-gray-50 text-gray-400 rounded-xl hover:text-indigo-600 transition-colors"
+                           >
+                             <Edit2 className="w-4 h-4" />
+                           </button>
+                           <button 
+                             onClick={() => handleDeletePromo(promo.id)}
+                             className="p-3 bg-rose-50 text-rose-400 rounded-xl hover:bg-rose-500 hover:text-white transition-colors"
+                           >
+                             <Trash2 className="w-4 h-4" />
+                           </button>
+                        </div>
+                      </div>
+                    ))}
+                    {promoCodes.length === 0 && (
+                      <div className="py-20 text-center border-2 border-dashed border-gray-100 rounded-[3rem]">
+                        <Tag className="w-12 h-12 text-gray-200 mx-auto mb-4" />
+                        <p className="text-[10px] font-black text-gray-400 uppercase">No active promo codes</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {adminView === 'hospitals' && (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-black text-gray-900 italic">Hospital OP Management</h3>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Configure hospitals and prices</p>
+                    </div>
+                    <button 
+                      onClick={handleAddHospital}
+                      className="p-4 bg-indigo-600 text-white rounded-[2rem] shadow-xl shadow-indigo-100 active:scale-95 transition-all flex items-center gap-3"
+                    >
+                      <Plus className="w-6 h-6" />
+                      <span className="text-[11px] font-black uppercase tracking-widest">Add Hospital</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Object.entries(hospitalPrices).map(([name, data]) => (
+                      <div key={name} className="bg-white p-6 rounded-[3rem] border border-gray-100 flex items-center justify-between shadow-sm group hover:shadow-md transition-all">
+                        <div className="flex items-center gap-5">
+                          <div className={`w-14 h-14 ${data.isActive ? 'bg-indigo-50 text-indigo-600' : 'bg-gray-50 text-gray-400'} rounded-3xl flex items-center justify-center font-black transition-all group-hover:scale-105`}>
+                            <Building className="w-7 h-7" />
+                          </div>
+                          <div>
+                            <p className="text-base font-black text-gray-900">{name}</p>
+                            <div className="flex items-center gap-4 mt-2">
+                               <div className="flex items-center gap-1.5">
+                                 <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">Fee:</p>
+                                 <p className="text-base font-black text-gray-900 italic">₹{data.price}</p>
+                               </div>
+                               <button 
+                                 onClick={() => {
+                                   const newPrices = { ...hospitalPrices };
+                                   newPrices[name] = { ...data, isActive: !data.isActive };
+                                   handleSaveHospitalPrices(newPrices);
+                                 }}
+                                 className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest transition-all active:scale-95 ${data.isActive ? 'bg-emerald-100 text-emerald-600 border border-emerald-200' : 'bg-rose-50 text-rose-500 border border-rose-100'}`}
+                               >
+                                 {data.isActive ? 'Online ●' : 'Offline ○'}
+                               </button>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-3">
+                           <button 
+                             onClick={() => handleEditHospital(name, data)}
+                             className="p-4 bg-gray-50 text-gray-400 rounded-2xl hover:bg-indigo-50 hover:text-indigo-600 transition-all active:scale-90"
+                           >
+                             <Edit2 className="w-5 h-5" />
+                           </button>
+                           <button 
+                             onClick={() => {
+                               if (confirm(`Remove ${name} from hospital list?`)) {
+                                 const newPrices = { ...hospitalPrices };
+                                 delete newPrices[name];
+                                 handleSaveHospitalPrices(newPrices);
+                               }
+                             }}
+                             className="p-4 bg-rose-50 text-rose-400 rounded-2xl hover:bg-rose-500 hover:text-white transition-all active:scale-90"
+                           >
+                             <Trash2 className="w-5 h-5" />
+                           </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Hospital Edit Modal */}
+                  <AnimatePresence>
+                    {showHospitalModal && (
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md"
+                      >
+                        <motion.div 
+                          initial={{ scale: 0.9, y: 20 }}
+                          animate={{ scale: 1, y: 0 }}
+                          exit={{ scale: 0.9, y: 20 }}
+                          className="bg-white w-full max-w-md rounded-[3.5rem] p-10 shadow-2xl relative overflow-hidden"
+                        >
+                          <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-bl-[5rem] -mr-10 -mt-10" />
+                          <button onClick={() => setShowHospitalModal(false)} className="absolute top-6 right-6 p-2 text-gray-400 hover:text-gray-900 transition-colors">
+                            <X className="w-6 h-6" />
+                          </button>
+
+                          <div className="flex items-center gap-4 mb-8">
+                            <div className="w-14 h-14 bg-indigo-600 text-white rounded-2xl flex items-center justify-center">
+                              <Building className="w-7 h-7" />
+                            </div>
+                            <div>
+                               <h3 className="text-xl font-black italic text-gray-900">{isNewHospital ? 'Add Hospital' : 'Edit Hospital'}</h3>
+                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Configuration Panel</p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-6">
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-2">Hospital Name</label>
+                              <input 
+                                type="text"
+                                placeholder="Enter Hospital Name"
+                                value={hospitalEditData.name}
+                                onChange={(e) => setHospitalEditData({...hospitalEditData, name: e.target.value})}
+                                className="w-full bg-gray-50 border-none rounded-[2rem] p-5 text-sm font-black outline-none focus:bg-white focus:ring-4 focus:ring-indigo-100 transition-all"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] ml-2">OP Consultation Fee</label>
+                              <div className="relative">
+                                <span className="absolute left-6 top-1/2 -translate-y-1/2 font-black text-gray-400">₹</span>
+                                <input 
+                                  type="number"
+                                  placeholder="0.00"
+                                  value={hospitalEditData.price}
+                                  onChange={(e) => setHospitalEditData({...hospitalEditData, price: parseInt(e.target.value) || 0})}
+                                  className="w-full bg-gray-50 border-none rounded-[2rem] p-5 pl-10 text-sm font-black outline-none focus:bg-white focus:ring-4 focus:ring-indigo-100 transition-all"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between p-6 bg-gray-50 rounded-[2.5rem]">
+                              <div>
+                                <p className="text-xs font-black text-gray-900 uppercase">Availability Status</p>
+                                <p className="text-[10px] font-bold text-gray-400">Can users book this hospital?</p>
+                              </div>
+                              <button 
+                                onClick={() => setHospitalEditData({...hospitalEditData, isActive: !hospitalEditData.isActive})}
+                                className={`w-16 h-8 rounded-full p-1 transition-all flex items-center ${hospitalEditData.isActive ? 'bg-emerald-500 justify-end' : 'bg-gray-300 justify-start'}`}
+                              >
+                                <div className="w-6 h-6 bg-white rounded-full shadow-md" />
+                              </button>
+                            </div>
+
+                            <button 
+                              onClick={handleSaveHospitalConfig}
+                              className="w-full py-5 bg-slate-900 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl shadow-slate-200 active:scale-95 transition-all mt-4"
+                            >
+                              Save Hospital Config
+                            </button>
+                          </div>
+                        </motion.div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
+
+
+
+              {adminView === 'platformSettings' && (
+                <div className="space-y-6">
+                  <div className="bg-white p-8 rounded-[3rem] border border-gray-100 shadow-sm">
+                    <h3 className="text-xl font-black text-gray-900 mb-6 flex items-center gap-3">
+                      <Settings2 className="w-6 h-6 text-indigo-600" />
+                      Platform Configuration
+                    </h3>
+
+                    <div className="space-y-6">
+                      <div className="p-4 bg-indigo-50/50 rounded-3xl border border-indigo-100">
+                        <p className="text-[10px] font-black text-indigo-900 uppercase tracking-widest mb-3">Registration Payment Modes</p>
+                        
+                        <div className="space-y-3">
+                          <button 
+                            onClick={() => setPlatformSettings({ ...platformSettings, allowBankTransfer: !platformSettings.allowBankTransfer })}
+                            className={`w-full p-4 rounded-2xl flex items-center justify-between border-2 transition-all ${platformSettings.allowBankTransfer ? 'bg-white border-indigo-500 shadow-sm' : 'bg-transparent border-gray-200'}`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${platformSettings.allowBankTransfer ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-400'}`}>
+                                <CreditCard className="w-4 h-4" />
+                              </div>
+                              <div className="text-left">
+                                <p className="text-[10px] font-black text-gray-900 uppercase">Direct Bank / UPI</p>
+                                <p className="text-[8px] text-gray-400 font-bold">Show payment details during signup</p>
+                              </div>
+                            </div>
+                            {platformSettings.allowBankTransfer && <CheckCircle2 className="w-4 h-4 text-indigo-500" />}
+                          </button>
+
+                          <button 
+                            onClick={() => setPlatformSettings({ ...platformSettings, allowCashOnRegistration: !platformSettings.allowCashOnRegistration })}
+                            className={`w-full p-4 rounded-2xl flex items-center justify-between border-2 transition-all ${platformSettings.allowCashOnRegistration ? 'bg-white border-emerald-500 shadow-sm' : 'bg-transparent border-gray-200'}`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${platformSettings.allowCashOnRegistration ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
+                                <HandCoins className="w-4 h-4" />
+                              </div>
+                              <div className="text-left">
+                                <p className="text-[10px] font-black text-gray-900 uppercase">Cash on Hand / Post Registration</p>
+                                <p className="text-[8px] text-gray-400 font-bold">Collect cash manually after joining</p>
+                              </div>
+                            </div>
+                            {platformSettings.allowCashOnRegistration && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Registration Fee (₹)</p>
+                          <input 
+                            type="number"
+                            value={platformSettings.registrationFee}
+                            onChange={(e) => setPlatformSettings({ ...platformSettings, registrationFee: Number(e.target.value) })}
+                            className="w-full bg-gray-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none text-sm"
+                          />
+                        </div>
+                        <div>
+                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Admin UPI ID</p>
+                           <input 
+                             value={platformSettings.upiId}
+                             onChange={(e) => setPlatformSettings({ ...platformSettings, upiId: e.target.value })}
+                             className="w-full bg-gray-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none text-sm"
+                           />
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={async () => {
+                          try {
+                            await setDoc(doc(db, 'settings', 'global'), platformSettings);
+                            setAdminSaveStatus("Settings Updated Successfully!");
+                            // Also update the local state to trigger any listeners manually if needed
+                            // (onSnapshot handles it usually)
+                          } catch (e) {
+                            handleFirestoreError(e, OperationType.WRITE, 'settings/global');
+                          }
+                        }}
+                        className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-2"
+                      >
+                        <Save className="w-4 h-4" />
+                        Apply Global Configuration
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-yellow-50 p-6 rounded-[2.5rem] border border-yellow-100 flex gap-4 items-start">
+                    <div className="w-10 h-10 bg-yellow-400 rounded-2xl flex items-center justify-center shrink-0">
+                      <AlertCircle className="w-6 h-6 text-gray-900" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-gray-900 mb-1 italic">Important Tip</p>
+                      <p className="text-[10px] font-bold text-gray-500 leading-relaxed uppercase">
+                        Changing these settings will instantly update the registration page for all new partners. 
+                        If you select only one payment mode, partners will not be able to choose alternatives.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               )}
 
               {adminView === 'inventory' && (
@@ -2912,13 +5146,23 @@ export default function Home({
                         <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Global Product Catalog</h3>
                         <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-[0.2em]">Active Inventory: {localInventory.length}</p>
                       </div>
-                      <button 
-                        onClick={handleAddNewItem}
-                        className="p-3 bg-yellow-400 rounded-2xl shadow-xl shadow-yellow-100 active:scale-95 transition-all text-gray-900 flex items-center gap-2"
-                      >
-                        <Plus className="w-5 h-5" />
-                        <span className="text-[10px] font-black uppercase tracking-widest hidden sm:block">Add Item</span>
-                      </button>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={downloadAndExportInventoryCSV}
+                          className="p-3 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl shadow-xl shadow-slate-100 active:scale-95 transition-all flex items-center gap-2"
+                          title="Download Catalog CSV"
+                        >
+                          <Download className="w-5 h-5" />
+                          <span className="text-[10px] font-black uppercase tracking-widest hidden sm:block">Export CSV</span>
+                        </button>
+                        <button 
+                          onClick={handleAddNewItem}
+                          className="p-3 bg-yellow-400 hover:bg-yellow-500 rounded-2xl shadow-xl shadow-yellow-100 active:scale-95 transition-all text-gray-900 flex items-center gap-2"
+                        >
+                          <Plus className="w-5 h-5" />
+                          <span className="text-[10px] font-black uppercase tracking-widest hidden sm:block">Add Item</span>
+                        </button>
+                      </div>
                     </div>
                     
                     <div className="relative">
@@ -2970,17 +5214,18 @@ export default function Home({
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button 
-                            onClick={() => {
-                              const isService = (prod as any).bookings !== undefined;
+                            onClick={async () => {
                               const isOutOfStock = (prod as any).stock === 0;
                               
                               if (confirm(isOutOfStock ? "Bring this item back in stock?" : "Mark this item as OUT OF STOCK?")) {
-                                setLocalInventory(prev => prev.map(item => {
-                                  if (item.id === prod.id) {
-                                    return { ...item, stock: isOutOfStock ? 50 : 0 };
-                                  }
-                                  return item;
-                                }));
+                                try {
+                                  await updateDoc(doc(db, 'products', prod.id), {
+                                    stock: isOutOfStock ? 50 : 0,
+                                    updatedAt: serverTimestamp()
+                                  });
+                                } catch (e) {
+                                  handleFirestoreError(e, OperationType.UPDATE, `products/${prod.id}`);
+                                }
                               }
                             }}
                             className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors shadow-sm ${(prod as any).stock === 0 ? 'bg-emerald-50 text-emerald-500' : 'bg-amber-50 text-amber-500'}`}
@@ -3000,253 +5245,616 @@ export default function Home({
                   </div>
                 </div>
               )}
-
-              {adminView === 'partners' && (
+{adminView === 'categories' && (
                 <div className="space-y-6">
-                  <div className="bg-white p-2 rounded-[2rem] border border-gray-100 shadow-sm flex items-center gap-2">
-                    <div className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400">
-                      <Search className="w-4 h-4" />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Service Categories</h3>
+                      <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-[0.2em]">Platform Pillars: {categories.length}</p>
                     </div>
-                    <input 
-                      placeholder="Search Partners by Name, Service or Phone..." 
-                      className="flex-1 bg-transparent border-none outline-none text-[10px] font-bold uppercase tracking-widest text-gray-600 px-2"
-                      value={partnerSearchQuery || ''}
-                      onChange={(e) => setPartnerSearchQuery(e.target.value)}
-                    />
-                    {partnerSearchQuery && (
-                      <button 
-                        onClick={() => setPartnerSearchQuery('')}
-                        className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400 hover:text-rose-500 transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button 
+                      onClick={() => {
+                        setEditingCategory({ id: `cat-${Date.now()}`, name: '', icon: 'ShoppingBag', color: 'bg-indigo-100' });
+                        setShowCategoryModal(true);
+                      }}
+                      className="p-3 bg-indigo-600 rounded-2xl shadow-xl shadow-indigo-100 active:scale-95 transition-all text-white flex items-center gap-2"
+                    >
+                      <Plus className="w-5 h-5" />
+                      <span className="text-[10px] font-black uppercase tracking-widest hidden sm:block">Add Category</span>
+                    </button>
                   </div>
 
-                  <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest pl-2">Pending Approvals</h3>
-                  <div className="space-y-3">
-                    {pendingApprovals.filter(p => !partnerSearchQuery || p.name.toLowerCase().includes(partnerSearchQuery.toLowerCase()) || p.phone.includes(partnerSearchQuery)).length > 0 ? 
-                     pendingApprovals
-                      .filter(p => !partnerSearchQuery || p.name.toLowerCase().includes(partnerSearchQuery.toLowerCase()) || p.phone.includes(partnerSearchQuery))
-                      .map((req) => (
-                      <div key={req.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black ${req.type === 'vendor' ? 'bg-indigo-100 text-indigo-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                            {req.type === 'vendor' ? <Briefcase className="w-5 h-5" /> : <Bike className="w-5 h-5" />}
-                          </div>
-                          <div>
-                            <p className="text-sm font-black text-gray-900">{req.name}</p>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                              {req.type} | {req.phone}
-                              {req.details?.vehicleNumber && ` | ${req.details.vehicleNumber}`}
-                            </p>
-                            {req.type === 'vendor' && req.details?.service && (
-                                <p className="text-[9px] font-black text-blue-500 uppercase mt-0.5">{req.details.service}</p>
-                            )}
-                          </div>
+                  <div className="grid grid-cols-1 gap-3 pb-12 h-[60vh] overflow-y-auto pr-2 scrollbar-hide">
+                    {categories.map((cat) => {
+                      const Icon = IconMap[cat.icon] || ShoppingBag;
+                      return (
+                        <div key={cat.id} className="bg-white p-4 rounded-[2rem] border border-gray-100 flex items-center gap-4 group hover:shadow-lg transition-all">
+                        <div className={`w-12 h-12 ${cat.color} rounded-2xl flex items-center justify-center overflow-hidden`}>
+                          {cat.image ? (
+                            <img src={cat.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt="" />
+                          ) : (
+                            <Icon className="w-6 h-6" />
+                          )}
                         </div>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => setSelectedApproval(req)}
-                            className="bg-indigo-50 text-indigo-600 p-2 rounded-xl"
-                            title="View Details"
-                          >
-                            <User className="w-4 h-4" />
-                          </button>
-                          <button 
-                            onClick={async () => {
-                              try {
-                                await deleteDoc(doc(db, 'pendingApprovals', req.id));
-                              } catch (e) {
-                                handleFirestoreError(e, OperationType.DELETE, 'pendingApprovals');
-                              }
-                            }}
-                            className="bg-rose-50 text-rose-500 p-2 rounded-xl"
-                            title="Reject"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                          <button 
-                            onClick={async () => {
-                              try {
-                                if (req.type === 'vendor') {
-                                  const vendorId = `v-${Date.now()}`;
-                                  const newVendor: VendorProfile = {
-                                    id: vendorId,
-                                    userId: req.userId || '',
-                                    businessName: req.name || '',
-                                    ownerName: req.ownerName || req.details?.ownerName || req.name || '',
-                                    phone: req.phone || '',
-                                    service: req.details?.service || 'General',
-                                    status: 'Approved',
-                                    rating: 5.0,
-                                    isOnline: false,
-                                    revenue: 0,
-                                    itemsCount: 0,
-                                    pendingPayout: 0,
-                                    address: req.details?.businessAddress || '',
-                                    location: req.details?.location || null
-                                  };
-                                  await setDoc(doc(db, 'vendors', vendorId), {
-                                    ...newVendor,
-                                    createdAt: serverTimestamp()
-                                  });
-                                  setAdminSaveStatus("Vendor Approved & Account Created!");
-                                } else if (req.type === 'delivery') {
-                                  const riderId = `dp-${Date.now()}`;
-                                  const newRider: DeliveryPartnerProfile = {
-                                    id: riderId,
-                                    userId: req.userId || '',
-                                    name: req.name || '',
-                                    phone: req.phone || '',
-                                    vehicleType: req.details?.service || req.details?.vehicleType || 'Bike',
-                                    vehicleNumber: req.details?.vehicleNumber || '',
-                                    status: 'Online',
-                                    isOnline: true,
-                                    rating: 5.0,
-                                    trips: 0,
-                                    earnings: 0,
-                                    pendingPayout: 0
-                                  };
-                                  await setDoc(doc(db, 'deliveryPartners', riderId), {
-                                    ...newRider,
-                                    createdAt: serverTimestamp()
-                                  });
-                                  setAdminSaveStatus("Rider Approved & Account Created!");
+                          <div className="flex-1">
+                            <p className="text-sm font-black text-gray-900 leading-none mb-1">{cat.name}</p>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{cat.id}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                setEditingCategory({...cat});
+                                setShowCategoryModal(true);
+                              }}
+                              className="w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center text-gray-400 hover:text-indigo-600 transition-colors"
+                            >
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={() => {
+                                if (confirm(`Remove ${cat.name} category? Items might become unclassified.`)) {
+                                  setCategories(prev => prev.filter(c => c.id !== cat.id));
+                                  deleteCategoryFromFirestore(cat.id);
                                 }
-                                await deleteDoc(doc(db, 'pendingApprovals', req.id));
-                              } catch (e) {
-                                handleFirestoreError(e, OperationType.WRITE, req.type === 'vendor' ? 'vendors' : 'deliveryPartners');
-                              }
-                            }}
-                            className="bg-emerald-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase"
-                          >
-                            Approve
-                          </button>
+                              }}
+                              className="w-10 h-10 bg-rose-50 rounded-xl flex items-center justify-center text-rose-500 hover:bg-rose-500 hover:text-white transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )) : (
-                      <div className="py-12 text-center border-2 border-dashed border-gray-100 rounded-[3rem]">
-                        <ShieldCheck className="w-12 h-12 text-gray-200 mx-auto mb-4" />
-                        <p className="text-[10px] font-black text-gray-400 uppercase">No pending approvals</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-6 pt-6 border-t border-gray-100">
-                    <div>
-                      <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                        <Briefcase className="w-3 h-3" />
-                        Active Vendors ({vendors.length})
-                      </h3>
-                      <div className="space-y-3">
-                        {vendors
-                          .filter(v => !partnerSearchQuery || v.businessName.toLowerCase().includes(partnerSearchQuery.toLowerCase()) || v.phone.includes(partnerSearchQuery) || v.service.toLowerCase().includes(partnerSearchQuery.toLowerCase()))
-                          .map(v => (
-                          <div key={v.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm group hover:border-indigo-100 transition-all">
-                            <div className="flex-1">
-                              <p className="text-sm font-black text-gray-900 leading-none mb-1">{v.businessName}</p>
-                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">{v.service} | {v.phone}</p>
-                            </div>
-                            <div className="flex gap-2">
-                               <button 
-                                 onClick={() => handleAdminEditPartner(v, 'vendor')}
-                                 className="p-2.5 bg-slate-50 text-slate-400 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
-                                 title="Edit Vendor"
-                               >
-                                 <Edit2 className="w-3.5 h-3.5" />
-                               </button>
-                               <button 
-                                 onClick={() => {
-                                   if(v.status === 'Terminated') {
-                                     handleRestorePartner(v.id, 'vendor');
-                                   } else {
-                                     handleTerminateVendor(v.id, v.businessName);
-                                   }
-                                 }}
-                                 className={`p-2.5 rounded-xl transition-all ${v.status === 'Terminated' ? 'bg-emerald-50 text-emerald-500 hover:bg-emerald-500 hover:text-white' : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'}`}
-                                 title={v.status === 'Terminated' ? 'Restore' : 'Terminate'}
-                               >
-                                 <Power className="w-3.5 h-3.5" />
-                               </button>
-                               <button 
-                                 onClick={() => {
-                                   if(confirm(`Delete vendor ${v.businessName} permanently?`)) {
-                                     setVendors(prev => prev.filter(item => item.id !== v.id));
-                                     setAdminSaveStatus(`${v.businessName} deleted.`);
-                                   }
-                                 }}
-                                 className="p-2.5 bg-rose-50 text-rose-400 rounded-xl hover:bg-rose-500 hover:text-white transition-all"
-                                 title="Delete Permanently"
-                               >
-                                 <Trash2 className="w-3.5 h-3.5" />
-                               </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                        <Bike className="w-3 h-3" />
-                        Active Riders ({deliveryPartners.length})
-                      </h3>
-                      <div className="space-y-3">
-                        {deliveryPartners
-                          .filter(dp => !partnerSearchQuery || dp.name.toLowerCase().includes(partnerSearchQuery.toLowerCase()) || dp.phone.includes(partnerSearchQuery) || dp.vehicleType.toLowerCase().includes(partnerSearchQuery.toLowerCase()))
-                          .map(dp => (
-                          <div key={dp.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm group hover:border-emerald-100 transition-all">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
-                                <p className="text-sm font-black text-gray-900 leading-none">{dp.name}</p>
-                                <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded-lg ${dp.status === 'Banned' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'}`}>
-                                  {dp.status}
-                                </span>
-                              </div>
-                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">{dp.vehicleType} | {dp.phone}</p>
-                            </div>
-                            <div className="flex gap-2">
-                               <button 
-                                 onClick={() => handleAdminEditPartner(dp, 'delivery')}
-                                 className="p-2.5 bg-slate-50 text-slate-400 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
-                                 title="Edit Rider"
-                               >
-                                 <Edit2 className="w-3.5 h-3.5" />
-                               </button>
-                               <button 
-                                 onClick={() => {
-                                   if(dp.status === 'Banned') {
-                                     handleRestorePartner(dp.id, 'delivery');
-                                   } else {
-                                     handleTerminateDeliveryPartner(dp.id, dp.name);
-                                   }
-                                 }}
-                                 className={`p-2.5 rounded-xl transition-all ${dp.status === 'Banned' ? 'bg-emerald-50 text-emerald-500 hover:bg-emerald-500 hover:text-white' : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'}`}
-                                 title={dp.status === 'Banned' ? 'Restore' : 'Ban/Terminate'}
-                               >
-                                 <Power className="w-3.5 h-3.5" />
-                               </button>
-                               <button 
-                                 onClick={() => {
-                                   if(confirm(`Remove rider ${dp.name} permanently?`)) {
-                                     setDeliveryPartners(prev => prev.filter(item => item.id !== dp.id));
-                                     setAdminSaveStatus(`${dp.name} removed from fleet.`);
-                                   }
-                                 }}
-                                 className="p-2.5 bg-rose-50 text-rose-400 rounded-xl hover:bg-rose-500 hover:text-white transition-all"
-                                 title="Delete Permanently"
-                               >
-                                 <Trash2 className="w-3.5 h-3.5" />
-                               </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
+              {adminView === 'partners' && (() => {
+                const filters = (() => {
+                  let normalized = (partnerSearchQuery || '').toLowerCase().trim();
+                  
+                  // Parse inline filters if formatted
+                  let parsedVehicle = filterVehicleType;
+                  let parsedCategory = filterServiceCategory;
+                  let parsedDocStatus = filterDocStatus;
+                  
+                  // Extract vehicle:xxxx or v:xxxx
+                  const vehicleMatch = normalized.match(/(?:vehicle|v):([a-z0-9-]+)/i);
+                  if (vehicleMatch) {
+                    parsedVehicle = vehicleMatch[1];
+                    normalized = normalized.replace(vehicleMatch[0], '').trim();
+                  }
+                  
+                  // Extract category:xxxx or c:xxxx or service:xxxx
+                  const categoryMatch = normalized.match(/(?:category|c|service):([a-z0-9-]+)/i);
+                  if (categoryMatch) {
+                    parsedCategory = categoryMatch[1];
+                    normalized = normalized.replace(categoryMatch[0], '').trim();
+                  }
+                  
+                  // Extract doc:verified etc.
+                  const docMatch = normalized.match(/(?:doc|document|verification):([a-z0-9-]+)/i);
+                  if (docMatch) {
+                    parsedDocStatus = docMatch[1].startsWith('ver') || docMatch[1] === 'yes' ? 'verified' : 'unverified';
+                    normalized = normalized.replace(docMatch[0], '').trim();
+                  }
+
+                  // Loose detection
+                  if (normalized.includes('has:doc') || normalized.includes('is:verified') || normalized.includes('doc:yes') || normalized.includes('verified')) {
+                    parsedDocStatus = 'verified';
+                    normalized = normalized.replace(/has:doc|is:verified|doc:yes|verified/g, '').trim();
+                  } else if (normalized.includes('no:doc') || normalized.includes('is:unverified') || normalized.includes('doc:no') || normalized.includes('unverified')) {
+                    parsedDocStatus = 'unverified';
+                    normalized = normalized.replace(/no:doc|is:unverified|doc:no|unverified/g, '').trim();
+                  }
+
+                  return {
+                    searchText: normalized,
+                    vehicle: parsedVehicle,
+                    category: parsedCategory,
+                    docStatus: parsedDocStatus
+                  };
+                })();
+
+                // Filter lists using advanced query filters
+                const filteredPendingApprovals = pendingApprovals.filter(p => {
+                  const { searchText, vehicle, category, docStatus } = filters;
+                  
+                  const matchesText = !searchText || 
+                    (p.name || '').toLowerCase().includes(searchText) || 
+                    (p.phone || '').includes(searchText) ||
+                    (p.businessName || '').toLowerCase().includes(searchText) ||
+                    (p.businessType || '').toLowerCase().includes(searchText) ||
+                    (p.details?.service || '').toLowerCase().includes(searchText) ||
+                    (p.details?.vehicleType || '').toLowerCase().includes(searchText);
+
+                  const isVendor = p.type === 'vendor' || p.type === 'Vendor';
+                  const isDelivery = p.type === 'delivery' || p.type === 'DeliveryPartner';
+
+                  const matchesVehicle = vehicle === 'all' || 
+                    (isDelivery && (p.details?.vehicleType || '').toLowerCase().includes(vehicle.toLowerCase())) ||
+                    (isDelivery && (p.businessType || '').toLowerCase().includes(vehicle.toLowerCase()));
+
+                  const matchesCategory = category === 'all' || 
+                    (isVendor && (
+                      (p.businessType || '').toLowerCase().includes(category.toLowerCase()) ||
+                      (p.details?.service || p.service || '').toLowerCase().includes(category.toLowerCase())
+                    ));
+
+                  const hasDocuments = !!(p.documentPhoto || p.photo || p.details?.documentPhoto);
+                  const matchesDoc = docStatus === 'all' || 
+                    (docStatus === 'verified' && hasDocuments) || 
+                    (docStatus === 'unverified' && !hasDocuments);
+
+                  return matchesText && matchesVehicle && matchesCategory && matchesDoc;
+                });
+
+                const filteredVendors = vendors.filter(v => {
+                  const { searchText, category, docStatus } = filters;
+
+                  const matchesText = !searchText || 
+                    (v.businessName || '').toLowerCase().includes(searchText) || 
+                    (v.phone || '').includes(searchText) || 
+                    (v.service || '').toLowerCase().includes(searchText) ||
+                    (v.ownerName || '').toLowerCase().includes(searchText);
+
+                  const matchesCategory = category === 'all' || 
+                    (v.service || '').toLowerCase().includes(category.toLowerCase());
+
+                  const hasDocuments = !!(v.documentPhoto || v.photo);
+                  const matchesDoc = docStatus === 'all' || 
+                    (docStatus === 'verified' && hasDocuments) || 
+                    (docStatus === 'unverified' && !hasDocuments);
+
+                  return matchesText && matchesCategory && matchesDoc;
+                });
+
+                const filteredDeliveryPartners = deliveryPartners.filter(dp => {
+                  const { searchText, vehicle, docStatus } = filters;
+
+                  const matchesText = !searchText || 
+                    (dp.name || '').toLowerCase().includes(searchText) || 
+                    (dp.phone || '').includes(searchText) || 
+                    (dp.vehicleType || '').toLowerCase().includes(searchText);
+
+                  const matchesVehicle = vehicle === 'all' || 
+                    (dp.vehicleType || '').toLowerCase().includes(vehicle.toLowerCase());
+
+                  const hasDocuments = !!(dp.documentPhoto || dp.photo);
+                  const matchesDoc = docStatus === 'all' || 
+                    (docStatus === 'verified' && hasDocuments) || 
+                    (docStatus === 'unverified' && !hasDocuments);
+
+                  return matchesText && matchesVehicle && matchesDoc;
+                });
+
+                return (
+                  <div className="space-y-6">
+                    {/* Advanced Search Bar Block */}
+                    <div className="flex flex-col gap-2">
+                      <div className="bg-white p-2 rounded-[2rem] border border-gray-100 shadow-sm flex items-center gap-2">
+                        <div className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400">
+                          <Search className="w-4 h-4" />
+                        </div>
+                        <input 
+                          placeholder="Search partners by Name, Phone, or type e.g. 'vehicle:bike'..." 
+                          className="flex-1 bg-transparent border-none outline-none text-[10px] font-bold uppercase tracking-widest text-gray-600 px-2 placeholder:text-gray-300"
+                          value={partnerSearchQuery || ''}
+                          onChange={(e) => setPartnerSearchQuery(e.target.value)}
+                        />
+                        <button 
+                          onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                          className={`px-4 py-2 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-all ${showAdvancedFilters || filterVehicleType !== 'all' || filterServiceCategory !== 'all' || filterDocStatus !== 'all' ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                          Filters {(filterVehicleType !== 'all' || filterServiceCategory !== 'all' || filterDocStatus !== 'all') ? '(Active)' : ''}
+                        </button>
+                        {partnerSearchQuery && (
+                          <button 
+                            onClick={() => setPartnerSearchQuery('')}
+                            className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center text-gray-400 hover:text-rose-500 transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Advanced Panel */}
+                      <AnimatePresence>
+                        {showAdvancedFilters && (
+                          <motion.div 
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="bg-slate-50 border border-slate-100 p-4 rounded-3xl mt-1 space-y-4">
+                              <div className="flex items-center justify-between border-b border-gray-200/50 pb-2">
+                                <h4 className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                                  <Settings2 className="w-3.5 h-3.5 text-indigo-500" /> Advanced Options
+                                </h4>
+                                <button 
+                                  onClick={() => {
+                                    setFilterVehicleType('all');
+                                    setFilterServiceCategory('all');
+                                    setFilterDocStatus('all');
+                                    setPartnerSearchQuery('');
+                                  }}
+                                  className="text-[9px] font-black text-rose-500 uppercase tracking-wider hover:underline"
+                                >
+                                  Clear Filters
+                                </button>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div className="space-y-1">
+                                  <span className="text-[8px] font-black text-gray-400 uppercase tracking-wider block">Vehicle Type</span>
+                                  <select 
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider text-slate-700 outline-none"
+                                    value={filterVehicleType}
+                                    onChange={(e) => setFilterVehicleType(e.target.value)}
+                                  >
+                                    <option value="all">ANY VEHICLE</option>
+                                    <option value="bike">BIKE / TWOWHEELER</option>
+                                    <option value="auto">AUTO RICKSHAW</option>
+                                    <option value="truck">TRUCK / LOADER</option>
+                                    <option value="bicycle">BICYCLE</option>
+                                    <option value="scooter">E-BIKE / SCOOTER</option>
+                                  </select>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <span className="text-[8px] font-black text-gray-400 uppercase tracking-wider block">Service Category</span>
+                                  <select 
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider text-slate-700 outline-none"
+                                    value={filterServiceCategory} 
+                                    onChange={(e) => setFilterServiceCategory(e.target.value)}
+                                  >
+                                    <option value="all">ANY CATEGORY</option>
+                                    {CATEGORIES.map(c => (
+                                      <option key={c.id} value={c.id}>{c.name.toUpperCase()}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <span className="text-[8px] font-black text-gray-400 uppercase tracking-wider block">Documents Verification</span>
+                                  <select 
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-[9px] font-black uppercase tracking-wider text-slate-700 outline-none"
+                                    value={filterDocStatus}
+                                    onChange={(e) => setFilterDocStatus(e.target.value)}
+                                  >
+                                    <option value="all">ALL PARTNERS</option>
+                                    <option value="verified">VERIFIED (DOCS UPLOADED)</option>
+                                    <option value="unverified">UNVERIFIED (NO DOCS)</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="bg-indigo-50/50 p-2.5 rounded-2xl flex items-start gap-2 border border-indigo-100/50">
+                                <Filter className="w-3.5 h-3.5 text-indigo-500 mt-0.5 shrink-0" />
+                                <div className="text-[8px] text-indigo-950 font-medium leading-relaxed uppercase">
+                                  <span className="font-extrabold text-indigo-600 block mb-0.5">💡 Pro Search Tip</span>
+                                  Type <code className="bg-white px-1 py-px rounded border text-indigo-600 font-mono text-[8px]">vehicle:bike</code>, <code className="bg-white px-1 py-px rounded border text-indigo-600 font-mono text-[8px]">category:veg</code> or <code className="bg-white px-1 py-px rounded border text-indigo-600 font-mono text-[8px]">doc:verified</code> in the search box to filter instantly!
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest pl-2">Pending Approvals</h3>
+                    <div className="space-y-3">
+                      {filteredPendingApprovals.length > 0 ? 
+                        filteredPendingApprovals.map((req) => (
+                        <div key={req.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black ${req.type === 'vendor' ? 'bg-indigo-100 text-indigo-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                              {req.type === 'vendor' ? <Briefcase className="w-5 h-5" /> : <Bike className="w-5 h-5" />}
+                            </div>
+                            <div>
+                              <p className="text-sm font-black text-gray-900">{req.name}</p>
+                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                {req.type} | {req.phone}
+                                {req.details?.vehicleNumber && ` | ${req.details.vehicleNumber}`}
+                              </p>
+                              {req.type === 'vendor' && req.details?.service && (
+                                  <p className="text-[9px] font-black text-blue-500 uppercase mt-0.5">{req.details.service}</p>
+                              )}
+                              {/* Documents Tag */}
+                              <div className="flex gap-1.5 mt-1">
+                                <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded ${req.documentPhoto || req.photo ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                  {req.documentPhoto || req.photo ? '✓ Docs Uploaded' : '✗ No Documents'}
+                                </span>
+                                {req.details?.vehicleType && (
+                                  <span className="text-[7px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+                                    🚗 {req.details.vehicleType}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => setSelectedApproval(req)}
+                              className="bg-indigo-50 text-indigo-600 p-2 rounded-xl"
+                              title="View Details"
+                            >
+                              <User className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={async () => {
+                                try {
+                                  await updateDoc(doc(db, 'partner_applications', req.id), { status: 'Rejected', updatedAt: serverTimestamp() });
+                                  setAdminSaveStatus("Application Declined.");
+                                } catch (e) {
+                                  handleFirestoreError(e, OperationType.UPDATE, 'partner_applications');
+                                }
+                              }}
+                              className="bg-amber-50 text-amber-600 p-2 rounded-xl"
+                              title="Decline"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={async () => {
+                                if (!confirm("Are you sure you want to permanently delete this application record?")) return;
+                                try {
+                                  await deleteDoc(doc(db, 'partner_applications', req.id));
+                                  setAdminSaveStatus("Application Deleted.");
+                                } catch (e) {
+                                  handleFirestoreError(e, OperationType.DELETE, 'partner_applications');
+                                }
+                              }}
+                              className="bg-rose-50 text-rose-500 p-2 rounded-xl"
+                              title="Delete Permanently"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <button 
+                              onClick={async () => {
+                                try {
+                                  const userId = req.userId;
+                                  const isVendorType = req.type === 'vendor' || req.type === 'Vendor';
+                                  const isDeliveryType = req.type === 'delivery' || req.type === 'DeliveryPartner';
+                                  
+                                  if (isVendorType) {
+                                    const vendorId = `v-${Date.now()}`;
+                                    const accessCode = Math.floor(10000 + Math.random() * 90000).toString();
+                                    const newVendor: VendorProfile = {
+                                      id: vendorId,
+                                      userId: userId || '',
+                                      businessName: req.businessName || req.name || req.details?.name || '',
+                                      ownerName: req.fullName || req.ownerName || req.details?.ownerName || req.name || '',
+                                      phone: req.phone || '',
+                                      service: req.businessType || req.details?.service || req.service || 'General',
+                                      status: 'Approved',
+                                      rating: 5.0,
+                                      isOnline: false,
+                                      revenue: 0,
+                                      itemsCount: req.initialProduct?.name ? 1 : 0,
+                                      pendingPayout: 0,
+                                      address: req.businessAddress || req.location || req.details?.businessAddress || '',
+                                      location: req.details?.location || null,
+                                      gstNumber: req.gstNumber || req.details?.gstNumber || null,
+                                      accessCode: accessCode,
+                                      photo: req.photo || null,
+                                      documentPhoto: req.documentPhoto || null,
+                                      bankName: req.bankName || '',
+                                      accountHolder: req.accountHolder || '',
+                                      accountNumber: req.accountNumber || '',
+                                      ifscCode: req.ifscCode || '',
+                                      upiId: req.upiId || '',
+                                      branchId: currentBranchId // Link vendor to the approving branch
+                                    };
+                                    await setDoc(doc(db, 'vendors', vendorId), {
+                                      ...newVendor,
+                                      createdAt: serverTimestamp()
+                                    });
+
+                                    // Create initial product if exists
+                                    if (req.initialProduct?.name) {
+                                      const productId = `p-${Date.now()}`;
+                                      await setDoc(doc(db, 'products', productId), {
+                                        ...req.initialProduct,
+                                        id: productId,
+                                        vendorId: vendorId,
+                                        branchId: currentBranchId, // Isolation
+                                        hotelName: newVendor.businessName,
+                                        isAvailable: true,
+                                        rating: 5.0,
+                                        reviews: [],
+                                        createdAt: serverTimestamp()
+                                      });
+                                    }
+
+                                    if (userId) {
+                                      await updateDoc(doc(db, 'users', userId), { role: 'vendor', vendorId });
+                                    }
+                                    alert(`VENDOR APPROVED!\n\nName: ${newVendor.businessName}\nAccess Code: ${accessCode}\n\nPlease share this 5-digit code with the shop owner.`);
+                                    setAdminSaveStatus(`Vendor Approved! Access Code: ${accessCode}`);
+                                  } else if (isDeliveryType) {
+                                    const riderId = `dp-${Date.now()}`;
+                                    const accessCode = Math.floor(10000 + Math.random() * 90000).toString();
+                                    const newRider: DeliveryPartnerProfile = {
+                                      id: riderId,
+                                      userId: userId || '',
+                                      name: req.fullName || req.name || '',
+                                      phone: req.phone || '',
+                                      vehicleType: req.businessType || req.details?.service || req.details?.vehicleType || 'Bike',
+                                      vehicleNumber: req.details?.vehicleNumber || '',
+                                      status: 'Online',
+                                      isOnline: true,
+                                      rating: 5.0,
+                                      trips: 0,
+                                      earnings: 0,
+                                      pendingPayout: 0,
+                                      accessCode: accessCode,
+                                      photo: req.photo || null,
+                                      documentPhoto: req.documentPhoto || null,
+                                      bankName: req.bankName || '',
+                                      accountHolder: req.accountHolder || '',
+                                      accountNumber: req.accountNumber || '',
+                                      ifscCode: req.ifscCode || '',
+                                      upiId: req.upiId || '',
+                                      branchId: currentBranchId // Link rider to the approving branch
+                                    };
+                                    await setDoc(doc(db, 'deliveryPartners', riderId), {
+                                      ...newRider,
+                                      createdAt: serverTimestamp()
+                                    });
+                                    if (userId) {
+                                      await updateDoc(doc(db, 'users', userId), { role: 'delivery', riderId });
+                                    }
+                                    alert(`RIDER APPROVED!\n\nName: ${newRider.name}\nAccess Code: ${accessCode}\n\nPlease share this 5-digit code with the partner.`);
+                                    setAdminSaveStatus(`Rider Approved! Access Code: ${accessCode}`);
+                                  }
+                                  await updateDoc(doc(db, 'partner_applications', req.id), { status: 'Approved', updatedAt: serverTimestamp() });
+                                } catch (e) {
+                                  handleFirestoreError(e, OperationType.WRITE, (req.type === 'vendor' || req.type === 'Vendor') ? 'vendors' : 'deliveryPartners');
+                                }
+                              }}
+                              className="bg-emerald-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase"
+                            >
+                              Approve
+                            </button>
+                          </div>
+                        </div>
+                      )) : (
+                        <div className="py-12 text-center border-2 border-dashed border-gray-100 rounded-[3rem]">
+                          <ShieldCheck className="w-12 h-12 text-gray-200 mx-auto mb-4" />
+                          <p className="text-[10px] font-black text-gray-400 uppercase">No pending approvals match filters</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-6 pt-6 border-t border-gray-100">
+                      <div>
+                        <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                          <Briefcase className="w-3 h-3" />
+                          Active Vendors ({filteredVendors.length})
+                        </h3>
+                        <div className="space-y-3">
+                          {filteredVendors.map(v => (
+                            <div key={v.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm group hover:border-indigo-100 transition-all">
+                              <div className="flex-1">
+                                <p className="text-sm font-black text-gray-900 leading-none mb-1">{v.businessName}</p>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">{v.service} | {v.phone}</p>
+                                {/* Documents Tag */}
+                                <div className="flex gap-1.5 mt-1">
+                                  <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded ${v.documentPhoto || v.photo ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                    {v.documentPhoto || v.photo ? '✓ Docs Registered' : '✗ No Documents'}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                 <button 
+                                   onClick={() => setSelectedLetterPartner({...v, type: 'vendor', name: v.ownerName || v.businessName})}
+                                   className="p-2.5 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm"
+                                   title="Joining Letter"
+                                 >
+                                   <FileText className="w-3.5 h-3.5" />
+                                 </button>
+                                 <button 
+                                   onClick={() => handleAdminEditPartner(v, 'vendor')}
+                                   className="p-2.5 bg-slate-50 text-slate-400 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
+                                   title="Edit Vendor"
+                                 >
+                                   <Edit2 className="w-3.5 h-3.5" />
+                                 </button>
+                                 <button 
+                                   onClick={() => {
+                                     if(v.status === 'Terminated') {
+                                       handleRestorePartner(v.id, 'vendor');
+                                     } else {
+                                       handleTerminateVendor(v.id, v.businessName);
+                                     }
+                                   }}
+                                   className={`p-2.5 rounded-xl transition-all ${v.status === 'Terminated' ? 'bg-emerald-50 text-emerald-500 hover:bg-emerald-500 hover:text-white' : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'}`}
+                                   title={v.status === 'Terminated' ? 'Restore' : 'Terminate'}
+                                 >
+                                   <Power className="w-3.5 h-3.5" />
+                                 </button>
+                                 <button 
+                                   onClick={() => handleDeletePartner(v.id, 'vendor')}
+                                   className="p-2.5 bg-rose-50 text-rose-400 rounded-xl hover:bg-rose-500 hover:text-white transition-all"
+                                   title="Delete Permanently"
+                                 >
+                                   <Trash2 className="w-3.5 h-3.5" />
+                                 </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                          <Bike className="w-3 h-3" />
+                          Active Riders ({filteredDeliveryPartners.length})
+                        </h3>
+                        <div className="space-y-3">
+                          {filteredDeliveryPartners.map(dp => (
+                            <div key={dp.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm group hover:border-emerald-100 transition-all">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <p className="text-sm font-black text-gray-900 leading-none">{dp.name}</p>
+                                  <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded-lg ${dp.status === 'Banned' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'}`}>
+                                    {dp.status}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight">{dp.vehicleType} | {dp.phone}</p>
+                                {/* Documents Tag */}
+                                <div className="flex gap-1.5 mt-1">
+                                  <span className={`text-[7px] font-black uppercase px-2 py-0.5 rounded ${dp.documentPhoto || dp.photo ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                                    {dp.documentPhoto || dp.photo ? '✓ Docs Registered' : '✗ No Documents'}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                 <button 
+                                   onClick={() => setSelectedLetterPartner({...dp, type: 'delivery', name: dp.name})}
+                                   className="p-2.5 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm"
+                                   title="Joining Letter"
+                                 >
+                                   <FileText className="w-3.5 h-3.5" />
+                                 </button>
+                                 <button 
+                                   onClick={() => handleAdminEditPartner(dp, 'delivery')}
+                                   className="p-2.5 bg-slate-50 text-slate-400 rounded-xl hover:bg-indigo-600 hover:text-white transition-all"
+                                   title="Edit Rider"
+                                 >
+                                   <Edit2 className="w-3.5 h-3.5" />
+                                 </button>
+                                 <button 
+                                   onClick={() => {
+                                     if(dp.status === 'Banned') {
+                                       handleRestorePartner(dp.id, 'delivery');
+                                     } else {
+                                       handleTerminateDeliveryPartner(dp.id, dp.name);
+                                     }
+                                   }}
+                                   className={`p-2.5 rounded-xl transition-all ${dp.status === 'Banned' ? 'bg-emerald-50 text-emerald-500 hover:bg-emerald-500 hover:text-white' : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'}`}
+                                   title={dp.status === 'Banned' ? 'Restore' : 'Ban/Terminate'}
+                                 >
+                                   <Power className="w-3.5 h-3.5" />
+                                 </button>
+                                 <button 
+                                   onClick={() => handleDeletePartner(dp.id, 'delivery')}
+                                   className="p-2.5 bg-rose-50 text-rose-400 rounded-xl hover:bg-rose-500 hover:text-white transition-all"
+                                   title="Delete Permanently"
+                                 >
+                                   <Trash2 className="w-3.5 h-3.5" />
+                                 </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {adminView === 'marriage' && (
                 <div className="space-y-6">
@@ -3260,7 +5868,7 @@ export default function Home({
                       <div key={p.id} className="bg-white p-5 rounded-[2.5rem] border border-gray-100 shadow-sm flex items-center justify-between">
                         <div className="flex items-center gap-4">
                           <div className="w-14 h-14 rounded-2xl overflow-hidden shrink-0 border border-gray-100">
-                             {(p.image || p.img) && <img src={p.image || p.img} className="w-full h-full object-cover" />}
+                             {p.image && <img src={p.image} className="w-full h-full object-cover" />}
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
@@ -3278,12 +5886,23 @@ export default function Home({
                         <div className="flex gap-2">
                           {!p.isApproved ? (
                             <>
-                              <button 
-                                onClick={() => handleRejectProfile(p.id)}
-                                className="p-3 bg-rose-50 text-rose-500 rounded-2xl"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {isSuperAdmin && (
+                                <button 
+                                  onClick={() => setEditingAdminMarriageProfile(p)}
+                                  className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl hover:bg-indigo-100 transition-colors shadow-sm"
+                                  title="Edit Profile"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                              )}
+                              {isSuperAdmin && (
+                                <button 
+                                  onClick={() => handleRejectProfile(p.id)}
+                                  className="p-3 bg-rose-50 text-rose-500 rounded-2xl"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
                               <button 
                                 onClick={() => handleApproveProfile(p.id)}
                                 className="px-6 py-3 bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-indigo-100"
@@ -3293,18 +5912,15 @@ export default function Home({
                             </>
                           ) : (
                             <div className="flex gap-2">
-                              <button 
-                                onClick={() => {
-                                  // Transfer control back to MarriageBureau with edit mode
-                                  localStorage.setItem('edit_marriage_profile_id', p.id);
-                                  onNavigate('marriageBureau');
-                                  setIsAdminOpen(false);
-                                }}
-                                className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl hover:bg-indigo-100 transition-colors shadow-sm"
-                                title="Edit Profile"
-                              >
-                                <Edit2 className="w-4 h-4" />
-                              </button>
+                              {isSuperAdmin && (
+                                <button 
+                                  onClick={() => setEditingAdminMarriageProfile(p)}
+                                  className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl hover:bg-indigo-100 transition-colors shadow-sm"
+                                  title="Edit Profile"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                              )}
                               <button 
                                 onClick={() => handleSuspendProfile(p.id, p.name)}
                                 className="p-3 bg-amber-50 text-amber-500 rounded-2xl hover:bg-amber-500 hover:text-white transition-all shadow-sm"
@@ -3312,13 +5928,15 @@ export default function Home({
                               >
                                 <Power className="w-4 h-4" />
                               </button>
-                              <button 
-                                onClick={() => handleRejectProfile(p.id)}
-                                className="p-3 bg-gray-100 text-gray-400 rounded-2xl hover:bg-rose-50 hover:text-rose-500 transition-colors shadow-sm"
-                                title="Delete Profile"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              {isSuperAdmin && (
+                                <button 
+                                  onClick={() => handleRejectProfile(p.id)}
+                                  className="p-3 bg-gray-100 text-gray-400 rounded-2xl hover:bg-rose-50 hover:text-rose-500 transition-colors shadow-sm"
+                                  title="Delete Profile"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -3342,6 +5960,120 @@ export default function Home({
                   </header>
 
                   <div className="space-y-4">
+                    <section className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <p className="text-sm font-black text-gray-900 uppercase">Vendor Registration Fee</p>
+                          <p className="text-[10px] font-bold text-gray-400">Payment options for new partners</p>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
+                          <div>
+                            <p className="text-[10px] font-black uppercase text-gray-900">Cash After Joining</p>
+                            <p className="text-[8px] font-bold text-gray-400 uppercase">Collect by hand after verification</p>
+                          </div>
+                          <button 
+                            onClick={() => setPlatformSettings(prev => ({ ...prev, allowCashOnRegistration: !prev.allowCashOnRegistration }))}
+                            className={`w-12 h-6 rounded-full transition-all relative ${platformSettings.allowCashOnRegistration ? 'bg-emerald-500' : 'bg-gray-200'}`}
+                          >
+                            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${platformSettings.allowCashOnRegistration ? 'right-1' : 'left-1'}`} />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
+                          <div>
+                            <p className="text-[10px] font-black uppercase text-gray-900">Bank Transfer</p>
+                            <p className="text-[8px] font-bold text-gray-400 uppercase">Direct UPI/Netbanking payment</p>
+                          </div>
+                          <button 
+                            onClick={() => setPlatformSettings(prev => ({ ...prev, allowBankTransfer: !prev.allowBankTransfer }))}
+                            className={`w-12 h-6 rounded-full transition-all relative ${platformSettings.allowBankTransfer ? 'bg-emerald-500' : 'bg-gray-200'}`}
+                          >
+                            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${platformSettings.allowBankTransfer ? 'right-1' : 'left-1'}`} />
+                          </button>
+                        </div>
+
+                        <button 
+                          onClick={async () => {
+                            try {
+                              await setDoc(doc(db, 'settings', 'global'), platformSettings);
+                              setAdminSaveStatus("Registration Settings Global Sync Complete!");
+                            } catch (err) {
+                              handleFirestoreError(err, OperationType.WRITE, 'settings/global');
+                            }
+                          }}
+                          className="w-full py-4 bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-100 mt-2"
+                        >
+                          Update Platform Rules
+                        </button>
+                      </div>
+                    </section>
+                    <section className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <p className="text-sm font-black text-gray-900 uppercase">Primary Contact</p>
+                          <p className="text-[10px] font-bold text-gray-400">Regular customer care number</p>
+                        </div>
+                        <input 
+                          type="text" 
+                          value={supportInfo.phone}
+                          onChange={(e) => {
+                            const next = {...supportInfo, phone: e.target.value};
+                            setSupportInfo(next);
+                          }}
+                          className="w-32 bg-gray-50 border-none rounded-xl p-3 text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <p className="text-sm font-black text-gray-900 uppercase">Backup Contact</p>
+                          <p className="text-[10px] font-bold text-gray-400">Escalation after 2 days</p>
+                        </div>
+                        <input 
+                          type="text" 
+                          value={supportInfo.secondaryPhone || ''}
+                          onChange={(e) => {
+                            const next = {...supportInfo, secondaryPhone: e.target.value};
+                            setSupportInfo(next);
+                          }}
+                          className="w-32 bg-gray-50 border-none rounded-xl p-3 text-xs font-black outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <button 
+                        onClick={async () => {
+                          try {
+                            await setDoc(doc(db, 'settings', 'support'), supportInfo);
+                            setAdminSaveStatus("Support Contacts Updated in Cloud!");
+                          } catch (err) {
+                            handleFirestoreError(err, OperationType.WRITE, 'settings/support');
+                          }
+                        }}
+                        className="w-full py-3 bg-gray-900 text-white rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                      >
+                        Save Contacts to Cloud
+                      </button>
+                    </section>
+
+                    <section className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-[2.5rem] border border-indigo-100 shadow-sm">
+                      <div className="flex items-center gap-4 mb-4">
+                        <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center">
+                          <Stethoscope className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-black text-indigo-900 uppercase">Hospital Management</p>
+                          <p className="text-[10px] font-bold text-indigo-400">Configure prices & locations</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => setAdminView('hospitals')}
+                        className="w-full py-4 bg-white text-indigo-600 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-sm border border-indigo-100 active:scale-95 transition-all"
+                      >
+                        Open Hospital Admin Panel
+                      </button>
+                    </section>
+
                     <section className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm">
                       <div className="flex items-center justify-between mb-4">
                         <div>
@@ -3434,10 +6166,14 @@ export default function Home({
                             <Power className="w-4 h-4" />
                           </button>
                           <button 
-                            onClick={() => {
-                              if (confirm(`Delete user ${user.name} permanently? All history will be wiped.`)) {
-                                setUsers(prev => prev.filter(u => u.id !== user.id));
-                                setAdminSaveStatus("User deleted successfully!");
+                            onClick={async () => {
+                              if (confirm(`Delete user ${user.name} permanently? All history will be wiped from secure servers.`)) {
+                                try {
+                                  await deleteDoc(doc(db, 'users', user.id));
+                                  setAdminSaveStatus("User deleted successfully from cloud database!");
+                                } catch (err) {
+                                  handleFirestoreError(err, OperationType.DELETE, `users/${user.id}`);
+                                }
                               }
                             }}
                             className="p-3 bg-gray-100 text-gray-400 rounded-2xl hover:bg-rose-500 hover:text-white transition-all shadow-sm"
@@ -3457,48 +6193,348 @@ export default function Home({
                 </div>
               )}
 
+              {adminView === 'comments' && (
+                <div className="space-y-6">
+                  <header>
+                    <h3 className="text-xl font-black text-gray-900 italic">User Feedback & Review Moderation</h3>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Edit, moderate, or remove comments across the platform</p>
+                  </header>
+
+                  <div className="bg-white rounded-[2.5rem] border border-gray-100 p-6 shadow-sm overflow-hidden">
+                    <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                      {allReviews.length > 0 ? (
+                        allReviews.map((review) => (
+                          <div key={review.id} className="p-5 bg-gray-50/50 hover:bg-gray-50 rounded-[2rem] border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all">
+                            <div className="space-y-1.5 flex-1 text-left">
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs font-black text-gray-900">{review.userName || 'Anonymous'}</span>
+                                <div className="flex items-center gap-0.5">
+                                  {[...Array(5)].map((_, i) => (
+                                    <Star 
+                                      key={i} 
+                                      className={`w-3 h-3 ${i < (review.rating || 0) ? 'text-yellow-400 fill-yellow-400' : 'text-gray-200'}`} 
+                                    />
+                                  ))}
+                                </div>
+                                <span className="text-[9px] font-bold text-gray-400">{review.date || 'Recently'}</span>
+                              </div>
+                              
+                              {/* Inline Editing */}
+                              {editingReviewId === review.id ? (
+                                <div className="space-y-2 pt-1.5">
+                                  <div className="flex gap-1">
+                                    {[1, 2, 3, 4, 5].map(star => (
+                                      <button key={star} onClick={() => setEditingRating(star)}>
+                                        <Star className={`w-4 h-4 ${star <= editingRating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-200'}`} />
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <textarea
+                                    value={editingComment}
+                                    onChange={(e) => setEditingComment(e.target.value)}
+                                    className="w-full h-16 bg-white border border-gray-250 rounded-xl p-3 text-sm outline-none resize-none focus:border-indigo-500 border-gray-200"
+                                  />
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={async () => {
+                                        if (!editingComment.trim()) return;
+                                        try {
+                                          await updateDoc(doc(db, 'reviews', review.id), {
+                                            comment: editingComment,
+                                            rating: editingRating
+                                          });
+                                          setEditingReviewId(null);
+                                        } catch (err) {
+                                          console.error("Failed to save review:", err);
+                                        }
+                                      }}
+                                      className="px-4 py-2 bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingReviewId(null)}
+                                      className="px-4 py-2 bg-gray-200 text-gray-600 rounded-xl text-[10px] font-black uppercase tracking-widest"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-sm font-medium text-gray-600 leading-relaxed">{review.comment}</p>
+                              )}
+                              
+                              <div className="flex items-center gap-4 text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                                {review.productName && <span>Product: <b className="text-gray-900">{review.productName}</b></span>}
+                                {review.vendorName && <span>Vendor: <b className="text-gray-900">{review.vendorName}</b></span>}
+                              </div>
+                            </div>
+
+                            {editingReviewId !== review.id && (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setEditingReviewId(review.id);
+                                    setEditingComment(review.comment || '');
+                                    setEditingRating(review.rating || 5);
+                                  }}
+                                  className="p-3 bg-white hover:bg-gray-100 text-indigo-600 border border-gray-100 rounded-2xl transition-all shadow-sm"
+                                  title="Edit Review"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    if (confirm("Are you sure you want to permanently delete this user feedback comment?")) {
+                                      try {
+                                        await deleteDoc(doc(db, 'reviews', review.id));
+                                      } catch (err) {
+                                        console.error("Failed to delete review:", err);
+                                      }
+                                    }
+                                  }}
+                                  className="p-3 bg-white hover:bg-rose-50 text-rose-500 border border-gray-100 rounded-2xl transition-all shadow-sm"
+                                  title="Delete Review"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="py-20 text-center">
+                          <Star className="w-12 h-12 text-gray-200 mx-auto mb-4" />
+                          <p className="text-xs font-black text-gray-400 uppercase tracking-wider">No reviews or customer comments found</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {adminView === 'banners' && (
+                <div className="space-y-6">
+                  <header className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-xl font-black text-gray-900 italic">Creative & Banner Management</h3>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest hover:text-indigo-600 transition-colors cursor-help">Update home screen visual assets</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setEditingBanner({ type: 'top', color: 'bg-indigo-600', title: '', sub: '' });
+                        setShowBannerModal(true);
+                      }}
+                      className="px-6 py-3 bg-gray-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-gray-200"
+                    >
+                      New Banner
+                    </button>
+                  </header>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest ml-2">Top Carousel</h4>
+                      {topBanners.map((banner: any) => (
+                        <div key={banner.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm group">
+                          <div className="flex items-center gap-4 text-left">
+                            <div className={`w-12 h-12 ${banner.color} rounded-xl overflow-hidden shadow-inner relative flex-shrink-0`}>
+                              {banner.img && <img src={banner.img} className="w-full h-full object-cover opacity-50" />}
+                            </div>
+                            <div>
+                               <p className="text-xs font-black text-slate-900">{banner.title}</p>
+                               <p className="text-[8px] font-bold text-slate-400 uppercase">{banner.sub}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                             <button onClick={() => { setEditingBanner(banner); setShowBannerModal(true); }} className="p-2 bg-gray-50 text-gray-400 rounded-lg hover:text-indigo-600 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                             <button onClick={() => setTopBanners(prev => prev.filter(b => b.id !== banner.id))} className="p-2 bg-rose-50 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-black text-emerald-600 uppercase tracking-widest ml-2">Middle Grid / Bottom</h4>
+                      {bottomBanners.map((banner: any) => (
+                        <div key={banner.id} className="bg-white p-4 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm group">
+                          <div className="flex items-center gap-4 text-left">
+                            <div className={`w-12 h-12 ${banner.color} rounded-xl overflow-hidden shadow-inner relative flex-shrink-0`}>
+                               {banner.img && <img src={banner.img} className="w-full h-full object-cover opacity-50" />}
+                            </div>
+                            <div>
+                               <p className="text-xs font-black text-slate-900">{banner.title}</p>
+                               <p className="text-[8px] font-bold text-slate-400 uppercase">{banner.sub}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                             <button onClick={() => { setEditingBanner(banner); setShowBannerModal(true); }} className="p-2 bg-gray-50 text-gray-400 rounded-lg hover:text-indigo-600 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                             <button onClick={() => setBottomBanners(prev => prev.filter(b => b.id !== banner.id))} className="p-2 bg-rose-50 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {adminView === 'logistics_hub' && (
+                <div className="space-y-8">
+                  <header className="flex justify-between items-center">
+                    <div>
+                      <h3 className="text-2xl font-black text-gray-900 italic tracking-tighter flex items-center gap-3">
+                        Unified Logistics Hub
+                        <span className="px-3 py-1 bg-rose-100 text-rose-600 rounded-xl text-[9px] uppercase tracking-widest font-black font-sans leading-none">HQ Khammam</span>
+                      </h3>
+                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1 leading-none">AP & Telangana statewide processing unit for all approvals</p>
+                    </div>
+                    <div className="flex gap-2">
+                       <button 
+                         onClick={() => setAdminSaveStatus("Synchronizing global logistics state...")}
+                         className="p-3 bg-slate-100 text-slate-400 rounded-2xl hover:text-indigo-600 transition-colors"
+                       >
+                         <RefreshCw className="w-5 h-5" />
+                       </button>
+                    </div>
+                  </header>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[
+                      { id: 'marriage', icon: Heart, label: 'Marriage Profiles', count: logisticsStats.marriage, color: 'text-rose-500', bg: 'bg-rose-50' },
+                      { id: 'realEstate', icon: Building2, label: 'Real Estate', count: logisticsStats.realEstate, color: 'text-amber-500', bg: 'bg-amber-50' },
+                      { id: 'hospitals', icon: Stethoscope, label: 'Hospital Ops', count: logisticsStats.hospitals, color: 'text-blue-500', bg: 'bg-blue-50' },
+                      { id: 'partners', icon: Users, label: 'Applications', count: logisticsStats.partners, color: 'text-emerald-500', bg: 'bg-emerald-50' }
+                    ].map((stat) => (
+                      <button 
+                        key={stat.id}
+                        onClick={() => setAdminLogisticsTab(stat.id as any)}
+                        className={`${stat.bg} p-6 rounded-[2.5rem] border-2 transition-all group text-left ${adminLogisticsTab === stat.id ? 'border-slate-900 shadow-xl' : 'border-white shadow-sm hover:shadow-md'}`}
+                      >
+                         <stat.icon className={`w-6 h-6 ${stat.color} mb-4 group-hover:scale-110 transition-transform`} />
+                         <p className="text-2xl font-black italic text-slate-900 leading-none">{stat.count}</p>
+                         <p className="text-[9px] font-black text-slate-400 uppercase mt-2">{stat.label}</p>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="bg-white rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden">
+                    <div className="p-6 bg-slate-50/50 border-b border-slate-100 flex justify-between items-center">
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest">
+                        Pending {adminLogisticsTab === 'marriage' ? 'Profiles' : 
+                                adminLogisticsTab === 'realEstate' ? 'Properties' : 
+                                adminLogisticsTab === 'hospitals' ? 'OP Confirmation' : 'Partner Requests'}
+                      </h4>
+                      <span className="text-[10px] font-bold text-slate-400">{logisticsItems.length} Items Found</span>
+                    </div>
+
+                    <div className="divide-y divide-slate-50 min-h-[400px]">
+                      {logisticsItems.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-20 text-slate-300">
+                           <ShieldAlert className="w-12 h-12 mb-4 opacity-20" />
+                           <p className="text-xs font-black uppercase tracking-widest">Global Queue Clear</p>
+                        </div>
+                      ) : (
+                        logisticsItems.map((item) => (
+                          <div key={item.id} className="p-6 flex items-center justify-between hover:bg-slate-50 transition-colors group">
+                             <div className="flex items-center gap-4 text-left">
+                               <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center relative overflow-hidden">
+                                  {item.image || item.photo || item.patientPhoto ? (
+                                    <img src={item.image || item.photo || item.patientPhoto} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="font-black text-slate-300 text-xs">{item.id.slice(-2).toUpperCase()}</div>
+                                  )}
+                               </div>
+                               <div>
+                                  <p className="text-sm font-black text-slate-900">{item.name || item.title || item.fullName || item.patientName || 'Unnamed Entry'}</p>
+                                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                                    {item.location || item.type || item.email || item.reason || 'Verification Required'}
+                                  </p>
+                               </div>
+                             </div>
+                             <div className="flex gap-2">
+                                <button 
+                                  onClick={() => handleEditLogisticsItem(item)} 
+                                  className="p-3 bg-amber-50 text-amber-500 rounded-xl hover:bg-amber-500 hover:text-white transition-all"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => handleApproveItem(item)}
+                                  className="px-6 py-3 bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-100 hover:scale-105 transition-all"
+                                >
+                                  Approve
+                                </button>
+                                <button 
+                                  onClick={() => handleRejectItem(item)} 
+                                  className="p-3 bg-orange-50 text-orange-500 rounded-xl hover:bg-orange-500 hover:text-white transition-all"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteLogisticsItem(item)} 
+                                  className="p-3 bg-rose-50 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white transition-all"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                             </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900 text-white p-12 rounded-[4rem] text-center relative overflow-hidden">
+                     <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/20 blur-[100px] rounded-full" />
+                     <h4 className="text-xl font-black italic mb-2 relative z-10">Smart Approval Queue</h4>
+                     <p className="text-xs font-bold text-slate-400 mb-8 max-w-sm mx-auto relative z-10 leading-relaxed uppercase tracking-widest opacity-60">Wait for background verification engine to finish scanning profiles.</p>
+                     <button 
+                       onClick={() => setAdminSaveStatus("Logistics verification engine started...")}
+                       className="bg-white text-slate-900 px-10 py-5 rounded-full font-black uppercase tracking-widest text-[11px] hover:bg-slate-50 transition-all active:scale-95"
+                     >
+                       Refresh Processing Queue
+                     </button>
+                  </div>
+                </div>
+              )}
+
               {adminView === 'support' && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                   {/* Chat List */}
                   <div className="bg-white border border-gray-100 rounded-[2.5rem] flex flex-col h-[600px] overflow-hidden shadow-sm">
                     <div className="p-6 border-b border-gray-50 flex items-center justify-between">
-                       <h3 className="text-xl font-black italic">Rider Chats</h3>
+                       <h3 className="text-xl font-black italic">Support Tickets</h3>
                        <div className="bg-rose-100 text-rose-600 text-[8px] font-black px-2 py-1 rounded-full uppercase">
-                         Tickets: {Object.keys(supportChats).length}
+                         Total: {Object.keys(supportChats).length}
                        </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-2">
                        {(Object.values(supportChats) as SupportChat[]).sort((a, b) => {
-                         const timeA = a.messages.length > 0 ? new Date(`2024-01-01 ${a.lastMessageTimestamp}`).getTime() : 0;
-                         const timeB = b.messages.length > 0 ? new Date(`2024-01-01 ${b.lastMessageTimestamp}`).getTime() : 0;
+                         const timeA = a.lastMessageTimestamp?.toMillis ? a.lastMessageTimestamp.toMillis() : (a.lastMessageTimestamp ? new Date(a.lastMessageTimestamp).getTime() : 0);
+                         const timeB = b.lastMessageTimestamp?.toMillis ? b.lastMessageTimestamp.toMillis() : (b.lastMessageTimestamp ? new Date(b.lastMessageTimestamp).getTime() : 0);
                          return timeB - timeA;
                        }).map(chat => (
                          <button 
-                           key={chat.partnerId}
+                           key={chat.userId}
                            onClick={() => {
-                             setActiveChatId(chat.partnerId);
-                             // Clear unread count when clicking
-                             const all = {...supportChats};
-                             all[chat.partnerId].unreadCount = 0;
-                             setSupportChats(all);
-                             localStorage.setItem('lokal_support_chats', JSON.stringify(all));
+                             setActiveChatId(chat.userId);
                            }}
-                           className={`w-full p-4 rounded-3xl border flex items-center gap-4 transition-all ${activeChatId === chat.partnerId ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-transparent hover:bg-gray-50'}`}
+                           className={`w-full p-4 rounded-3xl border flex items-center gap-4 transition-all ${activeChatId === chat.userId ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-transparent hover:bg-gray-50'}`}
                          >
                            <div className="w-12 h-12 bg-indigo-100 rounded-2xl flex items-center justify-center text-indigo-600 font-black shrink-0">
-                             {chat.partnerName.charAt(0)}
+                             {chat.userName.charAt(0)}
                            </div>
                            <div className="flex-1 text-left overflow-hidden">
                              <div className="flex justify-between items-center mb-1">
-                               <p className="font-black text-[11px] text-gray-900 truncate">{chat.partnerName}</p>
-                               <p className="text-[8px] font-bold text-gray-400 shrink-0">{chat.lastMessageTimestamp}</p>
+                               <p className="font-black text-[11px] text-gray-900 truncate">{chat.userName}</p>
+                               <p className="text-[8px] font-bold text-gray-400 shrink-0">
+                                 {chat.lastMessageTimestamp?.toDate ? chat.lastMessageTimestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '...'}
+                               </p>
                              </div>
                              <p className="text-[10px] text-gray-500 font-medium truncate">
                                {chat.messages[chat.messages.length - 1]?.text}
                              </p>
                            </div>
                            {(chat.unreadCount || 0) > 0 && (
-                             <div className="w-5 h-5 bg-rose-500 rounded-full flex items-center justify-center text-white text-[8px] font-black shrink-0">
+                             <div className="w-5 h-5 bg-rose-500 rounded-full flex items-center justify-center text-white text-[8px] font-black shrink-0 border-2 border-white shadow-sm">
                                {chat.unreadCount}
                              </div>
                            )}
@@ -3515,15 +6551,15 @@ export default function Home({
 
                   {/* Chat Window */}
                   <div className="lg:col-span-2 bg-white border border-gray-100 rounded-[2.5rem] flex flex-col h-[600px] overflow-hidden shadow-sm relative">
-                    {activeChatId ? (
+                    {activeChatId && supportChats[activeChatId] ? (
                       <>
                         <div className="p-6 border-b border-gray-50 bg-gray-50/30 flex items-center gap-4 sticky top-0 z-10 backdrop-blur-md">
                           <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600 font-black">
-                            {supportChats[activeChatId].partnerName.charAt(0)}
+                            {supportChats[activeChatId].userName.charAt(0)}
                           </div>
                           <div>
-                            <h4 className="text-sm font-black text-gray-900">{supportChats[activeChatId].partnerName}</h4>
-                            <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest leading-none mt-1">Rider Console Connected</p>
+                            <h4 className="text-sm font-black text-gray-900">{supportChats[activeChatId].userName}</h4>
+                            <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest leading-none mt-1">User Support Session Connected</p>
                           </div>
                         </div>
 
@@ -3531,11 +6567,13 @@ export default function Home({
                           {supportChats[activeChatId].messages.map((msg) => (
                             <div key={msg.id} className={`flex ${msg.senderType === 'admin' ? 'justify-end' : 'justify-start'}`}>
                               <div className={`max-w-[80%] p-4 rounded-[2rem] text-[13px] font-bold shadow-sm ${
-                                msg.senderType === 'admin' ? 'bg-gray-900 text-white rounded-br-lg shadow-gray-200' : 'bg-gray-100 text-gray-800 rounded-bl-lg'
+                                msg.senderType === 'admin' ? 'bg-gray-900 text-white rounded-br-lg shadow-gray-200' : 
+                                msg.senderType === 'bot' ? 'bg-indigo-50 text-indigo-700 rounded-bl-lg border border-indigo-100 italic' :
+                                'bg-gray-100 text-gray-800 rounded-bl-lg'
                               }`}>
                                 {msg.text}
                                 <p className={`text-[8px] mt-2 opacity-50 uppercase font-black tracking-widest ${msg.senderType === 'admin' ? 'text-right' : ''}`}>
-                                  {msg.timestamp}
+                                  {msg.timestamp?.toDate ? msg.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '...'}
                                 </p>
                               </div>
                             </div>
@@ -3549,7 +6587,7 @@ export default function Home({
                               value={adminReply}
                               onChange={(e) => setAdminReply(e.target.value)}
                               onKeyDown={(e) => e.key === 'Enter' && handleAdminReply(activeChatId)}
-                              placeholder="Type a reply to rider..."
+                              placeholder="Type a reply to user..."
                               className="flex-1 bg-gray-50 p-4 rounded-3xl outline-none focus:ring-2 ring-indigo-400 transition-all font-black text-sm"
                             />
                             <button 
@@ -3567,8 +6605,8 @@ export default function Home({
                         <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center mb-6">
                            <MessageSquare className="w-10 h-10 text-gray-200" />
                         </div>
-                        <h4 className="text-xl font-black italic text-gray-300">Select a rider chat to begin</h4>
-                        <p className="text-xs font-bold text-gray-400 mt-2">Support requests will appear here live</p>
+                        <h4 className="text-xl font-black italic text-gray-300">Select a support chat to begin</h4>
+                        <p className="text-xs font-bold text-gray-400 mt-2">All customer and partner requests will appear here live</p>
                       </div>
                     )}
                   </div>
@@ -3860,9 +6898,9 @@ export default function Home({
                         </div>
                         <div className="flex items-center justify-between p-4 bg-white rounded-2xl">
                           <span className="text-xs font-bold text-gray-700">Auto Session Timeout</span>
-                          <select className="bg-gray-100 border-none rounded-lg text-[10px] font-black p-2 outline-none">
+                          <select defaultValue="30 MIN" className="bg-gray-100 border-none rounded-lg text-[10px] font-black p-2 outline-none">
                             <option>15 MIN</option>
-                            <option selected>30 MIN</option>
+                            <option>30 MIN</option>
                             <option>1 HOUR</option>
                           </select>
                         </div>
@@ -3877,251 +6915,475 @@ export default function Home({
               {adminView === 'deliveryPartners' && (
                 <div className="space-y-6">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">Delivery Partners ({deliveryPartners.length})</h3>
+                    <div>
+                      <h3 className="text-sm font-black text-gray-900 uppercase tracking-widest leading-none mb-1">Delivery Console</h3>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{deliveryPartners.length} Active Riders</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setPartnerType('delivery');
+                        setFormStep(1);
+                        setIsPartnerEditMode(false);
+                        setPartnerData({
+                          name: '', ownerName: '', service: 'Bike', phone: '',
+                          gstNumber: '', businessAddress: '', otp: '1234',
+                          aadhaar: '', rc: '', dl: '', vehicleNumber: '', chassisNumber: '', accessCode: '',
+                          location: { area: '', city: '', pincode: '' },
+                          docs: { aadhaar: true, rc: true, dl: true, businessProof: true },
+                          bankName: '', accountHolder: '', accountNumber: '', ifscCode: '',
+                          upiId: '', documentPhoto: '', photo: ''
+                        });
+                        setShowPartnerOnboarding(true);
+                      }}
+                      className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Rider
+                    </button>
                   </div>
-                  <div className="space-y-3">
-                    {deliveryPartners.map((partner) => {
-                      if (!partner) return null;
-                      return (
-                      <div key={partner.id} className={`p-5 rounded-[2.5rem] border shadow-sm ${partner.status === 'Banned' ? 'bg-rose-50 border-rose-100 opacity-80' : 'bg-white border-gray-100'}`}>
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-3">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black overflow-hidden ${partner.status === 'Banned' ? 'bg-rose-200 text-rose-600' : 'bg-blue-100 text-blue-600'}`}>
-                              {partner.photo ? (
-                                <img src={partner.photo} className="w-full h-full object-cover" alt={partner.name} />
-                              ) : (
-                                <Bike className="w-6 h-6" />
-                              )}
+
+                  <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-hide">
+                    {['All', 'Online', 'Offline', 'Banned', 'Approved'].map((status) => (
+                      <button
+                        key={status}
+                        onClick={() => setRiderStatusFilter(status as any)}
+                        className={`px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest whitespace-nowrap transition-all border ${
+                          riderStatusFilter === status 
+                            ? 'bg-gray-900 text-white border-gray-900 shadow-lg' 
+                            : 'bg-white text-gray-400 border-gray-100 hover:border-gray-200'
+                        }`}
+                      >
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+
+                  {deliveryPartners.length === 0 ? (
+                    <div className="bg-white p-12 rounded-[2.5rem] border border-dashed border-gray-200 text-center">
+                      <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <Bike className="w-8 h-8 text-gray-300" />
+                      </div>
+                      <p className="text-sm font-black text-gray-900 uppercase tracking-tighter">No Riders Yet</p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase mt-1 mb-6">Activate your delivery fleet to start serving orders.</p>
+                      <button 
+                        onClick={() => setAdminView('partners')}
+                        className="text-[10px] font-black text-indigo-600 uppercase hover:underline"
+                      >
+                        Approve New Riders
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {deliveryPartners
+                        .filter(partner => {
+                          if (!partner) return false;
+                          if (riderStatusFilter === 'All') return true;
+                          if (riderStatusFilter === 'Online') return partner.isOnline && partner.status !== 'Banned';
+                          if (riderStatusFilter === 'Offline') return !partner.isOnline && partner.status !== 'Banned';
+                          if (riderStatusFilter === 'Banned') return partner.status === 'Banned';
+                          if (riderStatusFilter === 'Approved') return partner.status === 'Approved' || partner.status === 'Online' || partner.status === 'Offline' || partner.status === 'On Trip';
+                          return true;
+                        })
+                        .map((partner) => (
+                          <div key={partner.id} className={`p-5 rounded-[2.5rem] border shadow-sm ${partner.status === 'Banned' ? 'bg-rose-50 border-rose-100 opacity-80' : 'bg-white border-gray-100'}`}>
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-center gap-3">
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black overflow-hidden ${partner.status === 'Banned' ? 'bg-rose-200 text-rose-600' : 'bg-blue-100 text-blue-600'}`}>
+                                  {partner.photo ? (
+                                    <img src={partner.photo} className="w-full h-full object-cover" alt={partner.name} />
+                                  ) : (
+                                    <Bike className="w-6 h-6" />
+                                  )}
+                                </div>
+                                <div>
+                                   <div className="flex items-center gap-2">
+                                      <p className="font-black text-gray-900 leading-tight">{partner.name}</p>
+                                      {partner.status === 'Banned' && <span className="text-[7px] font-black uppercase bg-rose-500 text-white px-1.5 py-0.5 rounded">Terminated</span>}
+                                   </div>
+                                  <p className="text-[10px] font-bold text-gray-400">{partner.phone} | {partner.vehicleType}</p>
+                                </div>
+                              </div>
+                              <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-tighter ${
+                                partner.isOnline 
+                                  ? (activeOrders.some(ao => ao.deliveryPartnerId === partner.id) ? 'bg-orange-100 text-orange-600' : 'bg-emerald-100 text-emerald-600') 
+                                  : 'bg-gray-100 text-gray-400'
+                              }`}>
+                                {partner.isOnline ? (activeOrders.some(ao => ao.deliveryPartnerId === partner.id) ? 'On Trip' : 'Online') : 'Offline'}
+                              </div>
                             </div>
-                            <div>
-                               <div className="flex items-center gap-2">
-                                  <p className="font-black text-gray-900 leading-tight">{partner.name}</p>
-                                  {partner.status === 'Banned' && <span className="text-[7px] font-black uppercase bg-rose-500 text-white px-1.5 py-0.5 rounded">Terminated</span>}
-                               </div>
-                              <p className="text-[10px] font-bold text-gray-400">{partner.phone} | {partner.vehicleType}</p>
+                            <div className="mb-4 flex flex-wrap gap-2">
+                               <select 
+                                 value={partner.status === 'Banned' ? 'Banned' : (partner.isOnline ? 'Online' : 'Offline')}
+                                 onChange={(e) => handleUpdateRiderStatus(partner.id, e.target.value as any)}
+                                 className="text-[9px] font-black uppercase bg-gray-50 border-none rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-yellow-400"
+                               >
+                                 <option value="Online">Set Online</option>
+                                 <option value="Offline">Set Offline</option>
+                                 <option value="Approved">Approved</option>
+                                 <option value="Banned">Banned</option>
+                               </select>
                             </div>
-                          </div>
-                          <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-tighter ${
-                            partner.isOnline 
-                              ? (activeOrders.some(ao => ao.deliveryPartnerId === partner.id) ? 'bg-orange-100 text-orange-600' : 'bg-emerald-100 text-emerald-600') 
-                              : 'bg-gray-100 text-gray-400'
-                          }`}>
-                            {partner.isOnline ? (activeOrders.some(ao => ao.deliveryPartnerId === partner.id) ? 'On Trip' : 'Online') : 'Offline'}
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2 mb-4">
-                          <div className="bg-gray-50 p-2 rounded-xl text-center">
-                            <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Trips</p>
-                            <p className="text-xs font-black text-gray-900">{partner.trips}</p>
-                          </div>
-                          <div className="bg-gray-50 p-2 rounded-xl text-center">
-                            <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Total</p>
-                            <p className="text-xs font-black text-gray-900">₹{partner.earnings}</p>
-                          </div>
-                          <div className="bg-gray-50 p-2 rounded-xl text-center relative group">
-                            <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Payout</p>
-                            <div className="flex items-center justify-center gap-1">
-                              <p className="text-xs font-black text-emerald-600">₹{partner.pendingPayout}</p>
-                              <button 
+                            <div className="grid grid-cols-4 gap-2 mb-4">
+                              <div className="bg-gray-50 p-2 rounded-xl text-center">
+                                <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Trips</p>
+                                <p className="text-xs font-black text-gray-900">{partner.trips}</p>
+                              </div>
+                              <div className="bg-gray-50 p-2 rounded-xl text-center">
+                                <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Total</p>
+                                <p className="text-xs font-black text-gray-900">₹{partner.earnings}</p>
+                              </div>
+                              <div className="bg-gray-50 p-2 rounded-xl text-center relative group">
+                                <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Payout</p>
+                                <div className="flex items-center justify-center gap-1">
+                                  <p className="text-xs font-black text-emerald-600">₹{partner.pendingPayout}</p>
+                                  <button 
+                                    onClick={() => {
+                                      const val = prompt(`Edit pending payout for ${partner.name}:`, partner.pendingPayout?.toString());
+                                      if (val !== null && !isNaN(Number(val))) {
+                                        setDeliveryPartners(prev => prev.map(p => p.id === partner.id ? { ...p, pendingPayout: Number(val) } : p));
+                                      }
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-indigo-600 transition-opacity"
+                                  >
+                                    <Edit3 className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="bg-gray-50 p-2 rounded-xl text-center">
+                                <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Rating</p>
+                                <p className="text-xs font-black text-gray-900">{partner.rating}⭐</p>
+                              </div>
+                            </div>
+                            {(partner.totalPaid || partner.lastPayoutDate) && (
+                              <div className="mb-4 px-4 py-2 bg-emerald-50/50 rounded-2xl flex items-center justify-between border border-emerald-100/50">
+                                <p className="text-[9px] font-black text-emerald-700">Total Paid: ₹{partner.totalPaid || 0}</p>
+                                <p className="text-[9px] font-bold text-emerald-600">Last: {partner.lastPayoutDate || 'Never'}</p>
+                              </div>
+                            )}
+                            <div className="flex gap-2">
+                               <button 
+                                onClick={() => handleAdminEditPartner(partner, 'delivery')}
+                                className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-colors"
+                                title="Edit Rider"
+                               >
+                                 <Edit2 className="w-4 h-4" />
+                               </button>
+                               <button 
+                                onClick={() => onNavigate('delivery', partner.id)}
+                                className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-colors"
+                                title="Open Delivery Console"
+                               >
+                                 <Bike className="w-4 h-4" />
+                               </button>
+                               <button 
                                 onClick={() => {
-                                  const val = prompt(`Edit pending payout for ${partner.name}:`, partner.pendingPayout?.toString());
-                                  if (val !== null && !isNaN(Number(val))) {
-                                    setDeliveryPartners(prev => prev.map(p => p.id === partner.id ? { ...p, pendingPayout: Number(val) } : p));
+                                  if((partner.pendingPayout || 0) === 0) {
+                                    alert("No pending payout to settle.");
+                                    return;
+                                  }
+                                  if(confirm(`Settle payout of ₹${partner.pendingPayout} for ${partner.name}?`)) {
+                                    handleSettlePayout(partner.id, 'delivery');
                                   }
                                 }}
-                                className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-indigo-600 transition-opacity"
-                              >
-                                <Edit3 className="w-2.5 h-2.5" />
-                              </button>
+                                className="flex-1 py-3 bg-emerald-50 text-emerald-600 rounded-xl text-[9px] font-black uppercase active:bg-emerald-100 transition-colors"
+                               >
+                                Settle Payout
+                               </button>
+                               <button 
+                                onClick={() => {
+                                  if(partner.status === 'Banned') {
+                                    handleRestorePartner(partner.id, 'delivery');
+                                    return;
+                                  }
+                                  handleTerminateDeliveryPartner(partner.id, partner.name);
+                                }}
+                                className={`px-4 py-3 rounded-xl text-[9px] font-black uppercase transition-colors ${partner.status === 'Banned' ? 'bg-emerald-500 text-white' : 'bg-rose-50 text-rose-500'}`}
+                               >
+                                {partner.status === 'Banned' ? 'Restore' : 'Terminate'}
+                               </button>
+                               <button 
+                                 onClick={() => handleDeletePartner(partner.id, 'delivery')}
+                                className="w-10 h-10 bg-gray-100 text-gray-400 rounded-xl flex items-center justify-center active:bg-gray-200 transition-colors"
+                               >
+                                 <Trash2 className="w-4 h-4" />
+                               </button>
                             </div>
                           </div>
-                          <div className="bg-gray-50 p-2 rounded-xl text-center">
-                            <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Rating</p>
-                            <p className="text-xs font-black text-gray-900">{partner.rating}⭐</p>
-                          </div>
-                        </div>
-                        {(partner.totalPaid || partner.lastPayoutDate) && (
-                          <div className="mb-4 px-4 py-2 bg-emerald-50/50 rounded-2xl flex items-center justify-between border border-emerald-100/50">
-                            <p className="text-[9px] font-black text-emerald-700">Total Paid: ₹{partner.totalPaid || 0}</p>
-                            <p className="text-[9px] font-bold text-emerald-600">Last: {partner.lastPayoutDate || 'Never'}</p>
-                          </div>
-                        )}
-                        <div className="flex gap-2">
-                           <button 
-                            onClick={() => handleAdminEditPartner(partner, 'delivery')}
-                            className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-colors"
-                            title="Edit Rider"
-                           >
-                             <Edit2 className="w-4 h-4" />
-                           </button>
-                           <button 
-                            onClick={() => {
-                              if((partner.pendingPayout || 0) === 0) {
-                                alert("No pending payout to settle.");
-                                return;
-                              }
-                              if(confirm(`Settle payout of ₹${partner.pendingPayout} for ${partner.name}?`)) {
-                                handleSettlePayout(partner.id, 'delivery');
-                              }
-                            }}
-                            className="flex-1 py-3 bg-emerald-50 text-emerald-600 rounded-xl text-[9px] font-black uppercase active:bg-emerald-100 transition-colors"
-                           >
-                            Settle Payout
-                           </button>
-                           <button 
-                            onClick={() => {
-                              if(partner.status === 'Banned') {
-                                handleRestorePartner(partner.id, 'delivery');
-                                return;
-                              }
-                              handleTerminateDeliveryPartner(partner.id, partner.name);
-                            }}
-                            className={`px-4 py-3 rounded-xl text-[9px] font-black uppercase transition-colors ${partner.status === 'Banned' ? 'bg-emerald-500 text-white' : 'bg-rose-50 text-rose-500'}`}
-                           >
-                            {partner.status === 'Banned' ? 'Restore' : 'Terminate'}
-                           </button>
-                           <button 
-                            onClick={() => {
-                              if(confirm(`Delete rider ${partner.name} permanently?`)) {
-                                setDeliveryPartners(prev => prev.filter(dp => dp.id !== partner.id));
-                                setAdminSaveStatus(`Rider ${partner.name} deleted.`);
-                              }
-                            }}
-                            className="w-10 h-10 bg-gray-100 text-gray-400 rounded-xl flex items-center justify-center active:bg-gray-200 transition-colors"
-                           >
-                             <Trash2 className="w-4 h-4" />
-                           </button>
-                        </div>
-                      </div>
-                    );
-                    })}
-                    {deliveryPartners.length === 0 && (
-                      <div className="py-12 text-center border-2 border-dashed border-gray-100 rounded-[3rem]">
-                        <Bike className="w-12 h-12 text-gray-200 mx-auto mb-4" />
-                        <p className="text-[10px] font-black text-gray-400 uppercase">No active partners</p>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {adminView === 'properties' && (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">Real Estate Listings ({properties.length})</h3>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {properties.map((property: any) => (
+                      <PropertyAdminCard key={property.id} property={property} setDeleteConfirm={setDeleteConfirm} />
+                    ))}
+                    {properties.length === 0 && (
+                      <div className="py-20 text-center border-2 border-dashed border-gray-100 rounded-[3rem]">
+                        <Building2 className="w-12 h-12 text-gray-200 mx-auto mb-4" />
+                        <p className="text-[10px] font-black text-gray-400 uppercase">No property listings</p>
                       </div>
                     )}
                   </div>
+
+                  <div className="pt-8 border-t border-gray-100">
+                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4">Property Inquiries ({propertyChats.filter(c => c.senderType !== 'admin').length})</h3>
+                    <div className="space-y-4">
+                      {/* Group chats by user + property */}
+                      {Array.from(new Set(propertyChats.map(c => `${c.userId}_${c.propertyId}`))).map(groupKey => {
+                        const [uId, pId] = groupKey.split('_');
+                        const chatGroup = propertyChats.filter(c => c.userId === uId && c.propertyId === pId);
+                        const lastMsg = chatGroup[0];
+                        const property = properties.find(p => p.id === pId);
+                        
+                        return (
+                          <div key={groupKey} className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600 font-black">
+                                  {lastMsg.userName?.charAt(0) || 'U'}
+                                </div>
+                                <div>
+                                  <p className="text-xs font-black text-gray-900">{lastMsg.userName || 'User'}</p>
+                                  <p className="text-[10px] font-bold text-indigo-500 uppercase">Interested in: {lastMsg.propertyTitle || property?.title || 'Unknown'}</p>
+                                </div>
+                              </div>
+                              <span className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">
+                                {lastMsg.timestamp?.toDate ? lastMsg.timestamp.toDate().toLocaleTimeString() : 'Just now'}
+                              </span>
+                            </div>
+
+                            <div className="bg-gray-50 p-4 rounded-2xl max-h-48 overflow-y-auto space-y-3">
+                              {chatGroup.slice().reverse().map(msg => (
+                                <div key={msg.id} className={`flex ${msg.senderType === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                                  <div className={`p-3 rounded-2xl text-[11px] max-w-[85%] ${msg.senderType === 'admin' ? 'bg-indigo-600 text-white' : 'bg-white border border-gray-100 text-gray-700'}`}>
+                                    {msg.text}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="flex gap-2">
+                               <input 
+                                 type="text" 
+                                 placeholder="Reply to customer..." 
+                                 className="flex-1 bg-gray-50 border-none rounded-xl p-3 text-[11px] font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                                 onKeyDown={(e) => {
+                                   if (e.key === 'Enter') {
+                                     handleAdminPropertyChatReply(uId, pId);
+                                   }
+                                 }}
+                                 onChange={(e) => setAdminReply(e.target.value)}
+                                 value={adminView === 'properties' ? adminReply : ''}
+                               />
+                               <button 
+                                 onClick={() => handleAdminPropertyChatReply(uId, pId)}
+                                 className="px-4 py-2 bg-gray-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest"
+                               >
+                                 Reply
+                               </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {propertyChats.length === 0 && (
+                        <p className="text-center text-[10px] font-bold text-gray-300 uppercase py-8 italic">No active inquiries</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
+
               {adminView === 'vendors' && (
                 <div className="space-y-6">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">Partners & Vendors ({vendors.length})</h3>
+                    <div>
+                      <h3 className="text-sm font-black text-gray-900 uppercase tracking-widest leading-none mb-1">Merchant Hub</h3>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{vendors.length} Active Businesses</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setPartnerType('vendor');
+                        setIsPartnerEditMode(false);
+                        setEditingPartnerId(null);
+                        setPartnerPhoto(null);
+                        setPartnerData({
+                          name: '', ownerName: '', service: 'groceries', phone: '',
+                          gstNumber: '', businessAddress: '', otp: '1234',
+                          aadhaar: '', rc: '', dl: '', vehicleNumber: '', chassisNumber: '', accessCode: '',
+                          location: { area: 'Wardha', city: 'Wardha', pincode: '442001' },
+                          docs: { aadhaar: true, rc: true, dl: true, businessProof: true },
+                          bankName: '', accountHolder: '', accountNumber: '', ifscCode: '',
+                          upiId: '', documentPhoto: '', photo: ''
+                        });
+                        setShowPartnerForm(true);
+                      }}
+                      className="px-4 py-2 bg-yellow-400 text-gray-900 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Merchant
+                    </button>
                   </div>
-                  <div className="space-y-3">
-                  {vendors.map((vendor) => {
-                      if (!vendor) return null;
-                      return (
-                      <div key={vendor.id} className={`p-5 rounded-[2.5rem] border shadow-sm ${vendor.status === 'Terminated' ? 'bg-rose-50 border-rose-100 opacity-80' : 'bg-white border-gray-100'}`}>
-                        <div className="flex items-center justify-between mb-4">
-                          <div className="flex items-center gap-3">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black overflow-hidden ${vendor.status === 'Terminated' ? 'bg-rose-200 text-rose-600' : 'bg-yellow-400 text-gray-900'}`}>
-                              {vendor.photo ? (
-                                <img src={vendor.photo} className="w-full h-full object-cover" alt={vendor.businessName} />
-                              ) : (
-                                <Briefcase className="w-6 h-6" />
-                              )}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="font-black text-gray-900 leading-tight">{vendor.businessName}</p>
-                                {vendor.status === 'Terminated' && <span className="text-[7px] font-black uppercase bg-rose-500 text-white px-1.5 py-0.5 rounded">Terminated</span>}
-                              </div>
-                              <p className="text-[10px] font-bold text-gray-400">{vendor.ownerName} | {vendor.phone}</p>
-                            </div>
-                          </div>
-                          <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-tighter ${vendor.isOnline ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
-                            {vendor.isOnline ? 'Online' : 'Offline'}
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2 mb-4">
-                          <div className="bg-gray-50 p-2 rounded-xl text-center">
-                            <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Items</p>
-                            <p className="text-xs font-black text-gray-900">{vendor.itemsCount}</p>
-                          </div>
-                          <div className="bg-gray-50 p-2 rounded-xl text-center">
-                            <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Revenue</p>
-                            <p className="text-xs font-black text-gray-900">₹{vendor.revenue}</p>
-                          </div>
-                          <div className="bg-gray-50 p-2 rounded-xl text-center border-emerald-100 border relative group">
-                            <p className="text-[7px] font-black text-emerald-600 uppercase mb-0.5">Payout</p>
-                            <div className="flex items-center justify-center gap-1">
-                              <p className="text-xs font-black text-emerald-600">₹{vendor.pendingPayout}</p>
-                              <button 
-                                onClick={() => {
-                                  const val = prompt(`Edit pending payout for ${vendor.businessName}:`, vendor.pendingPayout?.toString());
-                                  if (val !== null && !isNaN(Number(val))) {
-                                    setVendors(prev => prev.map(v => v.id === vendor.id ? { ...v, pendingPayout: Number(val) } : v));
-                                  }
-                                }}
-                                className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-indigo-600 transition-opacity"
-                              >
-                                <Edit3 className="w-2.5 h-2.5" />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="bg-gray-50 p-2 rounded-xl text-center">
-                            <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Rating</p>
-                            <p className="text-xs font-black text-gray-900">{vendor.rating}⭐</p>
-                          </div>
-                        </div>
-                        {(vendor.totalPaid || vendor.lastPayoutDate) && (
-                          <div className="mb-4 px-4 py-2 bg-emerald-50/50 rounded-2xl flex items-center justify-between border border-emerald-100/50">
-                            <p className="text-[9px] font-black text-emerald-700">Total Settled: ₹{vendor.totalPaid || 0}</p>
-                            <p className="text-[9px] font-bold text-emerald-600">Last: {vendor.lastPayoutDate || 'Never'}</p>
-                          </div>
-                        )}
-                        <div className="flex gap-2">
-                           <button 
-                            onClick={() => handleAdminEditPartner(vendor, 'vendor')}
-                            className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-colors"
-                            title="Edit Vendor"
-                           >
-                             <Edit2 className="w-4 h-4" />
-                           </button>
-                           <button 
-                            onClick={() => {
-                              if((vendor.pendingPayout || 0) === 0) {
-                                alert("No pending payout to settle.");
-                                return;
-                              }
-                              if(confirm(`Settle payout of ₹${vendor.pendingPayout} for ${vendor.businessName}?`)) {
-                                handleSettlePayout(vendor.id, 'vendor');
-                              }
-                            }}
-                            className="flex-1 py-3 bg-emerald-50 text-emerald-600 rounded-xl text-[9px] font-black uppercase active:bg-emerald-100 transition-colors"
-                           >
-                            Settle Payout
-                           </button>
-                           <button 
-                            onClick={() => {
-                              if(vendor.status === 'Terminated') {
-                                handleRestorePartner(vendor.id, 'vendor');
-                                return;
-                              }
-                              handleTerminateVendor(vendor.id, vendor.businessName);
-                            }}
-                            className={`px-4 py-3 rounded-xl text-[9px] font-black uppercase transition-colors ${vendor.status === 'Terminated' ? 'bg-emerald-500 text-white' : 'bg-rose-50 text-rose-500'}`}
-                           >
-                            {vendor.status === 'Terminated' ? 'Restore' : 'Terminate'}
-                           </button>
-                           <button 
-                            onClick={() => {
-                              if(confirm(`Delete vendor ${vendor.businessName} and all records permanently?`)) {
-                                setVendors(prev => prev.filter(v => v.id !== vendor.id));
-                                setAdminSaveStatus(`Vendor ${vendor.businessName} deleted.`);
-                              }
-                            }}
-                            className="w-10 h-10 bg-gray-100 text-gray-400 rounded-xl flex items-center justify-center active:bg-gray-200 transition-colors"
-                           >
-                             <Trash2 className="w-4 h-4" />
-                           </button>
-                        </div>
+
+                  {vendors.length === 0 ? (
+                    <div className="bg-white p-12 rounded-[2.5rem] border border-dashed border-gray-200 text-center">
+                      <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <Store className="w-8 h-8 text-gray-300" />
                       </div>
-                    );
-                    })}
-                  </div>
+                      <p className="text-sm font-black text-gray-900 uppercase tracking-tighter">No Merchants Yet</p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase mt-1 mb-6">Start building your marketplace by adding local businesses.</p>
+                      <button 
+                        onClick={() => setAdminView('partners')}
+                        className="text-[10px] font-black text-indigo-600 uppercase hover:underline"
+                      >
+                        Check Pending Applications
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {vendors.map((vendor) => {
+                        if (!vendor) return null;
+                        return (
+                          <div key={vendor.id} className={`p-5 rounded-[2.5rem] border shadow-sm ${vendor.status === 'Terminated' ? 'bg-rose-50 border-rose-100 opacity-80' : 'bg-white border-gray-100'}`}>
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-center gap-3">
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black overflow-hidden ${vendor.status === 'Terminated' ? 'bg-rose-200 text-rose-600' : 'bg-yellow-400 text-gray-900'}`}>
+                                  {vendor.photo ? (
+                                    <img src={vendor.photo} className="w-full h-full object-cover" alt={vendor.businessName} />
+                                  ) : (
+                                    <Briefcase className="w-6 h-6" />
+                                  )}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <p className="font-black text-gray-900 leading-tight">{vendor.businessName}</p>
+                                    {vendor.status === 'Terminated' && <span className="text-[7px] font-black uppercase bg-rose-500 text-white px-1.5 py-0.5 rounded">Terminated</span>}
+                                  </div>
+                                  <p className="text-[10px] font-bold text-gray-400">{vendor.ownerName} | {vendor.phone}</p>
+                                </div>
+                              </div>
+                              <div className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-tighter ${vendor.isOnline ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-400'}`}>
+                                {vendor.isOnline ? 'Online' : 'Offline'}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-4 gap-2 mb-4">
+                              <div className="bg-gray-50 p-2 rounded-xl text-center">
+                                <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Items</p>
+                                <p className="text-xs font-black text-gray-900">{vendor.itemsCount}</p>
+                              </div>
+                              <div className="bg-gray-50 p-2 rounded-xl text-center">
+                                <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Revenue</p>
+                                <p className="text-xs font-black text-gray-900">₹{vendor.revenue}</p>
+                              </div>
+                              <div className="bg-gray-50 p-2 rounded-xl text-center border-emerald-100 border relative group">
+                                <p className="text-[7px] font-black text-emerald-600 uppercase mb-0.5">Payout</p>
+                                <div className="flex items-center justify-center gap-1">
+                                  <p className="text-xs font-black text-emerald-600">₹{vendor.pendingPayout}</p>
+                                  <button 
+                                    onClick={() => {
+                                      const val = prompt(`Edit pending payout for ${vendor.businessName}:`, vendor.pendingPayout?.toString());
+                                      if (val !== null && !isNaN(Number(val))) {
+                                        setVendors(prev => prev.map(v => v.id === vendor.id ? { ...v, pendingPayout: Number(val) } : v));
+                                      }
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-indigo-600 transition-opacity"
+                                  >
+                                    <Edit3 className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="bg-gray-50 p-2 rounded-xl text-center">
+                                <p className="text-[7px] font-black text-gray-400 uppercase mb-0.5">Rating</p>
+                                <p className="text-xs font-black text-gray-900">{vendor.rating}⭐</p>
+                              </div>
+                            </div>
+                            {(vendor.totalPaid || vendor.lastPayoutDate) && (
+                              <div className="mb-4 px-4 py-2 bg-emerald-50/50 rounded-2xl flex items-center justify-between border border-emerald-100/50">
+                                <p className="text-[9px] font-black text-emerald-700">Total Settled: ₹{vendor.totalPaid || 0}</p>
+                                <p className="text-[9px] font-bold text-emerald-600">Last: {vendor.lastPayoutDate || 'Never'}</p>
+                              </div>
+                            )}
+                            <div className="flex gap-2">
+                               <button 
+                                 onClick={() => onNavigate('vendor', vendor.id)}
+                                 className="flex-1 py-3 bg-indigo-50 text-indigo-600 rounded-2xl text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                               >
+                                 Manage Hub
+                               </button>
+                               {vendor.pendingPayout > 0 && (
+                                 <button 
+                                   onClick={() => handleSettlePayout(vendor.id, 'vendor')}
+                                   className="px-4 py-3 bg-emerald-50 text-emerald-600 rounded-2xl text-[9px] font-black uppercase tracking-widest hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+                                 >
+                                   Settle ₹{vendor.pendingPayout}
+                                 </button>
+                               )}
+                               <div className="flex gap-1.5 shrink-0">
+                                 {vendor.documentPhoto && (
+                                   <button 
+                                     onClick={() => {
+                                       const docPreview = {
+                                         name: vendor.businessName,
+                                         type: 'vendor',
+                                         photo: vendor.photo,
+                                         documentPhoto: vendor.documentPhoto,
+                                         phone: vendor.phone,
+                                         details: { 
+                                           ownerName: vendor.ownerName,
+                                           accountNumber: vendor.accountNumber,
+                                           bankName: vendor.bankName,
+                                           ifscCode: vendor.ifscCode,
+                                           upiId: vendor.upiId
+                                         }
+                                       };
+                                       setSelectedApproval(docPreview as any);
+                                     }}
+                                     className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl hover:bg-emerald-600 hover:text-white transition-all shadow-sm"
+                                     title="View Verification Documents"
+                                   >
+                                     <FileCheck className="w-4 h-4" />
+                                   </button>
+                                 )}
+                                 <button 
+                                   onClick={() => handleAdminEditPartner(vendor, 'vendor')}
+                                   className="p-3 bg-slate-50 text-slate-400 rounded-2xl hover:bg-amber-500 hover:text-white transition-all"
+                                   title="Edit Merchant"
+                                 >
+                                   <Edit2 className="w-4 h-4" />
+                                 </button>
+                                 <button 
+                                   onClick={() => {
+                                     if(vendor.status === 'Terminated') {
+                                       handleRestorePartner(vendor.id, 'vendor');
+                                     } else {
+                                       handleTerminateVendor(vendor.id, vendor.businessName);
+                                     }
+                                   }}
+                                   className={`p-3 rounded-2xl transition-all ${vendor.status === 'Terminated' ? 'bg-emerald-50 text-emerald-500 hover:bg-emerald-500 hover:text-white' : 'bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white'}`}
+                                   title={vendor.status === 'Terminated' ? 'Restore Business' : 'Terminate Business'}
+                                 >
+                                   <Power className="w-4 h-4" />
+                                 </button>
+                                 <button 
+                                   onClick={() => handleDeletePartner(vendor.id, 'vendor')}
+                                   className="p-3 bg-rose-50 text-rose-400 rounded-2xl hover:bg-rose-600 hover:text-white transition-all"
+                                   title="Delete Permanently"
+                                 >
+                                   <Trash2 className="w-4 h-4" />
+                                 </button>
+                               </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -4158,91 +7420,110 @@ export default function Home({
               </h3>
 
               <div className="space-y-4 mb-8 max-h-[60vh] overflow-y-auto pr-2 scrollbar-hide">
-                <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Item Image URL</p>
-                  <input 
+                <div className="flex flex-col gap-2">
+                  <AdminInput
+                    label="Item Image"
                     value={editingItem?.image}
                     onChange={(e) => setEditingItem({ ...editingItem, image: e.target.value })}
-                    placeholder="https://images.unsplash.com/..."
-                    className="w-full bg-gray-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm"
+                    placeholder="Enter Image URL..."
                   />
+                  <div className="flex items-center gap-2">
+                     <div className="flex-1 h-[1px] bg-gray-100"></div>
+                     <p className="text-[8px] font-black text-gray-300 uppercase italic">Or Upload</p>
+                     <div className="flex-1 h-[1px] bg-gray-100"></div>
+                  </div>
+                  <label className="w-full bg-gray-900 text-white p-4 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all">
+                    <Camera className="w-4 h-4" />
+                    Take / Select Photo
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          try {
+                            const reader = new FileReader();
+                            reader.readAsDataURL(file);
+                            reader.onload = async (event) => {
+                              const base64 = event.target?.result as string;
+                              const compressed = await compressImage(base64);
+                              setEditingItem({ ...editingItem, image: compressed });
+                            };
+                          } catch (err) {
+                            console.error("Upload error", err);
+                          }
+                        }
+                      }}
+                    />
+                  </label>
                 </div>
-                <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Product Name</p>
-                  <input 
-                    value={editingItem?.name}
-                    onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
-                    placeholder="Item Name"
-                    className="w-full bg-gray-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm"
-                  />
-                </div>
+                
+                <AdminInput
+                  label="Product Name"
+                  value={editingItem?.name}
+                  onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
+                  placeholder="Item Name"
+                />
+
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">M.R.P (₹)</p>
-                    <input 
-                      type="number"
-                      value={editingItem?.originalPrice || ''}
-                      onChange={(e) => setEditingItem({ ...editingItem, originalPrice: e.target.value ? Number(e.target.value) : undefined })}
-                      placeholder="Optional"
-                      className="w-full bg-gray-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Offer Price (₹)</p>
-                    <input 
-                      type="number"
-                      value={editingItem?.price}
-                      onChange={(e) => setEditingItem({ ...editingItem, price: Number(e.target.value) })}
-                      className="w-full bg-gray-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Stock Qty</p>
-                    <input 
-                      type="number"
-                      value={editingItem?.stock || 0}
-                      onChange={(e) => setEditingItem({ ...editingItem, stock: Number(e.target.value) })}
-                      className="w-full bg-gray-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm"
-                    />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Unit (kg, g, L..)</p>
-                    <select 
-                      value={editingItem?.unit || ''}
-                      onChange={(e) => setEditingItem({ ...editingItem, unit: e.target.value })}
-                      className="w-full bg-gray-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm appearance-none"
-                    >
-                      <option value="">No Unit</option>
-                      <option value="kg">kilogram (kg)</option>
-                      <option value="1/2 kg">1/2 kg</option>
-                      <option value="5 kg">5 kg</option>
-                      <option value="g">gram (g)</option>
-                      <option value="L">Liter (L)</option>
-                      <option value="ml">milliliter (ml)</option>
-                      <option value="pc">Piece (pc)</option>
-                    </select>
-                  </div>
+                  <AdminInput
+                    label="M.R.P (₹)"
+                    type="number"
+                    value={editingItem?.originalPrice || ''}
+                    onChange={(e) => setEditingItem({ ...editingItem, originalPrice: e.target.value ? Number(e.target.value) : undefined })}
+                    placeholder="Optional"
+                  />
+                  
+                  <AdminInput
+                    label="Offer Price (₹)"
+                    type="number"
+                    value={editingItem?.price}
+                    onChange={(e) => setEditingItem({ ...editingItem, price: Number(e.target.value) })}
+                  />
+
+                  <AdminInput
+                    label="Stock Qty"
+                    type="number"
+                    value={editingItem?.stock || 0}
+                    onChange={(e) => setEditingItem({ ...editingItem, stock: Number(e.target.value) })}
+                  />
+
+                  <AdminInput
+                    label="Unit (kg, g, L..)"
+                    as="select"
+                    value={editingItem?.unit || ''}
+                    onChange={(e) => setEditingItem({ ...editingItem, unit: e.target.value })}
+                    options={[
+                      { value: "", label: "No Unit" },
+                      { value: "kg", label: "kilogram (kg)" },
+                      { value: "1/2 kg", label: "1/2 kg" },
+                      { value: "5 kg", label: "5 kg" },
+                      { value: "g", label: "gram (g)" },
+                      { value: "L", label: "Liter (L)" },
+                      { value: "ml", label: "milliliter (ml)" },
+                      { value: "pc", label: "Piece (pc)" }
+                    ]}
+                  />
+
                   <div className="col-span-2">
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Category</p>
-                    <select 
+                    <AdminInput
+                      label="Category"
+                      as="select"
                       value={editingItem?.category}
                       onChange={(e) => setEditingItem({ ...editingItem, category: e.target.value })}
-                      className="w-full bg-gray-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm appearance-none"
-                    >
-                      {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
+                      options={categories.map(c => ({ value: c.id, label: c.name }))}
+                    />
                   </div>
                 </div>
-                <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1">Description</p>
-                  <textarea 
-                    value={editingItem?.description}
-                    onChange={(e) => setEditingItem({ ...editingItem, description: e.target.value })}
-                    placeholder="Enter item details..."
-                    rows={3}
-                    className="w-full bg-gray-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm resize-none"
-                  />
-                </div>
+
+                <AdminInput
+                  label="Description"
+                  as="textarea"
+                  value={editingItem?.description}
+                  onChange={(e) => setEditingItem({ ...editingItem, description: e.target.value })}
+                  placeholder="Enter item details..."
+                />
               </div>
 
               <div className="flex gap-3">
@@ -4257,6 +7538,288 @@ export default function Home({
                   className="flex-1 py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-gray-200"
                 >
                   Save Item
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showCategoryModal && editingCategory && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative"
+            >
+              <button 
+                onClick={() => setShowCategoryModal(false)}
+                className="absolute top-6 right-6 p-2 bg-gray-100 rounded-xl"
+              >
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+
+              <h3 className="text-2xl font-black text-gray-900 mb-6 italic">Edit Category</h3>
+
+              <div className="space-y-4 mb-8 max-h-[60vh] overflow-y-auto pr-2 scrollbar-hide">
+                <div className="flex flex-col gap-2">
+                  <AdminInput
+                    label="Category Image"
+                    value={editingCategory.image || ''}
+                    onChange={(e) => setEditingCategory({ ...editingCategory, image: e.target.value })}
+                    placeholder="Enter Image URL..."
+                  />
+                  <div className="flex items-center gap-2">
+                     <div className="flex-1 h-[1px] bg-gray-100"></div>
+                     <p className="text-[8px] font-black text-gray-300 uppercase italic">Or Upload</p>
+                     <div className="flex-1 h-[1px] bg-gray-100"></div>
+                  </div>
+                  <label className="w-full bg-indigo-900 text-white p-4 rounded-xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all">
+                    <Camera className="w-4 h-4" />
+                    Take / Select Photo
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      className="hidden" 
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          try {
+                            const reader = new FileReader();
+                            reader.readAsDataURL(file);
+                            reader.onload = async (event) => {
+                              const base64 = event.target?.result as string;
+                              const compressed = await compressImage(base64);
+                              setEditingCategory({ ...editingCategory, image: compressed });
+                            };
+                          } catch (err) {
+                            console.error("Upload error", err);
+                          }
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+
+                <AdminInput
+                  label="Category Name"
+                  value={editingCategory.name}
+                  onChange={(e) => setEditingCategory({ ...editingCategory, name: e.target.value })}
+                  placeholder="e.g. Fresh Fruits"
+                />
+                
+                <AdminInput
+                  label="Icon Type"
+                  as="select"
+                  value={editingCategory.icon}
+                  onChange={(e) => setEditingCategory({ ...editingCategory, icon: e.target.value })}
+                  options={Object.keys(IconMap).map(icon => ({ value: icon, label: icon }))}
+                />
+
+                <AdminInput
+                  label="Theme Color"
+                  as="select"
+                  value={editingCategory.color}
+                  onChange={(e) => setEditingCategory({ ...editingCategory, color: e.target.value })}
+                  options={[
+                    { value: "bg-red-100", label: "Red Soft" },
+                    { value: "bg-blue-100", label: "Blue Soft" },
+                    { value: "bg-cyan-100", label: "Cyan Soft" },
+                    { value: "bg-pink-100", label: "Pink Soft" },
+                    { value: "bg-green-100", label: "Green Soft" },
+                    { value: "bg-yellow-100", label: "Yellow Soft" },
+                    { value: "bg-emerald-50", label: "Emerald Soft" },
+                    { value: "bg-purple-100", label: "Purple Soft" },
+                    { value: "bg-orange-100", label: "Orange Soft" },
+                    { value: "bg-rose-50", label: "Rose Soft" },
+                    { value: "bg-indigo-50", label: "Indigo Soft" },
+                    { value: "bg-indigo-100", label: "Indigo Deep" },
+                    { value: "bg-rose-100", label: "Rose Deep" },
+                    { value: "bg-slate-100", label: "Slate Soft" },
+                    { value: "bg-amber-50", label: "Amber Soft" },
+                    { value: "bg-rose-500 text-white", label: "Alert Red" }
+                  ]}
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowCategoryModal(false)}
+                  className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase tracking-widest text-[10px]"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    if (!editingCategory.name) return;
+                    setCategories(prev => {
+                      const exists = prev.find(c => c.id === editingCategory.id);
+                      if (exists) {
+                        return prev.map(c => c.id === editingCategory.id ? editingCategory : c);
+                      }
+                      return [...prev, editingCategory];
+                    });
+                    saveCategoryToFirestore(editingCategory);
+                    setAdminSaveStatus('Category Updated Successfully!');
+                    setShowCategoryModal(false);
+                  }}
+                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-indigo-100"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showPromoModal && editingPromo && (
+          <div className="fixed inset-0 z-[160] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl relative"
+            >
+              <button 
+                onClick={() => {
+                  setShowPromoModal(false);
+                  setEditingPromo(null);
+                }}
+                className="absolute top-6 right-6 p-2 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+              >
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+
+              <h3 className="text-2xl font-black text-gray-950 mb-6 italic">
+                {isEditingPromoMode ? 'Edit Promo Code' : 'New Promo Code'}
+              </h3>
+
+              <div className="space-y-4 mb-8 max-h-[60vh] overflow-y-auto pr-2 scrollbar-hide">
+                <AdminInput
+                  label="Promo Code"
+                  value={editingPromo.id || ''}
+                  disabled={isEditingPromoMode}
+                  onChange={(e) => setEditingPromo({ ...editingPromo, id: e.target.value.toUpperCase().trim() })}
+                  placeholder="e.g. LOKAL50"
+                  className="font-mono uppercase"
+                />
+
+                <AdminInput
+                  label="Label / Description"
+                  value={editingPromo.label || ''}
+                  onChange={(e) => setEditingPromo({ ...editingPromo, label: e.target.value })}
+                  placeholder="e.g. 10% Off on all orders"
+                />
+
+                <div className="grid grid-cols-2 gap-3">
+                  <AdminInput
+                    label="Type"
+                    as="select"
+                    value={editingPromo.type || 'percent'}
+                    onChange={(e) => {
+                      const nextType = e.target.value;
+                      setEditingPromo({ 
+                        ...editingPromo, 
+                        type: nextType,
+                        value: nextType === 'shipping' ? 0 : editingPromo.value
+                      });
+                    }}
+                    options={[
+                      { value: 'percent', label: 'Percent (%)' },
+                      { value: 'flat', label: 'Flat Discount (₹)' },
+                      { value: 'shipping', label: 'Free Delivery' }
+                    ]}
+                  />
+
+                  <AdminInput
+                    label="Value"
+                    type="number"
+                    disabled={editingPromo.type === 'shipping'}
+                    value={editingPromo.value || 0}
+                    onChange={(e) => setEditingPromo({ ...editingPromo, value: Number(e.target.value) })}
+                    placeholder="e.g. 50"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <AdminInput
+                    label="Min Subtotal (₹)"
+                    type="number"
+                    value={editingPromo.minSubtotal || 0}
+                    onChange={(e) => setEditingPromo({ ...editingPromo, minSubtotal: Number(e.target.value) })}
+                    placeholder="e.g. 300"
+                  />
+
+                  <AdminInput
+                    label="Status"
+                    as="select"
+                    value={editingPromo.isActive === undefined ? 'true' : String(editingPromo.isActive)}
+                    onChange={(e) => setEditingPromo({ ...editingPromo, isActive: e.target.value === 'true' })}
+                    options={[
+                      { value: 'true', label: 'Active' },
+                      { value: 'false', label: 'Paused' }
+                    ]}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => {
+                    setShowPromoModal(false);
+                    setEditingPromo(null);
+                  }}
+                  className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase tracking-widest text-[10px]"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSavePromo}
+                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-indigo-100"
+                >
+                  {isEditingPromoMode ? 'Save Changes' : 'Create Promo'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {deleteConfirm?.isOpen && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl relative text-center border border-gray-100"
+            >
+              <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 className="w-8 h-8" />
+              </div>
+              
+              <h3 className="text-xl font-black text-gray-900 mb-2 italic tracking-tight">{deleteConfirm.title}</h3>
+              <p className="text-xs font-bold text-gray-400 mb-8 leading-relaxed px-2">{deleteConfirm.message}</p>
+              
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setDeleteConfirm(null)}
+                  className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase tracking-widest text-[10px]"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={async () => {
+                    await deleteConfirm.onConfirm();
+                    setDeleteConfirm(null);
+                  }}
+                  className="flex-1 py-4 bg-rose-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-rose-200"
+                >
+                  Delete
                 </button>
               </div>
             </motion.div>
@@ -4338,6 +7901,97 @@ export default function Home({
             </motion.div>
           </div>
         )}
+
+        {showBannerModal && editingBanner && (
+          <div className="fixed inset-0 z-[170] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-sm rounded-[3.5rem] p-8 shadow-2xl relative border-4 border-slate-100"
+            >
+              <button 
+                onClick={() => setShowBannerModal(false)}
+                className="absolute top-8 right-8 p-3 bg-slate-100 rounded-2xl"
+              >
+                <X className="w-4 h-4 text-slate-500" />
+              </button>
+
+              <h3 className="text-2xl font-black text-slate-900 mb-8 italic tracking-tighter">Edit Creative</h3>
+
+              <div className="space-y-4 mb-8">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1">Banner Type</p>
+                    <select 
+                      value={editingBanner.type}
+                      onChange={(e) => setEditingBanner({ ...editingBanner, type: e.target.value })}
+                      className="w-full bg-slate-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-indigo-400 outline-none text-xs appearance-none"
+                    >
+                      <option value="top">Top Carousel</option>
+                      <option value="bottom">Bottom Grid</option>
+                    </select>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1">Theme Color</p>
+                    <select 
+                      value={editingBanner.color}
+                      onChange={(e) => setEditingBanner({ ...editingBanner, color: e.target.value })}
+                      className="w-full bg-slate-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-indigo-400 outline-none text-xs appearance-none"
+                    >
+                      <option value="bg-indigo-600">Indigo</option>
+                      <option value="bg-rose-600">Rose</option>
+                      <option value="bg-emerald-600">Emerald</option>
+                      <option value="bg-slate-900">Slate</option>
+                      <option value="bg-amber-600">Amber</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1">Main Heading</p>
+                  <input 
+                    value={editingBanner.title}
+                    onChange={(e) => setEditingBanner({ ...editingBanner, title: e.target.value })}
+                    className="w-full bg-slate-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-indigo-400 outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1">Sub-heading / Tagline</p>
+                  <input 
+                    value={editingBanner.sub}
+                    onChange={(e) => setEditingBanner({ ...editingBanner, sub: e.target.value })}
+                    className="w-full bg-slate-50 p-4 rounded-xl font-bold border-2 border-transparent focus:border-indigo-400 outline-none text-sm"
+                  />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-1">Creative Image URL</p>
+                  <input 
+                    value={editingBanner.img}
+                    onChange={(e) => setEditingBanner({ ...editingBanner, img: e.target.value })}
+                    className="w-full bg-slate-50 p-4 rounded-xl font-mono border-2 border-transparent focus:border-indigo-400 outline-none text-[10px]"
+                    placeholder="https://images.unsplash.com/..."
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowBannerModal(false)}
+                  className="flex-1 py-5 bg-slate-100 text-slate-500 rounded-3xl font-black uppercase tracking-widest text-[10px]"
+                >
+                  Discard
+                </button>
+                <button 
+                  onClick={handleSaveBanner}
+                  className="flex-[1.5] py-5 bg-slate-900 text-white rounded-3xl font-black uppercase tracking-widest text-[10px] shadow-2xl shadow-slate-200"
+                >
+                  Deploy Banner
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
 
       {/* Detailed Approval Modal */}
@@ -4384,6 +8038,97 @@ export default function Home({
                  </div>
               </div>
 
+               {/* Bank & Payment Details section */}
+               <div className="bg-emerald-50/50 p-6 rounded-[2.5rem] border border-emerald-100 mb-8">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-2">
+                       <Landmark className="w-4 h-4" /> Bank & Settlement Details
+                    </h4>
+                    <div className="flex flex-col items-end">
+                      <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${selectedApproval.paymentMode === 'Cash' || selectedApproval.paymentStatus?.includes('Hand') ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                        {selectedApproval.paymentStatus || 'Fee Pending'}
+                      </span>
+                      {selectedApproval.paymentMode && (
+                        <p className="text-[7px] font-black text-slate-400 uppercase tracking-tighter mt-1 italic">Channel: {selectedApproval.paymentMode === 'Cash' ? 'Physical Collection' : 'Digital Transfer'}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-y-4 gap-x-6">
+                     <div>
+                        <p className="text-[9px] font-black text-emerald-800/40 uppercase tracking-widest leading-none mb-1">A/C Holder</p>
+                        <p className="text-xs font-black text-emerald-900 truncate">{selectedApproval.accountHolder || selectedApproval.details?.accountHolder || 'Not Provided'}</p>
+                     </div>
+                     <div>
+                        <p className="text-[9px] font-black text-emerald-800/40 uppercase tracking-widest leading-none mb-1">Bank Name</p>
+                        <p className="text-xs font-black text-emerald-900 truncate">{selectedApproval.bankName || selectedApproval.details?.bankName || 'Not Provided'}</p>
+                     </div>
+                     <div>
+                        <p className="text-[9px] font-black text-emerald-800/40 uppercase tracking-widest leading-none mb-1">A/C Number</p>
+                        <p className="text-xs font-mono font-black text-emerald-900 select-all">{selectedApproval.accountNumber || selectedApproval.details?.accountNumber || 'Not Provided'}</p>
+                     </div>
+                     <div>
+                        <p className="text-[9px] font-black text-emerald-800/40 uppercase tracking-widest leading-none mb-1">IFSC Code</p>
+                        <p className="text-xs font-mono font-black text-indigo-600 select-all">{selectedApproval.ifscCode || selectedApproval.details?.ifscCode || 'Not Provided'}</p>
+                     </div>
+                     <div className="col-span-2">
+                        <p className="text-[9px] font-black text-emerald-800/40 uppercase tracking-widest leading-none mb-1">UPI ID (Instant Transfer)</p>
+                        <p className="text-xs font-black text-gray-900 bg-white p-2 rounded-xl border border-emerald-100 tracking-tight italic select-all">
+                           {selectedApproval.upiId || selectedApproval.details?.upiId || 'No UPI ID linked'}
+                        </p>
+                     </div>
+                  </div>
+               </div>
+
+               <div className="space-y-4 mb-8">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Documents & Photos</p>
+                <div className="grid grid-cols-2 gap-4">
+                  {selectedApproval.photo && (
+                    <div className="space-y-2">
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest pl-1">Business Logo</p>
+                      <div className="aspect-square bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 overflow-hidden relative group">
+                        <img src={selectedApproval.photo} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                           <Camera className="w-6 h-6 text-white" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {selectedApproval.documentPhoto && (
+                    <div className="space-y-2">
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest pl-1">Shop License / Docs</p>
+                      <div className="aspect-square bg-indigo-50 rounded-3xl border-2 border-indigo-100 overflow-hidden relative group">
+                        <img src={selectedApproval.documentPhoto} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                           <FileText className="w-6 h-6 text-white" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {!selectedApproval.photo && !selectedApproval.documentPhoto && (
+                    <div className="col-span-2 aspect-[3/1] bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 flex items-center justify-center text-center p-4">
+                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-relaxed">No Verification Photos Attached<br/><span className="text-[8px] italic opacity-60">(Legacy Application)</span></p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {selectedApproval.initialProduct && (
+                <div className="bg-amber-50 p-6 rounded-[2.5rem] border border-amber-100 mb-8">
+                  <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <Package className="w-3 h-3" /> Initial Product Listing
+                  </p>
+                  <div className="flex gap-4">
+                    <div className="w-16 h-16 bg-white rounded-2xl border border-amber-200 overflow-hidden shrink-0">
+                      <img src={selectedApproval.initialProduct.image || 'https://images.unsplash.com/photo-1542838132-92c5330049d2?w=100'} className="w-full h-full object-cover" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-black text-amber-900 uppercase truncate">{selectedApproval.initialProduct.name}</h4>
+                      <p className="text-[10px] font-bold text-amber-700">₹{selectedApproval.initialProduct.price} • {selectedApproval.initialProduct.category || 'Standard'}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {selectedApproval.details?.location && (
                 <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 mb-8">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Business / Hub Location</p>
@@ -4391,90 +8136,132 @@ export default function Home({
                 </div>
               )}
 
-              <div className="space-y-4 mb-8">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Documents & Photos</p>
-                <div className="grid grid-cols-2 gap-4">
-                  {selectedApproval.details?.photo && (
-                    <div className="aspect-square bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 overflow-hidden relative group">
-                      <img src={selectedApproval.details.photo} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                         <Camera className="w-6 h-6 text-white" />
-                      </div>
-                    </div>
-                  )}
-                  {/* Simplified document view - in real app, these are links or full images */}
-                  <div className="aspect-square bg-indigo-50 rounded-3xl border-2 border-indigo-100 flex flex-col items-center justify-center text-center p-4">
-                     <ShieldCheck className="w-10 h-10 text-indigo-500 mb-2" />
-                     <p className="text-[10px] font-black text-indigo-700 uppercase tracking-widest">KYC Docs Uploaded</p>
-                  </div>
-                </div>
-              </div>
-
               <div className="flex gap-4">
                  <button 
                    onClick={() => setSelectedApproval(null)}
-                   className="flex-1 py-5 bg-slate-100 text-slate-500 rounded-[2rem] font-black uppercase text-[10px] tracking-widest"
+                   className={`py-4 bg-slate-100 text-slate-500 rounded-[2rem] font-black uppercase text-[10px] tracking-widest ${selectedApproval.id ? 'flex-1' : 'w-full'}`}
                  >
-                   Close View
+                   {selectedApproval.id ? 'Close View' : 'Back to Hub'}
                  </button>
-                 <button 
-                   onClick={async () => {
-                     // Approval logic wrapped
-                     try {
-                       if (selectedApproval.type === 'vendor') {
-                         const vendorId = `v-${Date.now()}`;
-                         const newVendor: VendorProfile = {
-                           id: vendorId,
-                           userId: selectedApproval.userId || '',
-                           businessName: selectedApproval.name || '',
-                           ownerName: selectedApproval.ownerName || selectedApproval.details?.ownerName || selectedApproval.name || '',
-                           phone: selectedApproval.phone || '',
-                           service: selectedApproval.details?.service || 'General',
-                           status: 'Approved',
-                           rating: 5.0,
-                           isOnline: false,
-                           revenue: 0,
-                           itemsCount: 0,
-                           pendingPayout: 0,
-                           address: selectedApproval.details?.businessAddress || '',
-                           location: selectedApproval.details?.location || null
-                         };
-                         await setDoc(doc(db, 'vendors', vendorId), {
-                           ...newVendor,
-                           createdAt: serverTimestamp()
-                         });
-                       } else {
-                         const riderId = `dp-${Date.now()}`;
-                         const newRider: DeliveryPartnerProfile = {
-                           id: riderId,
-                           userId: selectedApproval.userId || '',
-                           name: selectedApproval.name || '',
-                           phone: selectedApproval.phone || '',
-                           vehicleType: selectedApproval.details?.service || selectedApproval.details?.vehicleType || 'Bike',
-                           vehicleNumber: selectedApproval.details?.vehicleNumber || '',
-                           status: 'Online',
-                           isOnline: true,
-                           rating: 5.0,
-                           trips: 0,
-                           earnings: 0,
-                           pendingPayout: 0
-                         };
-                         await setDoc(doc(db, 'deliveryPartners', riderId), {
-                           ...newRider,
-                           createdAt: serverTimestamp()
-                         });
+                 {selectedApproval.id && (
+                  <>
+                    <button 
+                      onClick={async () => {
+                        try {
+                          await updateDoc(doc(db, 'partner_applications', selectedApproval.id), { status: 'Rejected', updatedAt: serverTimestamp() });
+                          setAdminSaveStatus("Application Declined.");
+                          setSelectedApproval(null);
+                        } catch (e) {
+                          handleFirestoreError(e, OperationType.UPDATE, 'partner_applications');
+                        }
+                      }}
+                      className="flex-1 py-4 bg-amber-500 text-white rounded-[2rem] font-black uppercase text-[10px] tracking-widest hover:bg-amber-600 transition-colors"
+                    >
+                      Decline
+                    </button>
+                    <button 
+                      onClick={async () => {
+                        if (!confirm("Are you sure you want to permanently delete this application record?")) return;
+                        try {
+                          await deleteDoc(doc(db, 'partner_applications', selectedApproval.id));
+                          setAdminSaveStatus("Application Deleted.");
+                          setSelectedApproval(null);
+                        } catch (e) {
+                          handleFirestoreError(e, OperationType.DELETE, 'partner_applications');
+                        }
+                      }}
+                      className="px-4 py-4 bg-rose-100 text-rose-600 rounded-[2rem] font-black uppercase text-[10px] tracking-widest hover:bg-rose-200 transition-colors"
+                    >
+                      Delete
+                    </button>
+                   <button 
+                     onClick={async () => {
+                       try {
+                         if (selectedApproval.type === 'vendor') {
+                           const vendorId = `v-${Date.now()}`;
+                           const newVendor: VendorProfile = {
+                             id: vendorId,
+                             userId: selectedApproval.userId || '',
+                             businessName: selectedApproval.name || '',
+                             ownerName: selectedApproval.ownerName || selectedApproval.details?.ownerName || selectedApproval.name || '',
+                             phone: selectedApproval.phone || '',
+                             service: selectedApproval.businessType || selectedApproval.details?.service || selectedApproval.service || 'General',
+                             status: 'Approved',
+                             rating: 5.0,
+                             isOnline: false,
+                             revenue: 0,
+                             itemsCount: selectedApproval.initialProduct ? 1 : 0,
+                             pendingPayout: 0,
+                             address: selectedApproval.businessAddress || selectedApproval.location || selectedApproval.details?.businessAddress || '',
+                             location: selectedApproval.details?.location || null,
+                             gstNumber: selectedApproval.gstNumber || selectedApproval.details?.gstNumber || null,
+                             bankName: selectedApproval.bankName || selectedApproval.details?.bankName || '',
+                             accountHolder: selectedApproval.accountHolder || selectedApproval.details?.accountHolder || '',
+                             accountNumber: selectedApproval.accountNumber || selectedApproval.details?.accountNumber || '',
+                             ifscCode: selectedApproval.ifscCode || selectedApproval.details?.ifscCode || '',
+                             upiId: selectedApproval.upiId || selectedApproval.details?.upiId || '',
+                             photo: selectedApproval.photo || '',
+                             documentPhoto: selectedApproval.documentPhoto || '',
+                             accessCode: Math.floor(1000 + Math.random() * 9000).toString()
+                           };
+                           await setDoc(doc(db, 'vendors', vendorId), {
+                             ...newVendor,
+                             createdAt: serverTimestamp()
+                           });
+                           if (selectedApproval.initialProduct) {
+                             const prodId = `p-${Date.now()}`;
+                             await setDoc(doc(db, 'products', prodId), {
+                               id: prodId,
+                               vendorId,
+                               name: selectedApproval.initialProduct.name,
+                               price: Number(selectedApproval.initialProduct.price),
+                               category: selectedApproval.initialProduct.category,
+                               image: selectedApproval.initialProduct.image || '',
+                               isAvailable: true,
+                               rating: 5.0,
+                               createdAt: serverTimestamp()
+                             });
+                           }
+                         } else {
+                           const riderId = `dp-${Date.now()}`;
+                           const newRider: DeliveryPartnerProfile = {
+                             id: riderId,
+                             userId: selectedApproval.userId || '',
+                             name: selectedApproval.name || '',
+                             phone: selectedApproval.phone || '',
+                             vehicleType: selectedApproval.details?.service || selectedApproval.details?.vehicleType || 'Bike',
+                             vehicleNumber: selectedApproval.details?.vehicleNumber || '',
+                             status: 'Online',
+                             isOnline: true,
+                             rating: 5.0,
+                             trips: 0,
+                             earnings: 0,
+                             pendingPayout: 0,
+                             bankName: selectedApproval.bankName || selectedApproval.details?.bankName || '',
+                             accountHolder: selectedApproval.accountHolder || selectedApproval.details?.accountHolder || '',
+                             accountNumber: selectedApproval.accountNumber || selectedApproval.details?.accountNumber || '',
+                             ifscCode: selectedApproval.ifscCode || selectedApproval.details?.ifscCode || '',
+                             upiId: selectedApproval.upiId || selectedApproval.details?.upiId || '',
+                             documentPhoto: selectedApproval.documentPhoto || ''
+                           };
+                           await setDoc(doc(db, 'deliveryPartners', riderId), {
+                             ...newRider,
+                             createdAt: serverTimestamp()
+                           });
+                         }
+                         await updateDoc(doc(db, 'partner_applications', selectedApproval.id), { status: 'Approved', updatedAt: serverTimestamp() });
+                         setAdminSaveStatus("Partner Approved!");
+                         setSelectedApproval(null);
+                       } catch (e) {
+                         handleFirestoreError(e, OperationType.WRITE, 'partners');
                        }
-                       await deleteDoc(doc(db, 'pendingApprovals', selectedApproval.id));
-                       setAdminSaveStatus("Partner Approved!");
-                       setSelectedApproval(null);
-                     } catch (e) {
-                       handleFirestoreError(e, OperationType.WRITE, 'partners');
-                     }
-                   }}
-                   className="flex-[2] py-5 bg-emerald-500 text-white rounded-[2rem] font-black uppercase text-[10px] tracking-widest shadow-2xl shadow-emerald-100"
-                 >
-                   Confirm Approval
-                 </button>
+                     }}
+                     className="flex-[2] py-4 bg-emerald-500 text-white rounded-[2rem] font-black uppercase text-[10px] tracking-widest shadow-2xl shadow-emerald-100"
+                   >
+                     Confirm Approval
+                   </button>
+                  </>
+                 )}
               </div>
             </motion.div>
           </div>
@@ -4483,543 +8270,556 @@ export default function Home({
 
       {/* Partner Application Modal */}
       <AnimatePresence>
-        {showPartnerForm && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
-            <motion.div 
-              initial={{ y: 200, opacity: 0, scale: 0.9 }}
-              animate={{ y: 0, opacity: 1, scale: 1 }}
-              exit={{ y: 200, opacity: 0, scale: 0.9 }}
-              className="bg-white w-full rounded-[2.5rem] p-8 shadow-2xl relative max-w-lg"
+        {showPartnerOnboarding && (
+          <PartnerOnboarding 
+            userId={user?.uid || 'guest'} 
+            defaultType={partnerOnboardingType}
+            onClose={() => {
+              setShowPartnerOnboarding(false);
+              setPartnerOnboardingType(undefined);
+            }} 
+            onSuccess={() => {
+              setPartnerStatus('pending');
+              setShowPartnerOnboarding(false);
+              setPartnerOnboardingType(undefined);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Admin Marriage Profile Edit Modal */}
+      <AnimatePresence>
+        {editingAdminMarriageProfile && (
+          <div className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-2xl rounded-[3rem] p-8 max-h-[90vh] overflow-y-auto shadow-2xl text-left"
             >
-               <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h3 className="text-2xl font-black text-gray-900 leading-tight">Partner Program</h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="flex gap-1">
-                      {[0, 1, 2, 3, 4, 5].map((s) => (
-                        <div key={s} className={`h-1 rounded-full transition-all duration-500 ${s === formStep ? 'w-4 bg-yellow-400' : 'w-1 bg-gray-100'}`} />
-                      ))}
-                    </div>
-                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none">Step {formStep + 1} of 6</p>
-                  </div>
+                  <h3 className="text-2xl font-black text-slate-900 italic">Edit Marriage Profile</h3>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                    Ref: {editingAdminMarriageProfile.id}
+                  </p>
                 </div>
-                <button 
-                  onClick={() => {
-                    setShowPartnerForm(false);
-                    setFormStep(0);
-                    setAgreedToTerms(false);
-                    setPartnerStatus(null);
-                  }} 
-                  className="p-3 bg-gray-100 rounded-2xl text-gray-500 hover:bg-gray-200 transition-colors"
+                <button
+                  onClick={() => setEditingAdminMarriageProfile(null)}
+                  className="p-3 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-2xl transition-colors cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              {partnerStatus ? (
-                <div className="text-center py-12">
-                  {/* Status UI remains similar to keep logic consistent */}
-                  {partnerStatus === 'pending' ? (
-                    <>
-                      <div className="w-24 h-24 bg-emerald-50 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 shadow-inner">
-                        <ShieldCheck className="w-12 h-12 text-emerald-500" />
-                      </div>
-                      <h4 className="text-3xl font-black text-gray-900 mb-3 italic">Application Pending</h4>
-                      <p className="text-gray-400 font-bold mb-10 leading-relaxed uppercase text-[10px] tracking-[0.2em] px-10">
-                        Our team will verify your Details & documents shortly. You will be notified via SMS/App.
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <div className="w-24 h-24 bg-emerald-50 rounded-[2.5rem] flex items-center justify-center mx-auto mb-8 shadow-inner">
-                        <Check className="w-12 h-12 text-emerald-500" />
-                      </div>
-                      <h4 className="text-3xl font-black text-gray-900 mb-3 italic">Welcome Onboard!</h4>
-                      <p className="text-gray-400 font-bold mb-10 leading-relaxed uppercase text-[10px] tracking-[0.2em] px-10">
-                        Your application was approved. You can now access your partner console.
-                      </p>
-                    </>
-                  )}
-                  
-                  <div className="flex flex-col gap-3">
-                    {partnerStatus === 'approved' && (
-                      <button 
-                        onClick={() => {
-                          if (partnerType === 'delivery') localStorage.setItem('isDeliveryPartner', 'true');
-                          if (partnerType === 'vendor') localStorage.setItem('isVendor', 'true');
-                          setShowPartnerForm(false);
-                          onNavigate(partnerType === 'delivery' ? 'delivery' : 'profile');
-                        }}
-                        className="w-full py-5 bg-yellow-400 text-gray-900 rounded-[2rem] font-black uppercase tracking-widest shadow-2xl shadow-yellow-100 text-[10px]"
-                      >
-                        Enter {partnerType === 'delivery' ? 'Delivery' : 'Vendor'} Console
-                      </button>
-                    )}
-                    <button 
-                      onClick={() => setShowPartnerForm(false)}
-                      className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black uppercase tracking-widest text-[10px]"
-                    >
-                      {partnerStatus === 'pending' ? 'Close & Wait' : 'Got it'}
-                    </button>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!isSuperAdmin) {
+                  alert("Only master admin can update marriage profiles!");
+                  return;
+                }
+                try {
+                  await updateDoc(doc(db, 'marriageProfiles', editingAdminMarriageProfile.id), {
+                    ...editingAdminMarriageProfile,
+                    updatedAt: serverTimestamp()
+                  });
+                  setAdminSaveStatus("Marriage profile saved successfully!");
+                  setEditingAdminMarriageProfile(null);
+                } catch (err) {
+                  handleFirestoreError(err, OperationType.UPDATE, `marriageProfiles/${editingAdminMarriageProfile.id}`);
+                }
+              }} className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">First Name</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.name || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, name: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Surname</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.surname || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, surname: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                      required
+                    />
                   </div>
                 </div>
-              ) : (
-                <div className="space-y-6">
-                  {partnerError && (
-                    <motion.div 
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="bg-rose-50 p-4 rounded-2xl border border-rose-100 flex items-center gap-3"
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Gender</label>
+                    <select
+                      value={editingAdminMarriageProfile.gender || 'Male'}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, gender: e.target.value as any})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800 bg-white"
                     >
-                      <AlertCircle className="w-5 h-5 text-rose-500" />
-                      <span className="text-[10px] font-black uppercase text-rose-600 tracking-wider font-mono">{partnerError}</span>
-                    </motion.div>
-                  )}
-
-                  {/* Step 0: Type Selection */}
-                  {formStep === 0 && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center px-4">Choose your journey on Lokal Bharath</p>
-                      <div className="grid grid-cols-1 gap-4">
-                        <button 
-                          onClick={() => setPartnerType('vendor')}
-                          className={`flex items-center gap-4 p-6 rounded-[2rem] border-2 transition-all text-left ${partnerType === 'vendor' ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100 hover:border-gray-200'}`}
-                        >
-                          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${partnerType === 'vendor' ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-500'}`}>
-                            <Briefcase className="w-6 h-6" />
-                          </div>
-                          <div>
-                            <p className="font-black text-gray-900 text-lg leading-none">Local Vendor</p>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight mt-1">Maids, Painters, Plumbers, Shops</p>
-                          </div>
-                          {partnerType === 'vendor' && <div className="ml-auto w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white stroke-[4px]" /></div>}
-                        </button>
-                        <button 
-                          onClick={() => setPartnerType('delivery')}
-                          className={`flex items-center gap-4 p-6 rounded-[2rem] border-2 transition-all text-left ${partnerType === 'delivery' ? 'bg-orange-50 border-orange-200' : 'bg-white border-gray-100 hover:border-gray-200'}`}
-                        >
-                          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${partnerType === 'delivery' ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-500'}`}>
-                            <Bike className="w-6 h-6" />
-                          </div>
-                          <div>
-                            <p className="font-black text-gray-900 text-lg leading-none">Delivery Hero</p>
-                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tight mt-1">Earning Freedom & Daily Payouts</p>
-                          </div>
-                          {partnerType === 'delivery' && <div className="ml-auto w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white stroke-[4px]" /></div>}
-                        </button>
-                      </div>
-                      <button 
-                        onClick={() => setFormStep(1)}
-                        className="w-full mt-6 py-5 bg-gray-900 text-white rounded-[2rem] font-black uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all shadow-xl shadow-gray-200"
-                      >
-                        Let's Get Started
-                      </button>
-                    </motion.div>
-                  )}
-
-                  {/* Step 1: Basic Info */}
-                  {formStep === 1 && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 mb-2">
-                           <div className="w-6 h-6 bg-yellow-400 rounded-lg flex items-center justify-center text-[10px] font-black">1</div>
-                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Connect & Identity</p>
-                        </div>
-                        <input 
-                          placeholder={partnerType === 'vendor' ? "Business Name" : "Your Full Name"} 
-                          value={partnerData.name}
-                          onChange={(e) => setPartnerData({...partnerData, name: e.target.value})}
-                          className="w-full bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                        />
-                        <div className="flex gap-2">
-                          <input 
-                            placeholder="10-Digit Mobile" 
-                            type="tel"
-                            maxLength={10}
-                            value={partnerData.phone}
-                            onChange={(e) => setPartnerData({...partnerData, phone: e.target.value.replace(/\D/g, '')})}
-                            className="flex-1 bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                          />
-                          {!isOtpSent ? (
-                            <button 
-                              onClick={() => {
-                                if(partnerData.phone.length === 10) {
-                                  setIsOtpSent(true);
-                                  setShowOtpField(true);
-                                  setAdminSaveStatus("OTP Sent to " + partnerData.phone);
-                                } else {
-                                  setPartnerError("Invalid Mobile Number");
-                                }
-                              }}
-                              className="px-6 bg-gray-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest disabled:opacity-50"
-                              disabled={partnerData.phone.length < 10}
-                            >
-                              Verify
-                            </button>
-                          ) : (
-                            <div className="px-6 bg-emerald-50 text-emerald-600 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center border border-emerald-100">
-                               Sent
-                            </div>
-                          )}
-                        </div>
-                        {showOtpField && (
-                          <input 
-                            placeholder="Enter 4-Digit OTP" 
-                            maxLength={4}
-                            value={partnerData.otp}
-                            onChange={(e) => setPartnerData({...partnerData, otp: e.target.value})}
-                            className="w-full bg-emerald-50 p-5 rounded-2xl font-black border-2 border-emerald-200 outline-none text-center tracking-[1em] text-lg" 
-                          />
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 pt-4">
-                        <button onClick={() => setFormStep(0)} className="py-4 bg-gray-50 text-gray-400 rounded-2xl font-black uppercase tracking-widest text-[9px]">Back</button>
-                        <button 
-                          onClick={() => {
-                            if(!partnerData.name || partnerData.phone.length < 10 || (!isPartnerEditMode && !partnerData.otp)) {
-                              setPartnerError("All fields are mandatory");
-                              return;
-                            }
-                            setPartnerError(null);
-                            setFormStep(2);
-                          }} 
-                          className="py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] shadow-lg shadow-gray-100"
-                        >
-                          Next Step
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {/* Step 2: Specs */}
-                  {formStep === 2 && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 mb-2">
-                           <div className="w-6 h-6 bg-yellow-400 rounded-lg flex items-center justify-center text-[10px] font-black">2</div>
-                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{partnerType === 'vendor' ? 'Professional Details' : 'Vehicle Details'}</p>
-                        </div>
-                        <input 
-                          placeholder={partnerType === 'vendor' ? "Primary Service (e.g. Painting/Grocery)" : "Vehicle Type (e.g. Bike/Scooter)"} 
-                          value={partnerData.service}
-                          onChange={(e) => setPartnerData({...partnerData, service: e.target.value})}
-                          className="w-full bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                        />
-                        {partnerType === 'vendor' ? (
-                          <>
-                            <input 
-                              placeholder="Owner Name" 
-                              value={partnerData.ownerName}
-                              onChange={(e) => setPartnerData({...partnerData, ownerName: e.target.value})}
-                              className="w-full bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                            />
-                            <input 
-                              placeholder="GST (Optional)" 
-                              value={partnerData.gstNumber}
-                              onChange={(e) => setPartnerData({...partnerData, gstNumber: e.target.value.toUpperCase()})}
-                              className="w-full bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <input 
-                              placeholder="Vehicle Number (e.g. TS 08 EA 1234)" 
-                              value={partnerData.vehicleNumber}
-                              onChange={(e) => setPartnerData({...partnerData, vehicleNumber: e.target.value.toUpperCase()})}
-                              className="w-full bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                            />
-                            <input 
-                              placeholder="RC / Chassis Number (Last 5)" 
-                              maxLength={5}
-                              value={partnerData.chassisNumber}
-                              onChange={(e) => setPartnerData({...partnerData, chassisNumber: e.target.value.toUpperCase()})}
-                              className="w-full bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                            />
-                          </>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 pt-4">
-                        <button onClick={() => setFormStep(1)} className="py-4 bg-gray-50 text-gray-400 rounded-2xl font-black uppercase tracking-widest text-[9px]">Back</button>
-                        <button 
-                          onClick={() => {
-                            if(!partnerData.service) {
-                              setPartnerError("Specifications are required");
-                              return;
-                            }
-                            setPartnerError(null);
-                            setFormStep(3);
-                          }} 
-                          className="py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] shadow-lg shadow-gray-100"
-                        >
-                          Next Step
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {/* Step 3: Location */}
-                  {formStep === 3 && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 mb-2">
-                           <div className="w-6 h-6 bg-yellow-400 rounded-lg flex items-center justify-center text-[10px] font-black">3</div>
-                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Base of Operations</p>
-                        </div>
-                        
-                        <div className="h-44 w-full rounded-[2rem] overflow-hidden border-2 border-gray-100 relative group bg-gray-100">
-                          <LiveMap interactive={true} zoom={15} />
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <MapPin className="w-8 h-8 text-rose-500 fill-rose-500/20 drop-shadow-xl animate-bounce" />
-                          </div>
-                          <button 
-                            onClick={() => {
-                              setAdminSaveStatus("Updating GPS coordinates...");
-                              setPartnerData(prev => ({
-                                ...prev,
-                                location: { ...prev.location, area: 'Detected Location, Khammam', city: 'Khammam' }
-                              }));
-                            }}
-                            className="absolute bottom-4 left-4 right-4 py-3 bg-gray-900/90 backdrop-blur-md text-white rounded-xl text-[9px] font-black uppercase tracking-widest border border-white/20 flex items-center justify-center gap-2 shadow-2xl"
-                          >
-                            <Target className="w-3.5 h-3.5 text-yellow-400" />
-                            Sync Precise Location
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-3">
-                          <input 
-                            placeholder="Full Address / Landmark" 
-                            value={partnerType === 'vendor' ? partnerData.businessAddress : partnerData.location.area}
-                            onChange={(e) => {
-                              if(partnerType === 'vendor') setPartnerData({...partnerData, businessAddress: e.target.value});
-                              else setPartnerData({...partnerData, location: {...partnerData.location, area: e.target.value}});
-                            }}
-                            className="w-full bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                          />
-                          <div className="grid grid-cols-2 gap-3">
-                            <input 
-                              placeholder="City" 
-                              value={partnerData.location.city}
-                              onChange={(e) => setPartnerData({...partnerData, location: {...partnerData.location, city: e.target.value}})}
-                              className="bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                            />
-                            <input 
-                              placeholder="Pincode" 
-                              maxLength={6}
-                              value={partnerData.location.pincode}
-                              onChange={(e) => setPartnerData({...partnerData, location: {...partnerData.location, pincode: e.target.value.replace(/\D/g, '')}})}
-                              className="bg-gray-50 p-5 rounded-2xl font-bold border-2 border-transparent focus:border-yellow-400 outline-none text-sm transition-all" 
-                            />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 pt-4">
-                        <button onClick={() => setFormStep(2)} className="py-4 bg-gray-50 text-gray-400 rounded-2xl font-black uppercase tracking-widest text-[9px]">Back</button>
-                        <button 
-                          onClick={() => {
-                            const addr = partnerType === 'vendor' ? partnerData.businessAddress : partnerData.location.area;
-                            if(!addr || !partnerData.location.pincode) {
-                              setPartnerError("Valid address & pincode required");
-                              return;
-                            }
-                            setPartnerError(null);
-                            setFormStep(4);
-                          }} 
-                          className="py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] shadow-lg shadow-gray-100"
-                        >
-                          Next Step
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {/* Step 4: Documents */}
-                  {formStep === 4 && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 mb-2">
-                           <div className="w-6 h-6 bg-yellow-400 rounded-lg flex items-center justify-center text-[10px] font-black">4</div>
-                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Document Verification</p>
-                        </div>
-
-                        <div className="flex items-center gap-4 bg-indigo-50/50 p-6 rounded-3xl border border-indigo-100">
-                          <div className="w-16 h-16 bg-white rounded-2xl border-2 border-dashed border-indigo-200 flex items-center justify-center overflow-hidden shrink-0 relative group">
-                            {partnerPhoto ? (
-                              <img src={partnerPhoto} className="w-full h-full object-cover" />
-                            ) : (
-                              <Camera className="w-6 h-6 text-indigo-300" />
-                            )}
-                            <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" onChange={handlePartnerPhotoUpload} />
-                          </div>
-                          <div>
-                            <p className="text-[10px] font-black uppercase text-indigo-600 tracking-widest mb-1">Passport Photo</p>
-                            <p className="text-[9px] font-bold text-indigo-400 leading-none">Used for ID Card generation</p>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-2">
-                           <DocUploadButton 
-                             label={partnerType === 'vendor' ? "Trade License / GST Copy" : "Aadhaar Card Copy"} 
-                             isUploaded={partnerType === 'vendor' ? partnerData.docs.businessProof : partnerData.docs.aadhaar} 
-                             onClick={() => {
-                               if(partnerType === 'vendor') setPartnerData({...partnerData, docs: {...partnerData.docs, businessProof: !partnerData.docs.businessProof}});
-                               else setPartnerData({...partnerData, docs: {...partnerData.docs, aadhaar: !partnerData.docs.aadhaar}});
-                             }} 
-                           />
-                           {partnerType === 'delivery' && (
-                             <>
-                               <DocUploadButton 
-                                 label="Vehicle RC" 
-                                 isUploaded={partnerData.docs.rc} 
-                                 onClick={() => setPartnerData({...partnerData, docs: {...partnerData.docs, rc: !partnerData.docs.rc}})} 
-                               />
-                               <DocUploadButton 
-                                 label="Driving License" 
-                                 isUploaded={partnerData.docs.dl} 
-                                 onClick={() => setPartnerData({...partnerData, docs: {...partnerData.docs, dl: !partnerData.docs.dl}})} 
-                               />
-                             </>
-                           )}
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 pt-4">
-                        <button onClick={() => setFormStep(3)} className="py-4 bg-gray-50 text-gray-400 rounded-2xl font-black uppercase tracking-widest text-[9px]">Back</button>
-                        <button 
-                          onClick={() => {
-                            const mainDoc = partnerType === 'vendor' ? partnerData.docs.businessProof : partnerData.docs.aadhaar;
-                            if(!partnerPhoto || !mainDoc) {
-                              setPartnerError("Please upload all required documents");
-                              return;
-                            }
-                            setPartnerError(null);
-                            setFormStep(5);
-                          }} 
-                          className="py-4 bg-gray-900 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] shadow-lg shadow-gray-100"
-                        >
-                          Next Step
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {/* Step 5: Final & Terms */}
-                  {formStep === 5 && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-                      <div className="bg-slate-900 rounded-[2.5rem] p-8 border border-slate-800">
-                        <h4 className="text-[12px] font-black text-yellow-400 uppercase tracking-[0.2em] mb-6">Master Service Agreement</h4>
-                        <div className="space-y-4 max-h-48 overflow-y-auto pr-4 scrollbar-hide text-left">
-                          <div className="flex gap-4">
-                            <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full shrink-0 mt-1.5 shadow-lg shadow-yellow-400/50"></div>
-                            <p className="text-[11px] font-bold text-slate-300 leading-normal">Lokal Bharath operates on 100% honesty policy. False identity = Permanent Ban.</p>
-                          </div>
-                          <div className="flex gap-4">
-                            <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full shrink-0 mt-1.5 shadow-lg shadow-yellow-400/50"></div>
-                            <p className="text-[11px] font-bold text-slate-300 leading-normal">Commission structure is fixed at 15% for all hyperlocal deliveries.</p>
-                          </div>
-                          <div className="flex gap-4">
-                            <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full shrink-0 mt-1.5 shadow-lg shadow-yellow-400/50"></div>
-                            <p className="text-[11px] font-bold text-slate-300 leading-normal">Daily payouts triggered at 11:00 PM for all completed tasks.</p>
-                          </div>
-                        </div>
-                        <div className="mt-8 pt-8 border-t border-white/10">
-                          <button 
-                            onClick={() => setAgreedToTerms(prev => !prev)}
-                            className={`w-full flex items-center gap-4 transition-all ${agreedToTerms ? 'text-yellow-400' : 'text-slate-500'}`}
-                          >
-                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-all ${agreedToTerms ? 'bg-yellow-400 border-yellow-400 text-gray-900' : 'border-white/10'}`}>
-                              {agreedToTerms && <Check className="w-4 h-4 stroke-[4px]" />}
-                            </div>
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em]">I strictly accept all terms</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <button onClick={() => setFormStep(4)} className="py-4 bg-gray-50 text-gray-400 rounded-2xl font-black uppercase tracking-widest text-[9px]">Review</button>
-                        <button 
-                          onClick={() => {
-                            if(!agreedToTerms) {
-                              setPartnerError("Agreement acceptance required");
-                              return;
-                            }
-                            setPartnerStatus('submitting');
-                            setTimeout(() => {
-                              if (isPartnerEditMode && editingPartnerId) {
-                                // Update Logic in Firestore
-                                const updateData: any = {
-                                  updatedAt: serverTimestamp()
-                                };
-                                
-                                if (partnerType === 'vendor') {
-                                  updateData.businessName = partnerData.name;
-                                  updateData.ownerName = partnerData.ownerName;
-                                  updateData.service = partnerData.service;
-                                  updateData.phone = partnerData.phone;
-                                  updateData.gst = partnerData.gstNumber;
-                                  updateData.address = partnerData.businessAddress;
-                                  updateData.location = partnerData.location;
-                                  
-                                  updateDoc(doc(db, 'vendors', editingPartnerId), updateData)
-                                    .then(() => {
-                                      setAdminSaveStatus("Profile Updated Successfully!");
-                                      setPartnerStatus('approved');
-                                      setShowPartnerForm(false);
-                                    })
-                                    .catch(err => handleFirestoreError(err, OperationType.UPDATE, `vendors/${editingPartnerId}`));
-                                } else {
-                                  updateData.name = partnerData.name;
-                                  updateData.phone = partnerData.phone;
-                                  updateData.vehicleType = partnerData.service;
-                                  updateData.location = partnerData.location;
-
-                                  updateDoc(doc(db, 'deliveryPartners', editingPartnerId), updateData)
-                                    .then(() => {
-                                      setAdminSaveStatus("Profile Updated Successfully!");
-                                      setPartnerStatus('approved');
-                                      setShowPartnerForm(false);
-                                    })
-                                    .catch(err => handleFirestoreError(err, OperationType.UPDATE, `deliveryPartners/${editingPartnerId}`));
-                                }
-                              } else {
-                                // New Registration Logic
-                                const approvalId = `app-${Date.now()}`;
-                                const newApproval = {
-                                  id: approvalId,
-                                  userId: user?.uid,
-                                  userEmail: user?.email,
-                                  type: partnerType,
-                                  name: partnerData.name,
-                                  ownerName: partnerData.ownerName,
-                                  phone: partnerData.phone,
-                                  service: partnerData.service,
-                                  details: {
-                                    ...partnerData,
-                                    photo: partnerPhoto
-                                  },
-                                  status: 'Pending',
-                                  timestamp: new Date().toISOString(),
-                                  createdAt: serverTimestamp()
-                                };
-                                
-                                setDoc(doc(db, 'pendingApprovals', approvalId), newApproval)
-                                  .then(() => {
-                                    setPartnerStatus('pending');
-                                  })
-                                  .catch(err => {
-                                    handleFirestoreError(err, OperationType.CREATE, 'pendingApprovals');
-                                  });
-                              }
-                            }, 2000);
-                          }} 
-                          className="py-4 bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest text-[9px] shadow-xl shadow-emerald-500/20 active:scale-95 transition-all"
-                        >
-                          {isPartnerEditMode ? 'Save Changes' : 'Submit For Approval'}
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Age</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.age || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, age: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Height</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.height || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, height: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
                 </div>
-              )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Phone</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.phone || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, phone: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Date of Birth</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.dob || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, dob: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Education</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.education || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, education: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Profession</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.profession || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, profession: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Religion</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.religion || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, religion: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Caste</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.caste || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, caste: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Marital Status</label>
+                    <select
+                      value={editingAdminMarriageProfile.maritalStatus || 'Unmarried'}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, maritalStatus: e.target.value as any})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800 bg-white"
+                    >
+                      <option value="Unmarried">Unmarried</option>
+                      <option value="Married">Married</option>
+                      <option value="Divorced">Divorced</option>
+                      <option value="Widow">Widow</option>
+                      <option value="Widower">Widower</option>
+                      <option value="3rd Marriage">3rd Marriage</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Native Place</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.nativePlace || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, nativePlace: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Skin Tone</label>
+                    <select
+                      value={editingAdminMarriageProfile.skinTone || 'Fair'}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, skinTone: e.target.value as any})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800 bg-white"
+                    >
+                      <option value="Fair">Fair</option>
+                      <option value="Complexion">Complexion</option>
+                      <option value="Wheatish">Wheatish</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Father's Name</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.fatherName || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, fatherName: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Father's Profession</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.fatherProfession || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, fatherProfession: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Mother's Name</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.motherName || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, motherName: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Mother's Profession</label>
+                    <input
+                      type="text"
+                      value={editingAdminMarriageProfile.motherProfession || ''}
+                      onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, motherProfession: e.target.value})}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Full Address / Current Residence</label>
+                  <input
+                    type="text"
+                    value={editingAdminMarriageProfile.address || ''}
+                    onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, address: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Profile Photo URL</label>
+                  <input
+                    type="text"
+                    value={editingAdminMarriageProfile.image || ''}
+                    onChange={e => setEditingAdminMarriageProfile({...editingAdminMarriageProfile, image: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-800"
+                  />
+                </div>
+
+                <div className="pt-4 flex gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setEditingAdminMarriageProfile(null)}
+                    className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-[2rem] font-black text-[10px] uppercase tracking-widest"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-4 bg-indigo-600 text-white rounded-[2rem] font-black text-[10px] uppercase tracking-widest hover:bg-indigo-700 shadow-xl shadow-indigo-100"
+                  >
+                    Save Profile Changes
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Admin Partner Edit Modal */}
+      <AnimatePresence>
+        {showPartnerForm && (
+          <div className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white w-full max-w-xl rounded-[3rem] p-8 max-h-[90vh] overflow-y-auto shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="text-2xl font-black text-slate-900 italic">Edit {partnerType === 'vendor' ? 'Vendor' : 'Delivery Partner'}</h3>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">
+                    {isPartnerEditMode ? `Updating ID: ${editingPartnerId}` : 'New Registration'}
+                  </p>
+                </div>
+                <button onClick={() => { setShowPartnerForm(false); setIsPartnerEditMode(false); setEditingPartnerId(null); }} className="p-3 bg-slate-50 text-slate-400 rounded-2xl">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="flex justify-center mb-4">
+                  <div className="relative group">
+                    <div className="w-24 h-24 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden">
+                      {partnerPhoto ? (
+                        <img src={partnerPhoto} className="w-full h-full object-cover" />
+                      ) : (
+                        <Camera className="w-8 h-8 text-slate-300" />
+                      )}
+                    </div>
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      onChange={handlePartnerPhotoUpload}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                    />
+                    <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg pointer-events-none">
+                      <Plus className="w-4 h-4 text-white" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest ml-1 mb-1 block">{partnerType === 'vendor' ? 'Business Name' : 'Full Name'}</label>
+                    <input 
+                      placeholder={partnerType === 'vendor' ? "e.g. Wardha Groceries" : "e.g. Ramesh Kumar"}
+                      value={partnerData.name}
+                      onChange={(e) => setPartnerData({ ...partnerData, name: e.target.value })}
+                      className="w-full bg-slate-50 p-5 rounded-2xl font-bold text-base border-2 border-transparent focus:border-indigo-500 outline-none transition-all text-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest ml-1 mb-1 block">Phone Number</label>
+                    <input 
+                      value={partnerData.phone}
+                      onChange={(e) => setPartnerData({ ...partnerData, phone: e.target.value })}
+                      className="w-full bg-slate-50 p-5 rounded-2xl font-bold text-base border-2 border-transparent focus:border-indigo-500 outline-none transition-all text-gray-900"
+                    />
+                  </div>
+                </div>
+
+                {partnerType === 'vendor' ? (
+                  <>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Owner Name</label>
+                      <input 
+                        value={partnerData.ownerName}
+                        onChange={(e) => setPartnerData({ ...partnerData, ownerName: e.target.value })}
+                        className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none transition-all"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Service/Category</label>
+                        <input 
+                          value={partnerData.service}
+                          onChange={(e) => setPartnerData({ ...partnerData, service: e.target.value })}
+                          className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">GST Number (Optional)</label>
+                        <input 
+                          value={partnerData.gstNumber}
+                          onChange={(e) => setPartnerData({ ...partnerData, gstNumber: e.target.value })}
+                          className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none transition-all"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Business Address</label>
+                      <textarea 
+                        value={partnerData.businessAddress}
+                        onChange={(e) => setPartnerData({ ...partnerData, businessAddress: e.target.value })}
+                        className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none transition-all min-h-[80px]"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Vehicle Type</label>
+                      <input 
+                        value={partnerData.service}
+                        onChange={(e) => setPartnerData({ ...partnerData, service: e.target.value })}
+                        className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none transition-all"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Vehicle Number</label>
+                      <input 
+                        value={partnerData.vehicleNumber}
+                        onChange={(e) => setPartnerData({ ...partnerData, vehicleNumber: e.target.value })}
+                        className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Banking Information */}
+                <div>
+                  <h4 className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                    <div className="h-px bg-slate-100 flex-1"></div>
+                    Banking Details
+                    <div className="h-px bg-slate-100 flex-1"></div>
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Bank Name</label>
+                      <input 
+                        placeholder="e.g. SBI"
+                        value={partnerData.bankName}
+                        onChange={(e) => setPartnerData({ ...partnerData, bankName: e.target.value })}
+                        className="w-full bg-emerald-50/50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-emerald-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Account Holder</label>
+                      <input 
+                        placeholder="Name in Bank"
+                        value={partnerData.accountHolder}
+                        onChange={(e) => setPartnerData({ ...partnerData, accountHolder: e.target.value })}
+                        className="w-full bg-emerald-50/50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-emerald-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">Account Number</label>
+                      <input 
+                        value={partnerData.accountNumber}
+                        onChange={(e) => setPartnerData({ ...partnerData, accountNumber: e.target.value })}
+                        className="w-full bg-emerald-50/50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-emerald-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">IFSC Code</label>
+                      <input 
+                        value={partnerData.ifscCode}
+                        onChange={(e) => setPartnerData({ ...partnerData, ifscCode: e.target.value })}
+                        className="w-full bg-emerald-50/50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-emerald-500 outline-none uppercase"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 mb-1 block">UPI ID (Optional)</label>
+                    <input 
+                      placeholder="username@bank"
+                      value={partnerData.upiId}
+                      onChange={(e) => setPartnerData({ ...partnerData, upiId: e.target.value })}
+                      className="w-full bg-emerald-50/50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-emerald-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Identification Documents */}
+                <div>
+                   <h4 className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                    <div className="h-px bg-slate-100 flex-1"></div>
+                    Documents
+                    <div className="h-px bg-slate-100 flex-1"></div>
+                  </h4>
+                  <div className="bg-indigo-50 p-6 rounded-3xl border border-indigo-100">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <p className="text-xs font-black text-indigo-900 leading-tight">Verification Photo</p>
+                        <p className="text-[10px] font-bold text-indigo-400 uppercase">Shop Document / License / ID</p>
+                      </div>
+                      <div className="w-12 h-12 bg-white rounded-2xl border border-indigo-100 flex items-center justify-center overflow-hidden">
+                        {partnerData.documentPhoto ? (
+                          <img src={partnerData.documentPhoto} className="w-full h-full object-cover" />
+                        ) : (
+                          <FileText className="w-6 h-6 text-indigo-200" />
+                        )}
+                      </div>
+                    </div>
+                    <label className="w-full h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all text-[10px] font-black uppercase tracking-widest shadow-xl shadow-indigo-100">
+                      <Upload className="w-4 h-4" />
+                      {partnerData.documentPhoto ? 'Change Document' : 'Upload Document'}
+                      <input 
+                        type="file" 
+                        accept="image/*"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                              setPartnerData(prev => ({ ...prev, documentPhoto: reader.result as string }));
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                    <label className="text-[10px] font-black text-rose-500 uppercase tracking-widest ml-1 mb-1 block">5-Digit Admin Access Code (Unique)</label>
+                    <input 
+                      value={partnerData.accessCode}
+                      maxLength={5}
+                      onChange={(e) => setPartnerData({ ...partnerData, accessCode: e.target.value.replace(/\D/g, '').slice(0, 5) })}
+                      placeholder="Enter 5-digit code"
+                      className="w-full bg-rose-50 p-4 rounded-2xl font-black border-2 border-rose-100 focus:border-rose-500 outline-none transition-all text-xl tracking-[0.5em] text-center"
+                    />
+                    <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest mt-2 px-2">Partner can only access their dashboard with this code given by you.</p>
+                </div>
+              </div>
+
+              <div className="flex gap-4 mt-8">
+                <button 
+                  onClick={() => { setShowPartnerForm(false); setIsPartnerEditMode(false); setEditingPartnerId(null); }}
+                  className="flex-1 py-5 bg-slate-100 text-slate-500 rounded-[2rem] font-black uppercase text-[10px] tracking-widest"
+                >
+                  Discard
+                </button>
+                <button 
+                  onClick={handleSavePartnerEdit}
+                  className="flex-[2] py-5 bg-indigo-600 text-white rounded-[2rem] font-black uppercase text-[10px] tracking-widest shadow-2xl shadow-indigo-100 active:scale-95 transition-all"
+                >
+                  {isPartnerEditMode ? 'Update Partner' : 'Create Partner'}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
@@ -5077,15 +8877,36 @@ export default function Home({
                       <p className={`text-[10px] font-bold uppercase tracking-widest ${
                         activeDeliveryProfile.isOnline ? 'text-blue-100' : 'text-gray-400'
                       }`}>
-                        {activeDeliveryProfile.isOnline ? 'Active & Ready for Trips' : 'Offline / On Break'}
+                        {activeDeliveryProfile.isOnline ? `Active & Ready for Trips • ${riderShiftTime}` : 'Offline / On Break'}
                       </p>
                     </div>
                   </div>
                   <button 
-                    onClick={() => {
+                    onClick={async () => {
                       const newOnline = !activeDeliveryProfile.isOnline;
-                      setActiveDeliveryProfile({...activeDeliveryProfile, isOnline: newOnline, status: newOnline ? 'Online' : 'Offline'});
-                      setDeliveryPartners(prev => prev.map(dp => dp.id === activeDeliveryProfile.id ? {...dp, isOnline: newOnline, status: newOnline ? 'Online' : 'Offline'} : dp));
+                      const startTime = newOnline ? Date.now() : null;
+                      try {
+                        await updateDoc(doc(db, 'deliveryPartners', activeDeliveryProfile.id), {
+                          isOnline: newOnline,
+                          status: newOnline ? 'Online' : 'Offline',
+                          shiftStartedAt: startTime,
+                          updatedAt: serverTimestamp()
+                        });
+                      } catch (e) {
+                        console.error("Failed to update status on Firestore:", e);
+                      }
+                      setActiveDeliveryProfile({
+                        ...activeDeliveryProfile, 
+                        isOnline: newOnline, 
+                        status: newOnline ? 'Online' : 'Offline',
+                        shiftStartedAt: startTime
+                      });
+                      setDeliveryPartners(prev => prev.map(dp => dp.id === activeDeliveryProfile.id ? {
+                        ...dp, 
+                        isOnline: newOnline, 
+                        status: newOnline ? 'Online' : 'Offline',
+                        shiftStartedAt: startTime
+                      } : dp));
                     }}
                     className={`w-16 h-8 rounded-full relative transition-colors duration-300 ${
                       activeDeliveryProfile.isOnline ? 'bg-white/40' : 'bg-gray-200'
@@ -5189,15 +9010,25 @@ export default function Home({
                     />
                     
                     <div className="absolute top-6 left-6 right-6 z-[1000] flex flex-col gap-3 pointer-events-none">
-                      <div className="bg-white/90 backdrop-blur-xl p-4 rounded-3xl border border-white/50 shadow-2xl">
+                      <div className="bg-white/90 backdrop-blur-xl p-4 rounded-3xl border border-white/50 shadow-2xl pointer-events-auto cursor-pointer active:scale-95 transition-all"
+                        onClick={() => setShowTripDetails(true)}
+                      >
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 bg-gray-900 rounded-2xl flex items-center justify-center shadow-lg">
                             <Navigation className="w-5 h-5 text-yellow-400" />
                           </div>
                           <div className="flex-1">
-                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Next Stop</p>
+                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Active Trip (Tap for Details)</p>
                             <p className="text-xs font-black text-gray-900 truncate">H.No 4-12, Green City</p>
+                            <div className="flex items-center gap-2 mt-1">
+                               <div className="flex items-center gap-1 bg-emerald-100 px-2 py-0.5 rounded-lg">
+                                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                                  <span className="text-[7px] font-black text-emerald-700 uppercase">On Route</span>
+                               </div>
+                               <p className="text-[9px] font-bold text-gray-400 uppercase">ETA: 8 Mins</p>
+                            </div>
                           </div>
+                          <ChevronRight className="w-4 h-4 text-gray-300" />
                         </div>
                       </div>
                     </div>
@@ -5355,22 +9186,22 @@ export default function Home({
       </AnimatePresence>
 
       {/* Header */}
-      <header className="px-6 pt-12 pb-4 flex items-center justify-between sticky top-0 bg-white/80 backdrop-blur-xl z-[100] border-b border-gray-50/50">
+      <header className="px-6 pt-12 pb-4 flex items-center justify-between sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl z-[100] border-b border-gray-50/50 dark:border-slate-800/50">
         <div className="flex items-center gap-3">
           <motion.button 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.9 }}
-            onClick={() => (isAdmin || isAdminLoggedIn) ? setIsAdminOpen(true) : setShowAdminLogin(true)}
-            className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-all ${isAdmin ? 'bg-yellow-400' : 'bg-gray-900 shadow-gray-200'}`}
+            onClick={() => {}} // Disabled admin shortcut
+            className="hidden"
           >
             <ShieldCheck className={`w-5 h-5 ${isAdmin ? 'text-gray-900' : 'text-yellow-400'}`} />
           </motion.button>
           <motion.div 
             whileTap={{ scale: 0.95 }}
-            className="w-10 h-10 bg-white rounded-2xl flex items-center justify-center shadow-sm overflow-hidden border border-gray-100 cursor-pointer p-1" 
-            onClick={handleLogoClick}
+            className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm overflow-hidden border border-white p-0.5 select-none pointer-events-none" 
+            onClick={() => {}}
           >
-            <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-contain" alt="Logo" />
+             <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
           </motion.div>
           <div 
             className="flex flex-col cursor-pointer"
@@ -5378,30 +9209,95 @@ export default function Home({
           >
             <motion.div 
               whileTap={{ x: 2 }}
-              className="flex items-center gap-1 text-yellow-600"
+              className="flex items-center gap-1 text-yellow-600 dark:text-yellow-500"
             >
               <MapPin className="w-3.5 h-3.5 fill-current" />
               <span className="text-[10px] font-black uppercase tracking-[0.1em]">{t.deliverTo}</span>
               <ChevronDown className="w-3 h-3" />
             </motion.div>
-            <span className="font-extrabold text-gray-900 truncate max-w-[140px] text-xs font-display tracking-tight leading-none mt-0.5">{location}</span>
-            {isMaintenanceMode && (
-              <div className="flex items-center gap-1 mt-1 bg-rose-50 px-2 py-0.5 rounded-full w-fit">
-                <div className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-pulse" />
-                <span className="text-[7px] font-black text-rose-500 uppercase tracking-widest">Maintenance ON</span>
-              </div>
-            )}
+            <span className="font-extrabold text-gray-900 dark:text-white truncate max-w-[140px] text-xs font-display tracking-tight leading-none mt-0.5">{location}</span>
+            <div className="flex flex-wrap items-center gap-1.5 mt-1 max-w-[200px]">
+              {currentBranch ? (
+                currentBranch.status === 'Active' ? (
+                  <div className="flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-500/20 shadow-sm">
+                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                    <span className="text-[7px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest leading-none">
+                      {currentBranch.name}: Open
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 bg-rose-50 dark:bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-100 dark:border-rose-500/20 shadow-sm animate-pulse">
+                    <div className="w-1.5 h-1.5 bg-rose-500 rounded-full" />
+                    <span className="text-[7px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-widest leading-none">
+                      {currentBranch.name}: Offline
+                    </span>
+                  </div>
+                )
+              ) : (
+                <div className="flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-500/20">
+                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                  <span className="text-[7px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest leading-none">Real-time Sync Active</span>
+                </div>
+              )}
+              {isMaintenanceMode && (
+                <div className="flex items-center gap-1 bg-rose-50 dark:bg-rose-500/10 px-2 py-0.5 rounded-full">
+                  <div className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-pulse" />
+                  <span className="text-[7px] font-black text-rose-500 dark:text-rose-400 uppercase tracking-widest">Maintenance</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-        <div className="flex gap-3">
+        <div className="flex items-center gap-2">
+          <motion.div 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.9 }}
+            className="flex items-center gap-2 bg-gray-50 dark:bg-slate-800 p-1.5 pr-3 rounded-2xl border border-gray-100 dark:border-slate-700 cursor-pointer"
+            onClick={() => onNavigate('profile')}
+          >
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-100 dark:shadow-none uppercase font-black text-[10px] overflow-hidden whitespace-nowrap">
+              {userProfile?.photo ? (
+                <img src={userProfile.photo} className="w-full h-full object-cover" alt="Profile" referrerPolicy="no-referrer" />
+              ) : (
+                userProfile?.name?.charAt(0) || user?.displayName?.charAt(0) || 'U'
+              )}
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[9px] font-black text-gray-900 dark:text-white leading-none mb-0.5 truncate max-w-[60px]">
+                {userProfile?.name?.split(' ')[0] || user?.displayName?.split(' ')[0] || 'User'}
+              </span>
+              <span className="text-[8px] font-bold text-gray-400 leading-none">₹{walletBalance}</span>
+            </div>
+          </motion.div>
+
+          <motion.div 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.9 }}
+            className="hidden sm:block"
+            onClick={() => onNavigate('tasks')}
+          >
+            <div className="bg-gray-50 dark:bg-slate-800 p-3 rounded-2xl relative border border-gray-100 dark:border-slate-700 cursor-pointer">
+              <ListTodo className="w-5 h-5 text-gray-700 dark:text-gray-300" />
+            </div>
+          </motion.div>
+          <motion.div 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.9 }}
+            className="relative"
+            onClick={() => setShowCustomerCare(true)}
+          >
+            <div className="bg-indigo-50 dark:bg-slate-800 p-3 rounded-2xl relative border border-indigo-100 dark:border-slate-700 cursor-pointer">
+              <Headphones className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+            </div>
+          </motion.div>
           <motion.div 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.9 }}
             className="relative"
             onClick={() => setShowNotifications(true)}
           >
-            <div className="bg-gray-50 p-3 rounded-2xl relative border border-gray-100 cursor-pointer">
-              <Bell className="w-5 h-5 text-gray-700" />
+            <div className="bg-gray-50 dark:bg-slate-800 p-3 rounded-2xl relative border border-gray-100 dark:border-slate-700 cursor-pointer">
+              <Bell className="w-5 h-5 text-gray-700 dark:text-gray-300" />
               {notifications.some(n => !n.read) && (
                 <motion.div 
                   animate={{ scale: [1, 1.2, 1] }}
@@ -5411,42 +9307,127 @@ export default function Home({
               )}
             </div>
           </motion.div>
+          {isSuperAdmin && (
+            <motion.div 
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.9 }}
+              className="relative"
+              onClick={() => onNavigate('branchManager' as any)}
+            >
+              <div className="bg-rose-50 dark:bg-rose-900/20 p-3 rounded-2xl relative border border-rose-100 dark:border-rose-900/50 cursor-pointer group">
+                <LayoutDashboard className="w-5 h-5 text-rose-600 dark:text-rose-400 group-hover:rotate-12 transition-transform" />
+              </div>
+            </motion.div>
+          )}
+          {userProfile?.role === 'vendor' && (
+            <motion.div 
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.9 }}
+              className="relative"
+              onClick={() => onNavigate('vendor', userProfile.vendorId || vendors.find(v => v.phone === userProfile.phone?.replace('+91', ''))?.id)}
+            >
+              <div className="bg-emerald-50 dark:bg-emerald-900/20 p-3 rounded-2xl relative border border-emerald-100 dark:border-emerald-900/50 cursor-pointer group">
+                <Store className="w-5 h-5 text-emerald-600 dark:text-emerald-400 group-hover:rotate-12 transition-transform" />
+                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full"></span>
+              </div>
+            </motion.div>
+          )}
+          <motion.div 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.9 }}
+            className="hidden xs:block"
+            onClick={async () => {
+              if (navigator.share) {
+                try {
+                  await navigator.share({
+                    title: 'Local Bandi Multi Services',
+                    text: 'Join specifically for Khammam! Check out this local app.',
+                    url: window.location.href,
+                  });
+                } catch (err) {
+                  console.log('Share failed:', err);
+                }
+              } else {
+                navigator.clipboard.writeText(window.location.href);
+                alert('App link copied! Send it to your friends for real-time testing.');
+              }
+            }}
+          >
+            <div className="bg-yellow-50 p-3 rounded-2xl relative border border-yellow-100 cursor-pointer">
+              <Share2 className="w-5 h-5 text-yellow-600" />
+            </div>
+          </motion.div>
           <motion.button 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.9 }}
             onClick={() => onNavigate('profile')} 
-            className="bg-gray-50 p-3 rounded-2xl active:scale-95 transition-all border border-gray-100"
+            className="bg-gray-50 p-3 rounded-2xl active:scale-95 transition-all border border-gray-100 flex items-center justify-center"
           >
             <User className="w-5 h-5 text-gray-700" />
           </motion.button>
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto px-6 space-y-8 pb-32 font-sans">
+      <div 
+        ref={scrollContainerRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        className="flex-1 overflow-y-auto px-6 space-y-8 pb-32 font-sans relative"
+      >
+        {/* Pull-to-refresh Indicator */}
+        <AnimatePresence>
+          {((isPulling && pullY > 10) || isRefreshing) && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: isRefreshing ? 64 : pullY, opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 350, damping: 25 }}
+              className="flex items-center justify-center overflow-hidden w-full shrink-0 relative mt-4"
+            >
+              <div className="flex items-center gap-2 bg-white border border-yellow-200 px-4 py-2 rounded-full shadow-lg shadow-yellow-100/50 z-50">
+                <Loader2 className={`w-3.5 h-3.5 text-yellow-500 ${isRefreshing ? 'animate-spin' : ''}`} style={{ transform: isRefreshing ? undefined : `rotate(${pullProgress * 3.6}deg)` }} />
+                <span className="text-[8px] font-black uppercase text-gray-500 tracking-widest leading-none">
+                  {isRefreshing ? 'Syncing...' : pullProgress >= 100 ? 'Release to Sync' : `Pull to Refresh`}
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+
         {/* 1. Top Banners - VISUAL ENTRY POINT */}
         {!searchQuery && (
-          <div className="relative h-44 rounded-[2.5rem] overflow-hidden shadow-xl shadow-gray-100 mt-6 group">
-            <AnimatePresence mode="wait">
+          <div 
+            className="relative h-44 rounded-[2.5rem] overflow-hidden shadow-xl shadow-gray-100 mt-6 group bg-gray-900"
+            onMouseEnter={() => setIsBannerPaused(true)}
+            onMouseLeave={() => setIsBannerPaused(false)}
+          >
+            <AnimatePresence initial={false}>
               {topBanners.map((banner, i) => i === activeTopBanner && (
-                <motion.div
-                  key={banner.id}
-                  onClick={() => handleBannerClick(banner)}
-                  drag="x"
-                  dragConstraints={{ left: 0, right: 0 }}
-                  onDragEnd={(_, info) => {
-                    const swipeThreshold = 50;
-                    if (info.offset.x > swipeThreshold) {
-                      setActiveTopBanner(prev => (prev - 1 + topBanners.length) % topBanners.length);
-                    } else if (info.offset.x < -swipeThreshold) {
-                      setActiveTopBanner(prev => (prev + 1) % topBanners.length);
-                    }
-                  }}
-                  className={`absolute inset-0 ${banner.color} p-6 flex items-center justify-between overflow-hidden cursor-pointer active:scale-[0.98] transition-all touch-pan-y`}
-                  initial={{ opacity: 0, x: 50 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -50 }}
-                  transition={{ duration: 0.5, ease: "easeOut" }}
-                >
+                 <motion.div
+                   key={banner.id}
+                   onClick={() => handleBannerClick(banner)}
+                   drag="x"
+                   dragConstraints={{ left: 0, right: 0 }}
+                   onTouchStart={() => setIsBannerPaused(true)}
+                   onTouchEnd={() => setIsBannerPaused(false)}
+                   onDragStart={() => setIsBannerPaused(true)}
+                   onDragEnd={(_, info) => {
+                     setIsBannerPaused(false);
+                     const swipeThreshold = 50;
+                     if (info.offset.x > swipeThreshold) {
+                       setActiveTopBanner(prev => (prev - 1 + topBanners.length) % topBanners.length);
+                     } else if (info.offset.x < -swipeThreshold) {
+                       setActiveTopBanner(prev => (prev + 1) % topBanners.length);
+                     }
+                   }}
+                   className={`absolute inset-0 ${banner.color} p-6 flex items-center justify-between overflow-hidden cursor-pointer active:scale-[0.98] transition-all touch-pan-y`}
+                   initial={{ x: '100%' }}
+                   animate={{ x: 0 }}
+                   exit={{ x: '-100%' }}
+                   transition={{ duration: 0.6, ease: [0.32, 0.72, 0, 1] }}
+                 >
                   {banner.img && (
                     <div className="absolute inset-0 opacity-20 bg-cover bg-center" style={{ backgroundImage: `url(${banner.img})` }}></div>
                   )}
@@ -5473,18 +9454,20 @@ export default function Home({
                 e.stopPropagation();
                 setActiveTopBanner(prev => (prev - 1 + topBanners.length) % topBanners.length);
               }}
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-8 h-8 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/20 opacity-0 group-hover:opacity-100 transition-opacity active:scale-90"
+              className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/40 transition-all active:scale-90 hover:bg-white/60"
+              aria-label="Previous banner"
             >
-              <ChevronDown className="w-5 h-5 rotate-90" />
+              <ChevronLeft className="w-6 h-6 shadow-sm" />
             </button>
             <button 
               onClick={(e) => {
                 e.stopPropagation();
                 setActiveTopBanner(prev => (prev + 1) % topBanners.length);
               }}
-              className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-8 h-8 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/20 opacity-0 group-hover:opacity-100 transition-opacity active:scale-90"
+              className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/40 transition-all active:scale-90 hover:bg-white/60"
+              aria-label="Next banner"
             >
-              <ChevronDown className="w-5 h-5 -rotate-90" />
+              <ChevronRight className="w-6 h-6 shadow-sm" />
             </button>
 
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
@@ -5495,21 +9478,52 @@ export default function Home({
           </div>
         )}
 
+
+
         {/* 2. Search Bar - INTEGRATED DISCOVERY */}
+        {branches && branches.length > 0 && (
+          <div className="flex items-center gap-2 overflow-x-auto py-3 px-1 scrollbar-none mb-3 text-[10px] font-black uppercase tracking-widest text-[#0F172A] dark:text-gray-300">
+            <span className="text-[10px] text-[#475569] shrink-0 font-extrabold flex items-center gap-1">
+              <MapPin className="w-3.5 h-3.5 text-indigo-500 fill-indigo-100" /> Nearby Branches:
+            </span>
+            {branches.map((b: any) => {
+              const isActive = b.status === 'Active';
+              const isCurrent = b.id === currentBranchId;
+              return (
+                <div 
+                  key={b.id} 
+                  className={`flex items-center gap-1.5 px-3 py-1.5 bg-white/90 dark:bg-slate-900 border rounded-full shrink-0 transition-all shadow-sm ${
+                    isCurrent 
+                      ? 'border-indigo-400 bg-indigo-50/50 text-indigo-800' 
+                      : isActive 
+                        ? 'border-emerald-100 text-emerald-700' 
+                        : 'border-rose-100 text-rose-600'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-rose-400'}`} />
+                  <span className="font-sans font-black tracking-tight text-[10px]">
+                    {b.name} {isCurrent && <span className="text-[8px] bg-indigo-500 text-white rounded px-1 py-0.5 ml-1 font-mono">ACTIVE</span>}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <div className="relative z-[90]">
           <form onSubmit={handleSearchSubmit}>
-            <Search className={`absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 transition-all duration-300 ${isFocused ? 'text-yellow-600 scale-110' : 'text-gray-400'}`} />
+            <Search className={`absolute left-5 top-1/2 -translate-y-1/2 w-6 h-6 transition-all duration-300 ${isFocused ? 'text-yellow-600 scale-110 shadow-sm' : 'text-gray-500'}`} />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setIsFocused(true)}
               placeholder={t.searchPlaceholder}
-              className={`w-full bg-gray-50/50 py-5 pl-14 pr-24 rounded-[2rem] font-bold outline-none border-2 transition-all shadow-sm ${
+              className={`w-full bg-white py-6 pl-14 pr-24 rounded-[2rem] font-black text-lg outline-none border-2 transition-all shadow-xl shadow-yellow-50/5 ${
                 isFocused 
-                  ? 'border-yellow-400 bg-white shadow-2xl shadow-yellow-100 -translate-y-0.5' 
-                  : 'border-transparent'
-              } placeholder:text-gray-300 placeholder:font-black placeholder:uppercase placeholder:text-[10px] placeholder:tracking-[0.2em]`}
+                  ? 'border-yellow-400 bg-white shadow-2xl shadow-yellow-100 -translate-y-0.5 text-gray-900 ring-4 ring-yellow-400/10' 
+                  : 'border-transparent text-gray-800'
+              } placeholder:text-gray-400 placeholder:font-black placeholder:text-base placeholder:tracking-tight`}
             />
           </form>
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -5543,13 +9557,13 @@ export default function Home({
                   <div className="p-4 space-y-6 max-h-[400px] overflow-y-auto scrollbar-hide">
                     {filteredCategories.length > 0 && (
                       <div>
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 px-2">Recommended Categories</p>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-2">Recommended Categories</p>
                         <div className="flex flex-wrap gap-2">
                           {filteredCategories.slice(0, 4).map(cat => (
                             <button
                               key={cat.id}
                               onClick={() => {
-                                onCategoryClick(cat);
+                                integratedCategoryClick(cat);
                                 saveRecentSearch(searchQuery);
                                 setIsFocused(false);
                               }}
@@ -5565,7 +9579,7 @@ export default function Home({
 
                     {filteredProducts.length > 0 && (
                       <div>
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 px-2">Top Results</p>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-2">Top Results</p>
                         <div className="space-y-1">
                           {filteredProducts.slice(0, 5).map(prod => (
                             <button
@@ -5581,12 +9595,12 @@ export default function Home({
                                 {prod.image && <img src={prod.image} className="w-full h-full object-cover" alt={prod.name} />}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-xs font-black text-gray-900 group-hover:text-yellow-600 transition-colors truncate">{prod.name}</p>
-                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">In {prod.category}</p>
+                                <p className="text-sm font-bold text-gray-900 group-hover:text-yellow-600 transition-colors truncate">{prod.name}</p>
+                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-normal">In {prod.category}</p>
                               </div>
                               <div className="text-right shrink-0">
                                 <p className="text-xs font-black text-gray-900">₹{prod.price}</p>
-                                {prod.unit && <p className="text-[8px] font-bold text-gray-400 uppercase">Per {prod.unit}</p>}
+                                {(prod as any).unit && <p className="text-[8px] font-bold text-gray-400 uppercase">Per {(prod as any).unit}</p>}
                               </div>
                             </button>
                           ))}
@@ -5595,9 +9609,15 @@ export default function Home({
                     )}
 
                     {filteredCategories.length === 0 && filteredProducts.length === 0 && (
-                      <div className="py-8 text-center bg-gray-50 rounded-2xl">
+                      <div className="py-8 px-4 text-center bg-gray-50 rounded-2xl">
                         <Search className="w-8 h-8 text-gray-200 mx-auto mb-2" />
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">No matching results</p>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">No matching results</p>
+                        <button 
+                          onClick={() => setShowCustomerCare?.(true)}
+                          className="px-6 py-3 bg-white text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-indigo-100 shadow-sm"
+                        >
+                          Ask Support about "{searchQuery}"
+                        </button>
                       </div>
                     )}
                   </div>
@@ -5654,7 +9674,7 @@ export default function Home({
                   </div>
                 )}
                 <div className="p-3 bg-gray-50 border-t border-gray-100 flex justify-between items-center">
-                  <p className="text-[8px] font-black text-gray-400 uppercase tracking-[0.2em] px-2 italic">Lokal Intelligent Search</p>
+                  <p className="text-[8px] font-black text-gray-400 uppercase tracking-[0.2em] px-2 italic">Local Intelligent Search</p>
                   <button 
                     onClick={() => setIsFocused(false)}
                     className="text-[10px] font-black text-gray-900 uppercase tracking-widest bg-white px-3 py-1.5 rounded-lg active:scale-95 transition-all shadow-sm"
@@ -5676,76 +9696,130 @@ export default function Home({
 
         {/* 3. Categories Grid - PRIMARY NAVIGATION */}
         {!searchQuery && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Explore Categories</h3>
-              <button className="text-yellow-600 font-bold text-xs">View All</button>
-            </div>
-            <motion.div 
-              initial="hidden"
-              animate="visible"
-              variants={{
-                visible: {
-                  transition: {
-                    staggerChildren: 0.05
-                  }
-                }
-              }}
-              className="grid grid-cols-4 gap-y-8 gap-x-4"
-            >
-              {CATEGORIES.map((cat) => {
-                const Icon = IconMap[cat.icon] || ShoppingBag;
-                const depthColors: Record<string, string> = {
-                  'bg-pink-100': 'bg-pink-400',
-                  'bg-blue-100': 'bg-blue-400',
-                  'bg-blue-50': 'bg-blue-300',
-                  'bg-emerald-100': 'bg-emerald-400',
-                  'bg-emerald-50': 'bg-emerald-300',
-                  'bg-rose-100': 'bg-rose-400',
-                  'bg-yellow-100': 'bg-yellow-400',
-                  'bg-purple-100': 'bg-purple-400',
-                  'bg-orange-100': 'bg-orange-400',
-                  'bg-cyan-100': 'bg-cyan-400',
-                  'bg-indigo-100': 'bg-indigo-400',
-                  'bg-green-100': 'bg-green-400',
-                  'bg-amber-100': 'bg-amber-400',
-                  'bg-gray-100': 'bg-gray-400',
-                };
-                const depthColor = depthColors[cat.color] || 'bg-gray-400';
+          <>
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Explore Categories</h3>
+                <button className="text-yellow-600 font-bold text-xs">View All</button>
+              </div>
+              <motion.div 
+                initial={false}
+                animate="visible"
+                className="grid grid-cols-4 gap-y-8 gap-x-4"
+              >
+                {(() => {
+                  const priorityIds = ['driving_school', 'beauty_parlour', 'bakery', 'care', 'marriage', 'jobs'];
+                  const featuredList = [
+                    ...categories.filter(c => priorityIds.includes(c.id)),
+                    ...categories.filter(c => !priorityIds.includes(c.id))
+                  ];
+                  return featuredList.map((cat) => {
+                    const Icon = IconMap[cat.icon] || ShoppingBag;
+                    const depthColors: Record<string, string> = {
+                    'bg-pink-100': 'bg-pink-400',
+                    'bg-blue-100': 'bg-blue-400',
+                    'bg-blue-50': 'bg-blue-300',
+                    'bg-emerald-100': 'bg-emerald-400',
+                    'bg-emerald-50': 'bg-emerald-300',
+                    'bg-rose-100': 'bg-rose-400',
+                    'bg-yellow-100': 'bg-yellow-400',
+                    'bg-purple-100': 'bg-purple-400',
+                    'bg-orange-100': 'bg-orange-400',
+                    'bg-cyan-100': 'bg-cyan-400',
+                    'bg-indigo-100': 'bg-indigo-400',
+                    'bg-green-100': 'bg-green-400',
+                    'bg-amber-100': 'bg-amber-400',
+                    'bg-gray-100': 'bg-gray-400',
+                  };
+                  const depthColor = depthColors[cat.color] || 'bg-gray-400';
 
-                return (
-                  <motion.div
-                    variants={{
-                      hidden: { opacity: 0, y: 20 },
-                      visible: { opacity: 1, y: 0 }
-                    }}
-                    key={cat.id}
-                    onClick={() => onCategoryClick(cat)}
-                    className="flex flex-col items-center gap-3 group relative perspective-500 cursor-pointer"
-                  >
-                    <div className="relative transform-gpu transition-all duration-300 group-hover:rotate-x-12 group-hover:rotate-y-[-12deg]">
-                      <div className={`absolute inset-0 translate-y-2 translate-x-1 rounded-[2rem] transition-transform group-active:translate-y-1 group-active:translate-x-0.5 ${depthColor} opacity-30 blur-[2px]`} />
-                      <div className={`absolute inset-0 translate-y-1 rounded-[2rem] ${depthColor} shadow-inner opacity-60`} />
-                      <div className={`relative w-16 h-16 ${cat.color} rounded-[2rem] flex items-center justify-center 
-                        shadow-md transition-all duration-200 
-                        group-active:translate-y-1 
-                        group-hover:-translate-y-1
-                        border-t-2 border-l border-white/80
-                        bg-gradient-to-br from-white/40 via-transparent to-black/5`}
-                      >
-                        <div className="relative group-hover:scale-110 transition-transform duration-300">
-                           <Icon className="w-8 h-8 text-gray-800 drop-shadow-[0_2px_4px_rgba(0,0,0,0.2)]" />
+                  return (
+                    <motion.div
+                      variants={{
+                        hidden: { opacity: 0, y: 20 },
+                        visible: { opacity: 1, y: 0 }
+                      }}
+                      key={cat.id}
+                      onClick={() => integratedCategoryClick(cat)}
+                      className="flex flex-col items-center gap-3 group relative perspective-500 cursor-pointer"
+                    >
+                      <div className="relative transform-gpu transition-all duration-300 group-hover:rotate-x-12 group-hover:rotate-y-[-12deg]">
+                        <div className={`absolute inset-0 translate-y-2 translate-x-1 rounded-[2rem] transition-transform group-active:translate-y-1 group-active:translate-x-0.5 ${depthColor} opacity-30 blur-[2px]`} />
+                        <div className={`absolute inset-0 translate-y-1 rounded-[2rem] ${depthColor} shadow-inner opacity-60`} />
+                        <div className={`relative w-16 h-16 ${cat.color} rounded-[2rem] flex items-center justify-center 
+                          shadow-md transition-all duration-200 
+                          group-active:translate-y-1 
+                          group-hover:-translate-y-1
+                          border-t-2 border-l border-white/80
+                          bg-gradient-to-br from-white/40 via-transparent to-black/5
+                          overflow-hidden`}
+                        >
+                          <div className="relative w-full h-full flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                             {cat.image ? (
+                               <img 
+                                 src={cat.image} 
+                                 className="w-full h-full object-cover" 
+                                 referrerPolicy="no-referrer" 
+                                 alt="" 
+                                 loading="lazy"
+                               />
+                             ) : (
+                               <Icon className="w-8 h-8 text-gray-800 drop-shadow-[0_2px_4px_rgba(0,0,0,0.2)]" />
+                             )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <span className="text-[10px] font-black text-center leading-tight uppercase tracking-widest text-gray-400 group-hover:text-gray-900 transition-colors px-1 h-6 flex items-center">
-                      {cat.name.split(' & ')[0]}
-                    </span>
-                  </motion.div>
-                );
-              })}
+                      <span className="text-[10px] font-black text-center leading-tight uppercase tracking-widest text-gray-900 group-hover:text-indigo-600 transition-colors px-1 h-6 flex items-center">
+                        {cat.name.split(' & ')[0]}
+                      </span>
+                    </motion.div>
+                  );
+                });
+              })()}
             </motion.div>
           </section>
+
+            {/* Emergency Quick Actions */}
+            <section className="bg-rose-50 p-6 rounded-[2.5rem] border border-rose-100 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-rose-500 rounded-xl text-white">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-sm font-black text-rose-900 uppercase tracking-widest">Emergency & Support</h3>
+                </div>
+                <span className="text-[8px] font-black bg-rose-200 text-rose-700 px-2 py-1 rounded-full uppercase tracking-widest animate-pulse">24/7 Available</span>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <button 
+                  onClick={() => setShowHospitalOP(true)}
+                  className="bg-white p-4 rounded-3xl border border-rose-100 flex flex-col items-center gap-2 shadow-sm active:scale-95 transition-all"
+                >
+                  <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
+                    <Stethoscope className="w-5 h-5" />
+                  </div>
+                  <p className="text-[10px] font-black text-rose-900 uppercase">Hospital OP</p>
+                </button>
+                <button 
+                  onClick={() => {
+                    const confirmSecondary = window.confirm(`Call Primary: ${supportInfo.phone}?\n\nIf no response within 2 days, use our secondary support: ${supportInfo.secondaryPhone}`);
+                    if (confirmSecondary) {
+                      window.open(`tel:${supportInfo.phone}`);
+                    }
+                  }}
+                  className="bg-white p-4 rounded-3xl border border-rose-100 flex flex-col items-center gap-2 shadow-sm active:scale-95 transition-all"
+                >
+                  <div className="w-10 h-10 bg-white text-emerald-600 border border-emerald-100 rounded-xl flex items-center justify-center">
+                    <Phone className="w-5 h-5" />
+                  </div>
+                  <p className="text-[10px] font-black text-rose-900 uppercase leading-none">Call Support</p>
+                  <p className="text-[7px] font-bold text-gray-400 uppercase leading-none">24/7 Priority</p>
+                </button>
+              </div>
+            </section>
+
+          </>
         )}
 
         {searchQuery ? (
@@ -5759,11 +9833,15 @@ export default function Home({
                     return (
                       <div
                         key={cat.id}
-                        onClick={() => onCategoryClick(cat)}
+                        onClick={() => integratedCategoryClick(cat)}
                         className="flex flex-col items-center gap-2 group active:scale-90 transition-transform cursor-pointer"
                       >
-                        <div className={`w-14 h-14 ${cat.color} rounded-2xl flex items-center justify-center`}>
-                          <Icon className="w-7 h-7 text-gray-800" />
+                        <div className={`w-14 h-14 ${cat.color} rounded-2xl flex items-center justify-center overflow-hidden`}>
+                          {cat.image ? (
+                            <img src={cat.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt="" />
+                          ) : (
+                            <Icon className="w-7 h-7 text-gray-800" />
+                          )}
                         </div>
                         <span className="text-[10px] font-black text-center leading-tight uppercase tracking-wide text-gray-500 line-clamp-1">
                           {cat.name}
@@ -5794,7 +9872,7 @@ export default function Home({
                         <p className="text-xs text-gray-500 line-clamp-2 mb-2">{prod.description}</p>
                         <div className="flex items-center gap-2">
                            <p className="text-sm font-black text-yellow-600">₹{prod.price}</p>
-                           {prod.unit && <span className="text-[10px] font-bold text-gray-400 uppercase truncate">/ {prod.unit}</span>}
+                           {('unit' in prod && prod.unit) && <span className="text-[10px] font-bold text-gray-400 uppercase truncate">/ {prod.unit}</span>}
                         </div>
                       </div>
                     </button>
@@ -5812,6 +9890,115 @@ export default function Home({
           </div>
         ) : (
           <>
+            {/* 0. Lokal Specialties & Digital Engines */}
+            <section className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <div>
+                  <h3 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-yellow-500 fill-yellow-500 animate-pulse" />
+                    Lokal Specialty Hub
+                  </h3>
+                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Premium digital engines for Khammam</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3.5">
+                {/* Marriage Bureau Card */}
+                <motion.div 
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => onNavigate('marriageBureau')}
+                  className="bg-indigo-50/50 hover:bg-indigo-50 border border-indigo-100/60 p-5 rounded-[2rem] flex flex-col justify-between text-left cursor-pointer transition-all shadow-sm"
+                >
+                  <div>
+                    <div className="w-10 h-10 bg-indigo-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-md shadow-indigo-100 dark:shadow-none">
+                      <HeartHandshake className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-sm font-black text-indigo-950 mb-1">Marriage Bureau</h4>
+                    <p className="text-[10px] font-semibold text-indigo-700/80 leading-snug">Verified local bios and traditional matches.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-5 text-[9px] font-black uppercase tracking-wider text-indigo-600">
+                    <span>Enter Bureau</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </div>
+                </motion.div>
+
+                {/* Real Estate Card */}
+                <motion.div 
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => onNavigate('realEstate')}
+                  className="bg-sky-50/50 hover:bg-sky-50 border border-sky-100/60 p-5 rounded-[2rem] flex flex-col justify-between text-left cursor-pointer transition-all shadow-sm"
+                >
+                  <div>
+                    <div className="w-10 h-10 bg-sky-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-md shadow-sky-100 dark:shadow-none">
+                      <Building2 className="w-5 h-5" strokeWidth={2.5} />
+                    </div>
+                    <h4 className="text-sm font-black text-sky-950 mb-1">Real Estate</h4>
+                    <p className="text-[10px] font-semibold text-sky-700/80 leading-snug">Browse local properties, plots, and homes.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-5 text-[9px] font-black uppercase tracking-wider text-sky-600">
+                    <span>Explore Plots</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </div>
+                </motion.div>
+
+                {/* Task Manager Card */}
+                <motion.div 
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => onNavigate('tasks')}
+                  className="bg-emerald-50/50 hover:bg-emerald-50 border border-emerald-100/60 p-5 rounded-[2rem] flex flex-col justify-between text-left cursor-pointer transition-all shadow-sm"
+                >
+                  <div>
+                    <div className="w-10 h-10 bg-emerald-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-md shadow-emerald-100 dark:shadow-none">
+                      <ListTodo className="w-5 h-5" strokeWidth={2.5} />
+                    </div>
+                    <h4 className="text-sm font-black text-emerald-950 mb-1">Task Manager</h4>
+                    <p className="text-[10px] font-semibold text-emerald-700/80 leading-snug">Create, delegate, and track local work orders.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-5 text-[9px] font-black uppercase tracking-wider text-emerald-600">
+                    <span>Manage Tasks</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </div>
+                </motion.div>
+
+                {/* Hospital OP Card */}
+                <motion.div 
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => setShowHospitalOP(true)}
+                  className="bg-rose-50/50 hover:bg-rose-50 border border-rose-100/60 p-5 rounded-[2rem] flex flex-col justify-between text-left cursor-pointer transition-all shadow-sm"
+                >
+                  <div>
+                    <div className="w-10 h-10 bg-rose-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-md shadow-rose-100 dark:shadow-none">
+                      <Stethoscope className="w-5 h-5" strokeWidth={2.5} />
+                    </div>
+                    <h4 className="text-sm font-black text-rose-950 mb-1">Hospital OP</h4>
+                    <p className="text-[10px] font-semibold text-rose-700/80 leading-snug">Book outpatient consultation slips instantly.</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-5 text-[9px] font-black uppercase tracking-wider text-rose-600">
+                    <span>Book Slot</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </div>
+                </motion.div>
+              </div>
+
+              {/* Full-width Instant Support Card */}
+              <motion.div 
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setShowCustomerCare && setShowCustomerCare(true)}
+                className="bg-amber-50/30 hover:bg-amber-50 border border-amber-100/60 p-5 rounded-[2rem] flex items-center justify-between text-left cursor-pointer transition-all shadow-sm"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-11 h-11 bg-amber-500 text-white rounded-2xl flex items-center justify-center shrink-0">
+                    <Headphones className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-amber-950 mb-0.5">Lokal Helpdesk & Care</h4>
+                    <p className="text-[10px] font-semibold text-amber-800/80">Instant WhatsApp, Phone, and chatbot support desk.</p>
+                  </div>
+                </div>
+                <ArrowRight className="w-5 h-5 text-amber-600 mr-2 shrink-0 animate-pulse" />
+              </motion.div>
+            </section>
+
             {/* 1. Deals of the Day - URGENCY & VALUE */}
             <section className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm relative overflow-hidden">
               <div className="flex items-center justify-between mb-6 relative z-10">
@@ -5857,7 +10044,7 @@ export default function Home({
               </div>
             </section>
 
-            {/* 2. Lokal Originals - BRAND PRIDE & QUALITY */}
+            {/* 2. Local Originals - BRAND PRIDE & QUALITY */}
             <section className="px-2">
               <div className="bg-emerald-900 rounded-[3rem] p-8 relative overflow-hidden group shadow-xl mb-6">
                 <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800&q=80')] opacity-20 bg-cover bg-center"></div>
@@ -5868,14 +10055,14 @@ export default function Home({
                     <div className="bg-white/10 backdrop-blur-md p-2 rounded-xl">
                       <Flower className="w-5 h-5 text-emerald-300" />
                     </div>
-                    <span className="text-[10px] font-black text-emerald-300 uppercase tracking-[0.2em]">Lokal Signature Collection</span>
+                    <span className="text-[10px] font-black text-emerald-300 uppercase tracking-[0.2em]">Local Signature Collection</span>
                   </div>
                   <h3 className="text-2xl font-black text-white italic tracking-tighter mb-2 leading-none">Direct from the Farm</h3>
                   <p className="text-[10px] font-bold text-emerald-100/60 uppercase tracking-widest leading-relaxed mb-6">
                     Hand-churned oils, wild forest honey,<br />and traditional crafts.
                   </p>
                   <button 
-                    onClick={() => onCategoryClick(CATEGORIES.find(c => c.id === 'handicrafts')!)}
+                    onClick={() => integratedCategoryClick(categories.find(c => c.id === 'handicrafts')!)}
                     className="px-6 py-3.5 bg-emerald-400 text-emerald-950 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-emerald-400/20"
                   >
                     {t.seeAll}
@@ -5888,7 +10075,7 @@ export default function Home({
               </div>
               
               <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide -mx-2 px-2">
-                {localInventory.filter(p => p.category === 'handicrafts').map(prod => (
+                {handicraftsItems.map(prod => (
                   <motion.div
                     whileTap={{ scale: 0.98 }}
                     key={prod.id}
@@ -5926,15 +10113,23 @@ export default function Home({
             </section>
 
             {/* 3. Bottom Promo Banners - CROSS-PROMOTION */}
-            <div className="relative h-44 rounded-[2.5rem] overflow-hidden shadow-xl shadow-gray-100 mt-4 group">
-              <AnimatePresence mode="wait">
+            <div 
+              className="relative h-44 rounded-[2.5rem] overflow-hidden shadow-xl shadow-gray-100 mt-4 group"
+              onMouseEnter={() => setIsBannerPaused(true)}
+              onMouseLeave={() => setIsBannerPaused(false)}
+            >
+              <AnimatePresence>
                 {bottomBanners.map((banner, i) => i === activeBottomBanner && (
                   <motion.div
                     key={banner.id}
                     onClick={() => handleBannerClick(banner)}
                     drag="x"
                     dragConstraints={{ left: 0, right: 0 }}
+                    onTouchStart={() => setIsBannerPaused(true)}
+                    onTouchEnd={() => setIsBannerPaused(false)}
+                    onDragStart={() => setIsBannerPaused(true)}
                     onDragEnd={(_, info) => {
+                      setIsBannerPaused(false);
                       const swipeThreshold = 50;
                       if (info.offset.x > swipeThreshold) {
                         setActiveBottomBanner(prev => (prev - 1 + bottomBanners.length) % bottomBanners.length);
@@ -5943,10 +10138,10 @@ export default function Home({
                       }
                     }}
                     className={`absolute inset-0 ${banner.color} p-6 flex items-center justify-between overflow-hidden cursor-pointer active:scale-[0.98] transition-all touch-pan-y`}
-                    initial={{ opacity: 0, x: 50 }}
+                    initial={{ opacity: 0, x: '100%' }}
                     animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -50 }}
-                    transition={{ duration: 0.5, ease: "easeOut" }}
+                    exit={{ opacity: 0, x: '-100%' }}
+                    transition={{ duration: 0.8, ease: [0.32, 0.72, 0, 1] }}
                   >
                     {banner.img && (
                       <div className="absolute inset-0 opacity-20 bg-cover bg-center" style={{ backgroundImage: `url(${banner.img})` }}></div>
@@ -5976,18 +10171,20 @@ export default function Home({
                   e.stopPropagation();
                   setActiveBottomBanner(prev => (prev - 1 + bottomBanners.length) % bottomBanners.length);
                 }}
-                className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-8 h-8 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/20 opacity-0 group-hover:opacity-100 transition-opacity active:scale-90"
+                className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/40 transition-all active:scale-90 hover:bg-white/60"
+                aria-label="Previous bottom banner"
               >
-                <ChevronDown className="w-5 h-5 rotate-90" />
+                <ChevronLeft className="w-6 h-6 shadow-sm" />
               </button>
               <button 
                 onClick={(e) => {
                   e.stopPropagation();
                   setActiveBottomBanner(prev => (prev + 1) % bottomBanners.length);
                 }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-8 h-8 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/20 opacity-0 group-hover:opacity-100 transition-opacity active:scale-90"
+                className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/40 transition-all active:scale-90 hover:bg-white/60"
+                aria-label="Next bottom banner"
               >
-                <ChevronDown className="w-5 h-5 -rotate-90" />
+                <ChevronRight className="w-6 h-6 shadow-sm" />
               </button>
 
               <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
@@ -6004,7 +10201,7 @@ export default function Home({
                 <h3 className="text-lg font-black text-gray-900">Popular Around You</h3>
               </div>
               <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
-                {localInventory.filter(p => p.category !== 'meat' && p.category !== 'food' && p.category !== 'handicrafts').slice(0, 6).map((prod) => (
+                {popularAroundYouItems.map((prod) => (
                   <button
                     key={prod.id}
                     onClick={() => onProductClick(prod)}
@@ -6034,7 +10231,7 @@ export default function Home({
                 <button className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-2 py-1">See All</button>
               </div>
               <div className="grid grid-cols-1 gap-4">
-                {localInventory.filter(i => ['maids', 'mechanics', 'construction', 'care', 'jobs'].includes(i.category)).slice(0, 2).map((service) => (
+                {trendingServicesItems.map((service) => (
                   <div
                     key={service.id}
                     onClick={() => onProductClick(service)}
@@ -6063,7 +10260,7 @@ export default function Home({
               </div>
             </section>
 
-            {/* 6. Lokal Select Promo - RETENTION & MEMBERSHIP */}
+            {/* 6. Local Select Promo - RETENTION & MEMBERSHIP */}
             <section className="relative overflow-hidden group">
               <div className="absolute inset-0 bg-gray-900 rounded-[3rem] shadow-2xl shadow-gray-200"></div>
               <div className="absolute top-0 right-0 w-48 h-48 bg-yellow-400 rotate-45 translate-x-24 -translate-y-24 group-hover:scale-110 transition-transform duration-700 opacity-20"></div>
@@ -6073,7 +10270,7 @@ export default function Home({
                   <ShieldCheck className="w-8 h-8 text-yellow-400" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-xl font-black text-white mb-1">Lokal Select</h3>
+                  <h3 className="text-xl font-black text-white mb-1">Local Bandi Select</h3>
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-relaxed">
                     Get Free Delivery & Extra<br />15% OFF on every order!
                   </p>
@@ -6113,92 +10310,47 @@ export default function Home({
             <section>
               <div className="flex items-center gap-2 mb-4 px-2">
                 <Users className="w-5 h-5 text-indigo-600" />
-                <h3 className="text-lg font-black text-gray-900">Join Our Mission</h3>
+                <h3 className="text-lg font-black text-gray-900">Merchant & Rider Portals</h3>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-[2.5rem] text-left space-y-4 shadow-sm">
+                <p className="text-xs font-bold text-indigo-900/80 leading-relaxed">
+                  Delivery and vendor management are now moved entirely to our high-performance, standalone **Merchant & Rider Terminal**. Accessing store items, processing orders, and checking fleet payouts are handled there independently.
+                </p>
                 <button 
                   onClick={() => {
-                    setPartnerType('vendor');
-                    setAgreedToTerms(false);
-                    setShowPartnerForm(true);
+                    window.location.href = '/partner';
                   }}
-                  className="bg-indigo-50 border border-indigo-100 rounded-[2rem] p-6 text-left relative overflow-hidden group active:scale-95 transition-all"
+                  className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[1.8rem] font-black uppercase text-[10px] tracking-widest transition-all shadow-md active:scale-95 flex items-center justify-center gap-2"
                 >
-                  <div className="relative z-10">
-                    <div className="bg-white w-10 h-10 rounded-xl flex items-center justify-center shadow-sm mb-4">
-                      <Briefcase className="w-5 h-5 text-indigo-600" />
-                    </div>
-                    <h4 className="text-sm font-black text-indigo-900 mb-1">Local Vendor</h4>
-                    <p className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest">Register Store</p>
-                  </div>
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-white/40 blur-3xl rounded-full -mr-12 -mt-12"></div>
-                </button>
-
-                <button 
-                  onClick={() => {
-                    setPartnerType('delivery');
-                    setAgreedToTerms(false);
-                    setShowPartnerForm(true);
-                  }}
-                  className="bg-orange-50 border border-orange-100 rounded-[2rem] p-6 text-left relative overflow-hidden group active:scale-95 transition-all"
-                >
-                  <div className="relative z-10">
-                    <div className="bg-white w-10 h-10 rounded-xl flex items-center justify-center shadow-sm mb-4">
-                      <Bike className="w-5 h-5 text-orange-600" />
-                    </div>
-                    <h4 className="text-sm font-black text-orange-900 mb-1">Delivery Partner</h4>
-                    <p className="text-[9px] font-bold text-orange-600 uppercase tracking-widest">Join Fleet</p>
-                  </div>
-                  <div className="absolute top-0 right-0 w-24 h-24 bg-white/40 blur-3xl rounded-full -mr-12 -mt-12"></div>
+                  <RefreshCw className="w-4 h-4 animate-spin-slow" />
+                  <span>Launch Standalone Partner App</span>
                 </button>
               </div>
             </section>
 
-            {/* 9. Be Your Own Boss Banner - GROWTH DETAIL */}
+            {/* 9. Standalone Information Panel */}
             <section className="px-2">
-              <div className="bg-indigo-900 rounded-[3rem] p-8 text-white relative overflow-hidden group shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500 rounded-full -mr-16 -mt-16 blur-3xl opacity-30"></div>
+              <div className="bg-slate-900 rounded-[3rem] p-8 text-white relative overflow-hidden group shadow-2xl">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-slate-800 rounded-full -mr-16 -mt-16 blur-3xl opacity-30"></div>
                 <div className="relative z-10">
                   <div className="flex items-center gap-2 mb-4">
-                    <div className="w-8 h-8 bg-white/20 backdrop-blur-md rounded-xl flex items-center justify-center">
-                      <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
+                    <div className="w-8 h-8 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center">
+                      <Star className="w-4 h-4 text-emerald-400 fill-emerald-400" />
                     </div>
-                    <span className="text-[10px] font-black text-indigo-200 uppercase tracking-[0.2em]">Partner Opportunity</span>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Partner Opportunity</span>
                   </div>
-                  <h3 className="text-3xl font-black italic tracking-tighter mb-2 leading-none">Be your own boss.</h3>
-                  <p className="text-[10px] font-medium text-indigo-100/70 uppercase tracking-widest leading-relaxed mb-8">
-                    Flexible hours. Great earnings.<br />Deliver happiness in Khammam.
+                  <h3 className="text-2xl font-black italic tracking-tighter mb-2 leading-none">Deliver & Earn in Khammam.</h3>
+                  <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest leading-relaxed mb-6">
+                    Flexible hours, great earnings, zero merchant commission fees. Get started on the standalone partner app today.
                   </p>
-                  <div className="flex flex-wrap gap-3">
-                    <button 
-                      onClick={() => {
-                        const partners = JSON.parse(localStorage.getItem('deliveryPartners') || '[]');
-                        if (isAdmin || partners.length > 0) {
-                          onNavigate('delivery');
-                        } else {
-                          setPartnerType('delivery');
-                          setAgreedToTerms(false);
-                          setShowPartnerForm(true);
-                        }
-                      }}
-                      className="px-8 py-4 bg-white text-indigo-900 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all shadow-xl hover:bg-yellow-400 hover:text-gray-900"
-                    >
-                      {(isAdmin || deliveryPartners.length > 0) ? 'Delivery Console' : 'Start Your Journey'}
-                    </button>
-                    {(isAdmin || vendors.length > 0) && (
-                      <button 
-                        onClick={() => {
-                          if (isAdmin || vendors.length > 0) {
-                             onNavigate('profile');
-                             localStorage.setItem('openVendorDashboard', 'true');
-                          }
-                        }}
-                        className="px-8 py-4 bg-indigo-500/40 backdrop-blur-md text-white border border-white/30 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all"
-                      >
-                        Vendor Dashboard
-                      </button>
-                    )}
-                  </div>
+                  <button 
+                    onClick={() => {
+                      window.location.href = '/partner';
+                    }}
+                    className="px-8 py-4 bg-emerald-600 text-white hover:bg-emerald-500 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all shadow-xl"
+                  >
+                    Open Standalone App
+                  </button>
                 </div>
                 <Bike className="absolute -right-6 -bottom-6 w-48 h-48 text-white/5 -rotate-12 group-hover:scale-110 transition-transform duration-700" />
               </div>
@@ -6236,42 +10388,653 @@ export default function Home({
                 </div>
               </div>
             </section>
+
+            {/* 10.5 Customer Service & Support */}
+            <section id="customer-service" className="mt-8 px-4 overflow-hidden relative">
+              <div className="bg-white rounded-[3rem] p-10 border border-gray-100 shadow-xl shadow-indigo-100/20 relative overflow-hidden group">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full blur-3xl opacity-50 -mr-16 -mt-16" />
+                <div className="absolute bottom-0 left-0 w-32 h-32 bg-emerald-50 rounded-full blur-3xl opacity-50 -ml-16 -mb-16" />
+                
+                <div className="relative z-10 text-center">
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50 rounded-full text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-6">
+                    <Headphones className="w-3.5 h-3.5" />
+                    24/7 Professional Support
+                  </div>
+                  <h2 className="text-3xl font-black text-gray-900 mb-4 italic tracking-tighter">How can we help?</h2>
+                  <p className="text-gray-500 font-bold text-[11px] uppercase tracking-tight mb-8 max-w-xs mx-auto leading-relaxed">
+                    Our dedicated support team is available around the clock to ensure your experience is nothing short of exceptional.
+                  </p>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    {/* Live Chat */}
+                    <button 
+                      onClick={() => setShowCustomerCare(true)}
+                      className="group relative bg-indigo-600 p-6 rounded-[2rem] text-left overflow-hidden transition-all hover:bg-indigo-700 active:scale-[0.98]"
+                    >
+                      <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full blur-xl -mr-8 -mt-8 transition-transform group-hover:scale-150" />
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white backdrop-blur-md">
+                          <MessageCircle className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black text-white uppercase italic">Live Support</h3>
+                          <p className="text-[8px] font-black text-indigo-200 uppercase tracking-widest">Instant Chat</p>
+                        </div>
+                      </div>
+                    </button>
+
+                    {/* WhatsApp Support */}
+                    <a 
+                      href={`https://wa.me/${supportInfo.phone}?text=Hi, I need help with Local Bandi Multi Services`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="group relative bg-emerald-600 p-6 rounded-[2rem] text-left overflow-hidden transition-all hover:bg-emerald-700 active:scale-[0.98]"
+                    >
+                      <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full blur-xl -mr-8 -mt-8 transition-transform group-hover:scale-150" />
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white backdrop-blur-md">
+                          <Phone className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black text-white uppercase italic">WhatsApp</h3>
+                          <p className="text-[8px] font-black text-emerald-200 uppercase tracking-widest">Direct Connection</p>
+                        </div>
+                      </div>
+                    </a>
+
+                    {/* Email Support */}
+                    <a 
+                      href={`mailto:${supportInfo.email}`}
+                      className="group relative bg-slate-900 p-6 rounded-[2rem] text-left overflow-hidden transition-all hover:bg-black active:scale-[0.98]"
+                    >
+                      <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full blur-xl -mr-8 -mt-8 transition-transform group-hover:scale-150" />
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white backdrop-blur-md">
+                          <Send className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black text-white uppercase italic">Email Us</h3>
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Formal Support</p>
+                        </div>
+                      </div>
+                    </a>
+
+                    {/* Call Support */}
+                    <a 
+                      href={`tel:${supportInfo.secondaryPhone || supportInfo.phone}`}
+                      className="group relative bg-white border border-gray-100 p-6 rounded-[2rem] text-left overflow-hidden transition-all hover:bg-gray-50 active:scale-[0.98]"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center text-gray-900">
+                          <PhoneCall className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black text-gray-900 uppercase italic">Call Hub</h3>
+                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Voice Support</p>
+                        </div>
+                      </div>
+                    </a>
+                  </div>
+
+                </div>
+              </div>
+            </section>
+
+            {/* 11. Head Office Roots - BRAND ROOTS */}
+            <section className="mt-2 mb-20 px-2 text-center">
+              <div className="bg-indigo-50 border-2 border-indigo-100/50 rounded-[3rem] p-10 relative overflow-hidden group">
+                 <MapPin className="w-12 h-12 text-indigo-200 absolute -top-4 -left-4 -rotate-12 opacity-50" />
+                 <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-4">Our Primary Hub</h3>
+                 <h2 className="text-2xl font-black text-indigo-900 leading-tight mb-2 italic">Khammam, Telangana</h2>
+                 <p className="text-[11px] font-bold text-indigo-600/70 uppercase tracking-widest leading-relaxed max-w-xs mx-auto">
+                   Proudly serving as the <span className="text-indigo-900 underline decoration-indigo-200">First Head Office</span> of Local Bandi Multi Services in India.
+                 </p>
+                 <div className="mt-8 flex flex-col items-center gap-2">
+                    <div className="flex items-center gap-2 px-6 py-2 bg-white rounded-full shadow-sm border border-indigo-100">
+                       <Navigation className="w-3 h-3 text-indigo-600" />
+                       <span className="text-[9px] font-black text-indigo-900 uppercase">Khammam City Center</span>
+                    </div>
+                    <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest italic">Established 2026 • From India to the World</p>
+                 </div>
+              </div>
+            </section>
           </>
         )}
       </div>
 
       {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 px-8 py-4 flex items-center justify-between z-20">
-        <button onClick={() => onNavigate('home')} className="flex flex-col items-center gap-1 text-yellow-600">
-          <HomeIcon className="w-6 h-6" />
-          <span className="text-[10px] font-black uppercase">Home</span>
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 px-4 pt-4 pb-10 flex items-center justify-between z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
+        <button onClick={() => onNavigate('home')} className="flex flex-col items-center gap-1.5 text-amber-600 active:scale-95 transition-transform">
+          <HomeIcon className="w-6 h-6" strokeWidth={3} />
+          <span className="text-[10px] font-black uppercase tracking-wider">Home</span>
         </button>
-        <button onClick={() => onNavigate('wishlist')} className="flex flex-col items-center gap-1 text-gray-300 relative">
-          <Heart className={`w-6 h-6 ${wishlistCount > 0 ? 'text-pink-500 fill-pink-500' : ''}`} />
-          <span className="text-[10px] font-black uppercase">Wishlist</span>
+        <button onClick={() => onNavigate('realEstate')} className="flex flex-col items-center gap-1.5 text-sky-600 active:scale-95 transition-transform">
+          <Building2 className="w-6 h-6" strokeWidth={3} />
+          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">Real Estate</span>
+        </button>
+        <button onClick={() => onNavigate('wishlist')} className="flex flex-col items-center gap-1.5 text-rose-600 relative active:scale-95 transition-transform">
+          <Heart className={`w-6 h-6 ${wishlistCount > 0 ? 'fill-rose-600' : ''}`} strokeWidth={3} />
+          <span className="text-[10px] font-black uppercase tracking-wider">Wishlist</span>
           {wishlistCount > 0 && (
-            <div className="absolute top-0 right-1 bg-pink-500 w-2 h-2 rounded-full border-2 border-white"></div>
+            <div className="absolute top-0 right-1 bg-rose-600 w-2.5 h-2.5 rounded-full border-2 border-white"></div>
           )}
         </button>
         <button onClick={() => onNavigate('cart')} className="relative -top-8 flex items-center justify-center">
-          <div className="bg-yellow-400 w-16 h-16 rounded-3xl shadow-xl shadow-yellow-200 flex items-center justify-center active:scale-90 transition-transform">
-            <ShoppingCart className="w-7 h-7 text-gray-900" />
+          <div className="bg-amber-400 w-16 h-16 rounded-[2rem] shadow-xl shadow-amber-200 flex items-center justify-center active:scale-90 transition-transform">
+            <ShoppingCart className="w-5.5 h-5.5 text-gray-900" strokeWidth={2.5} />
             {cartCount > 0 && (
-              <div className="absolute -top-1 -right-1 bg-gray-900 text-white text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center border-4 border-white">
+              <div className="absolute -top-1 -right-1 bg-gray-900 text-white text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center border-2 border-white">
                 {cartCount}
               </div>
             )}
           </div>
         </button>
-        <button onClick={() => onNavigate('orders')} className="flex flex-col items-center gap-1 text-gray-300 active:scale-95 transition-transform">
-          <ClipboardList className="w-6 h-6" />
-          <span className="text-[10px] font-black uppercase">Orders</span>
+        <button onClick={() => onNavigate('marriageBureau')} className="flex flex-col items-center gap-1.5 text-indigo-600 active:scale-95 transition-transform">
+          <HeartHandshake className="w-6 h-6" strokeWidth={3} />
+          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">Marriage</span>
         </button>
-        <button onClick={() => onNavigate('profile')} className="flex flex-col items-center gap-1 text-gray-300 active:scale-95 transition-transform">
-          <User className="w-6 h-6" />
-          <span className="text-[10px] font-black uppercase">Me</span>
+        <button onClick={() => setShowHospitalOP(true)} className="flex flex-col items-center gap-1.5 text-emerald-600 active:scale-95 transition-transform">
+          <Stethoscope className="w-6 h-6" strokeWidth={3} />
+          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">Hospital OP</span>
         </button>
       </nav>
+
+      {/* Floating Customer Care Button */}
+      {!showAdminLogin && !isAdminOpen && !isLogisticsOpen && (
+        <motion.button
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          onClick={() => setShowCustomerCare && setShowCustomerCare(true)}
+          className="fixed bottom-28 right-6 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg z-40 border-2 border-white cursor-pointer"
+        >
+          <Headphones className="w-4 h-4" />
+          <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white animate-pulse" />
+        </motion.button>
+      )}
+
+      {/* Cancellation Reason Modal */}
+      <AnimatePresence>
+        {orderIdToCancel && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                setOrderIdToCancel(null);
+                setCancelReasonInput("");
+              }}
+              className="absolute inset-0 bg-black/80 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white w-full max-w-sm rounded-[3rem] p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 p-6">
+                <button 
+                  onClick={() => {
+                    setOrderIdToCancel(null);
+                    setCancelReasonInput("");
+                  }} 
+                  className="p-2 bg-gray-100 rounded-full text-gray-500"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="text-center">
+                <div className="w-16 h-16 bg-rose-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                  <AlertCircle className="w-8 h-8 text-rose-600" />
+                </div>
+                <h3 className="text-2xl font-black text-gray-900 mb-2">Cancel Order</h3>
+                <p className="text-rose-500 font-black text-[10px] uppercase tracking-widest mb-2 font-mono">{orderIdToCancel}</p>
+                <p className="text-gray-400 font-bold text-xs uppercase tracking-widest mb-6">Reason for cancellation is required</p>
+                
+                <div className="space-y-3 mb-8">
+                  {[
+                    "Item Out of Stock",
+                    "Customer Requested",
+                    "Delivery Driver Unavailable",
+                    "Store Closed",
+                    "Technical Issue",
+                    "Invalid Address",
+                    "Other"
+                  ].map((reason) => (
+                    <button
+                      key={reason}
+                      onClick={() => setCancelReasonInput(reason)}
+                      className={`w-full py-4 px-6 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all text-left flex items-center justify-between ${
+                        cancelReasonInput === reason 
+                          ? 'bg-rose-500 text-white shadow-lg shadow-rose-200' 
+                          : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
+                      }`}
+                    >
+                      {reason}
+                      {cancelReasonInput === reason && <Check className="w-3 h-3" />}
+                    </button>
+                  ))}
+                  
+                  {cancelReasonInput.startsWith("Other") && (
+                    <textarea
+                      placeholder="Type reason here..."
+                      className="w-full bg-gray-50 border border-gray-100 rounded-2xl p-4 text-[10px] font-bold outline-none focus:border-rose-500 transition-all min-h-[80px]"
+                      onChange={(e) => setCancelReasonInput("Other: " + e.target.value)}
+                      value={cancelReasonInput.replace("Other: ", "")}
+                    />
+                  )}
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => {
+                      setOrderIdToCancel(null);
+                      setCancelReasonInput("");
+                    }}
+                    className="flex-1 py-5 bg-gray-100 text-gray-400 rounded-[2rem] font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
+                  >
+                    Back
+                  </button>
+                  <button 
+                    disabled={!cancelReasonInput}
+                    onClick={confirmCancelOrder}
+                    className="flex-[2] py-5 bg-rose-500 text-white rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-xl shadow-rose-200 active:scale-95 transition-all disabled:opacity-50 disabled:shadow-none"
+                  >
+                    Confirm Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {selectedLetterPartner && (
+        <JoiningLetter 
+          partner={selectedLetterPartner} 
+          onClose={() => setSelectedLetterPartner(null)} 
+        />
+      )}
+
+      <HospitalOPModal 
+        isOpen={showHospitalOP} 
+        onClose={() => setShowHospitalOP(false)} 
+        prices={hospitalPrices}
+        onBook={handleBookHospitalOP}
+      />
+
+      {/* Trip Details Modal for Delivery Partners */}
+      <AnimatePresence>
+        {showTripDetails && (
+          <div className="fixed inset-0 z-[160] flex items-end sm:items-center justify-center p-0 sm:p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowTripDetails(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full max-w-md bg-white rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="p-8 pb-4 flex items-center justify-between border-b border-gray-50">
+                <div>
+                  <h3 className="text-xl font-black text-gray-900 italic tracking-tighter">Order Details</h3>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Order #LB-{Math.random().toString(36).substr(2, 6).toUpperCase()}</p>
+                </div>
+                <button onClick={() => setShowTripDetails(false)} className="p-3 bg-gray-100 rounded-2xl text-gray-500">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                {/* Interactive Map View */}
+                <div className="h-48 w-full rounded-[2.5rem] overflow-hidden shadow-inner border border-gray-100 relative">
+                   <LiveMap 
+                      riderLoc={[17.2505, 80.1450]} 
+                      vendorLoc={[17.2473, 80.1514]} 
+                      customerLoc={[17.2550, 80.1600]} 
+                      interactive={true}
+                      zoom={14}
+                    />
+                    <div className="absolute top-4 right-4 bg-white/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white shadow-lg">
+                      <p className="text-[10px] font-black text-gray-900 uppercase">8 Mins to Destination</p>
+                    </div>
+                </div>
+
+                {/* Timeline */}
+                <div className="space-y-6">
+                  <div className="flex gap-4">
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="w-10 h-10 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm border border-indigo-100">
+                        <Store className="w-5 h-5" />
+                      </div>
+                      <div className="w-0.5 h-full bg-indigo-100 border-dashed border-l-2" />
+                    </div>
+                    <button 
+                      onClick={() => alert("Showing route to Sri Sai Groceries on map...")}
+                      className="flex-1 bg-indigo-50/50 p-5 rounded-[2rem] border border-indigo-100/50 text-left active:scale-95 transition-all"
+                    >
+                      <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-1">Pick up from</p>
+                      <p className="text-sm font-black text-indigo-900 mb-1">Sri Sai Groceries</p>
+                      <p className="text-[10px] font-bold text-indigo-600 truncate">Pillar No. 42, Main Road, Khammam</p>
+                    </button>
+                  </div>
+
+                  <div className="flex gap-4">
+                    <div className="flex flex-col items-center gap-1">
+                      <div className="w-10 h-10 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-600 shadow-sm border border-rose-100">
+                        <MapPin className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => alert("Showing route to Customer Location on map...")}
+                      className="flex-1 bg-rose-50/50 p-5 rounded-[2rem] border border-rose-100/50 text-left active:scale-95 transition-all"
+                    >
+                      <p className="text-[8px] font-black text-rose-400 uppercase tracking-widest mb-1">Deliver to</p>
+                      <p className="text-sm font-black text-rose-900 mb-1">H.No 4-12, Green City</p>
+                      <p className="text-[10px] font-bold text-rose-600 truncate">Opposite Park, Block A, Khammam</p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Order Summary */}
+                <div className="bg-gray-50 p-6 rounded-[2.5rem] border border-gray-100">
+                   <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Items Summary</p>
+                   <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xs font-bold text-gray-600">
+                         <span>Rice (5KG) x 1</span>
+                         <span>₹450</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs font-bold text-gray-600">
+                         <span>Oil (1L) x 2</span>
+                         <span>₹320</span>
+                      </div>
+                   </div>
+                </div>
+              </div>
+
+              <div className="p-8 pt-4 bg-white border-t border-gray-50">
+                 <button 
+                  onClick={() => {
+                    alert("Order marked as Delivered!");
+                    setShowTripDetails(false);
+                  }}
+                  className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-2xl active:scale-95 transition-all"
+                 >
+                    Complete Delivery
+                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Enhanced Filter Modal */}
+      <AnimatePresence>
+        {showFilterModal && (
+          <div className="fixed inset-0 z-[600] flex items-end justify-center sm:items-center p-0 sm:p-6 overflow-hidden">
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              onClick={() => setShowFilterModal(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-md" 
+            />
+            <motion.div 
+              initial={{ y: '100%', opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: '100%', opacity: 0 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter">Search Filters</h3>
+                <button 
+                  onClick={() => setShowFilterModal(false)}
+                  className="p-3 bg-gray-100 dark:bg-slate-800 rounded-2xl text-gray-400 active:scale-90"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-8">
+                <div>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Minimum Rating</p>
+                  <div className="flex gap-2">
+                    {[0, 3, 4, 4.5].map(rating => (
+                      <button
+                        key={rating}
+                        onClick={() => setFilterRating(rating)}
+                        className={`flex-1 py-3 rounded-xl border-2 transition-all font-black text-[10px] uppercase tracking-widest flex flex-col items-center gap-1 ${
+                          filterRating === rating 
+                            ? 'bg-gray-900 border-gray-900 text-white' 
+                            : 'bg-white border-gray-100 text-gray-400 dark:bg-slate-800'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1">
+                          {rating === 0 ? 'All' : rating}
+                          {rating > 0 && <Star className={`w-3 h-3 ${filterRating === rating ? 'fill-yellow-400 text-yellow-400' : ''}`} />}
+                        </span>
+                        {rating > 0 && <span className="text-[8px] opacity-60">+ Stars</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Price Range</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      {label: 'Any Price', val: null},
+                      {label: 'Under ₹200', val: {min: 0, max: 200}},
+                      {label: '₹200 - ₹500', val: {min: 200, max: 500}},
+                      {label: 'Above ₹500', val: {min: 500, max: 50000}}
+                    ].map((range, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setFilterPriceRange(range.val)}
+                        className={`py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest ${
+                          (range.val === null && filterPriceRange === null) || 
+                          (range.val && filterPriceRange?.max === range.val.max && filterPriceRange?.min === range.val.min)
+                            ? 'bg-indigo-600 border-indigo-600 text-white' 
+                            : 'bg-gray-50 dark:bg-slate-800 border-transparent text-gray-500'
+                        }`}
+                      >
+                        {range.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Quick Filters</p>
+                  <button
+                    onClick={() => setFilterAvailability(!filterAvailability)}
+                    className={`w-full py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 ${
+                      filterAvailability 
+                        ? 'bg-emerald-500 border-emerald-500 text-white' 
+                        : 'bg-emerald-50 dark:bg-emerald-900/10 border-transparent text-emerald-600'
+                    }`}
+                  >
+                    <Zap className={`w-4 h-4 ${filterAvailability ? 'fill-white' : ''}`} />
+                    Only Online Vendors
+                  </button>
+                </div>
+
+                <div className="pt-4 flex gap-3">
+                  <button 
+                    onClick={() => {
+                        setFilterRating(0);
+                        setFilterPriceRange(null);
+                        setFilterAvailability(false);
+                        setShowFilterModal(false);
+                    }}
+                    className="flex-1 py-5 bg-gray-100 dark:bg-slate-800 text-gray-400 rounded-3xl font-black uppercase tracking-widest text-xs"
+                  >
+                    Clear All
+                  </button>
+                  <button 
+                    onClick={() => setShowFilterModal(false)}
+                    className="flex-[2] py-5 bg-indigo-600 text-white rounded-3xl font-black uppercase tracking-widest text-xs shadow-xl shadow-indigo-100"
+                  >
+                    Show Results
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
+
+const PropertyAdminCard = ({ property, setDeleteConfirm }: { property: any, setDeleteConfirm?: any }) => {
+  const [privateData, setPrivateData] = useState<any>(null);
+  const [loadingPrivate, setLoadingPrivate] = useState(true);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'properties', property.id, 'private', 'data'), (snap) => {
+      if (snap.exists()) {
+        setPrivateData(snap.data());
+      }
+      setLoadingPrivate(false);
+    }, (error) => {
+      console.error("Private listing data error:", error);
+      setLoadingPrivate(false);
+    });
+    return () => unsub();
+  }, [property.id]);
+
+  return (
+    <div key={property.id} className="p-5 bg-white rounded-[2.5rem] border border-gray-100 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-indigo-100 rounded-2xl flex items-center justify-center font-black overflow-hidden relative">
+            {property.image ? (
+              <img src={property.image} className="w-full h-full object-cover" alt={property.title} />
+            ) : (
+              <Building2 className="w-6 h-6 text-indigo-500" />
+            )}
+            {!property.isApproved && (
+              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                <Clock className="w-4 h-4 text-white" />
+              </div>
+            )}
+          </div>
+          <div>
+              <p className="font-black text-gray-900 leading-tight">{property.title}</p>
+              <p className="text-[10px] font-bold text-gray-400 uppercase">{property.location.area}, {property.location.city}</p>
+          </div>
+        </div>
+        {!property.isApproved ? (
+          <button 
+            onClick={async () => {
+              if (setDeleteConfirm) {
+                setDeleteConfirm({
+                  isOpen: true,
+                  title: "Approve Listing?",
+                  message: `Are you sure you want to approve "${property.title}" to go live?`,
+                  onConfirm: async () => {
+                    const { updateDoc, doc: fireDoc } = await import('firebase/firestore');
+                    await updateDoc(fireDoc(db, 'properties', property.id), { isApproved: true });
+                  }
+                });
+              } else if (confirm("Approve this property listing?")) {
+                  const { updateDoc, doc: fireDoc } = await import('firebase/firestore');
+                  await updateDoc(fireDoc(db, 'properties', property.id), { isApproved: true });
+              }
+            }}
+            className="px-4 py-2 bg-emerald-500 text-white rounded-xl text-[9px] font-black uppercase tracking-widest"
+          >
+            Approve
+          </button>
+        ) : (
+          <span className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[9px] font-black uppercase tracking-widest">Approved</span>
+        )}
+      </div>
+      <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
+          <div className="flex items-center justify-between text-[10px] font-bold text-gray-600">
+            <span className="flex items-center gap-1"><User className="w-3 h-3" /> Seller: {property.sellerName}</span>
+            <span className="flex items-center gap-1"><PhoneCall className="w-3 h-3" /> {privateData?.sellerPhone || (loadingPrivate ? 'Loading...' : 'N/A')}</span>
+          </div>
+          <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 truncate">
+            <MapPin className="w-3 h-3" /> {privateData?.fullAddress || (loadingPrivate ? 'Loading...' : 'N/A')}
+          </div>
+      </div>
+      <div className="mt-4 flex gap-2">
+          <button 
+            onClick={() => {
+              alert("Manage Queries feature is being integrated. Use the Property Help Desk in the Real Estate section.");
+            }}
+            className="flex-1 py-3 bg-indigo-50 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
+          >
+            <MessageCircle className="w-4 h-4" />
+            Manage Queries
+          </button>
+          <button 
+            onClick={() => {
+              if (setDeleteConfirm) {
+                setDeleteConfirm({
+                  isOpen: true,
+                  title: "Delete Listing?",
+                  message: `Are you sure you want to permanently delete "${property.title}"? This cannot be undone.`,
+                  onConfirm: async () => {
+                    const { deleteDoc, doc: fireDoc } = await import('firebase/firestore');
+                    await deleteDoc(fireDoc(db, 'properties', property.id));
+                  }
+                });
+              } else if (confirm("Delete this listing?")) {
+                import('firebase/firestore').then(async ({ deleteDoc, doc: fireDoc }) => {
+                  await deleteDoc(fireDoc(db, 'properties', property.id));
+                });
+              }
+            }}
+            className="w-10 h-10 bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl flex items-center justify-center transition-all duration-200"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+      </div>
+    </div>
+  );
+};
+
+const HospitalOPModal = ({ isOpen, onClose, prices, onBook }: { isOpen: boolean, onClose: () => void, prices: Record<string, { price: number; isActive: boolean }>, onBook: (data: any) => void }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[600] flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0 }} 
+        animate={{ opacity: 1 }} 
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/60 backdrop-blur-md" 
+      />
+      <motion.div 
+        initial={{ y: 100, opacity: 0, scale: 0.95 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 100, opacity: 0, scale: 0.95 }}
+        className="bg-white w-full max-w-sm rounded-[3rem] p-2 shadow-2xl relative overflow-hidden"
+      >
+        <button onClick={onClose} className="absolute top-6 right-6 p-2 bg-gray-50 rounded-full text-gray-400 z-10">
+          <X className="w-5 h-5" />
+        </button>
+
+        <HospitalOPForm 
+          prices={prices}
+          onBook={(data) => {
+            onBook(data);
+            onClose();
+          }}
+        />
+      </motion.div>
+    </div>
+  );
+};

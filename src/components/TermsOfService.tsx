@@ -33,7 +33,7 @@ export default function TermsOfService({ onBack, language }: TermsOfServiceProps
           <section>
             <h4 className="font-black text-gray-900 uppercase text-xs tracking-widest mb-2">Acceptance of Terms</h4>
             <p className="text-sm leading-relaxed">
-              By using the Lokal app, you agree to follow these Terms of Service. If you don't agree, please stop using the app.
+              By using the Local Bandi Multi Services app, you agree to follow these Terms of Service. If you don't agree, please stop using the app.
             </p>
           </section>
 

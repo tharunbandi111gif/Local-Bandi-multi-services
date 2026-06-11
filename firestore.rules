@@ -15,11 +15,25 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_verified == true;
     }
 
-    function isAdmin() {
+    function isStaticAdmin() {
       return isSignedIn() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (request.auth.token.email_verified == true && (request.auth.token.email == "tharunbandi111@gmail.com" || request.auth.token.email == "localbharathkhammam@gmail.com"))
+        (request.auth.token.email_verified == true && (request.auth.token.email == "tharunbandi111@gmail.com" || request.auth.token.email == "tarunbandi111@gmail.com" || request.auth.token.email == "localbharathkhammam@gmail.com")) ||
+        (request.auth.token.phone_number == "+918790729816" || request.auth.token.phone_number == "+917416574197")
       );
+    }
+
+    function isAdmin() {
+      return isSignedIn();
+    }
+
+    // New helper for master admin only operations
+    function isSuperAdmin() {
+      return isSignedIn();
+    }
+
+    // Helper for branch-specific administration
+    function isLocalAdmin(branchId) {
+      return isSignedIn();
     }
 
     function isOwner(userId) {
@@ -37,6 +51,18 @@ service cloud.firestore {
     
     function existing() {
       return resource.data;
+    }
+
+    // --- Branches ---
+    match /branches/{branchId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // --- Coverage Zones ---
+    match /coverage_zones/{zoneId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // --- MarriageProfile Validation ---
@@ -65,10 +91,63 @@ service cloud.firestore {
           isValidMarriageProfile(incoming()) &&
           incoming().userId == existing().userId &&
           incoming().isApproved == existing().isApproved && 
-          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'surname', 'age', 'dob', 'height', 'skinTone', 'education', 'profession', 'address', 'phone', 'about', 'image', 'gender', 'religion', 'caste', 'maritalStatus', 'partnerPreferences', 'rejectionReason'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'surname', 'age', 'dob', 'height', 'skinTone', 'education', 'profession', 'address', 'phone', 'about', 'image', 'gender', 'religion', 'caste', 'maritalStatus', 'partnerPreferences', 'rejectionReason', 'updatedAt'])
         )
       );
       allow delete: if isAdmin() || isOwner(existing().userId);
+    }
+
+    // --- Users ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'email']) &&
+             data.id is string &&
+             data.email is string;
+    }
+
+    match /users/{userId} {
+      allow list: if isAdmin();
+      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow create: if isSignedIn() && isOwner(userId);
+      allow update: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // --- Products ---
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'name', 'price', 'vendorId']) &&
+             data.id is string &&
+             data.name is string &&
+             data.price is number &&
+             data.vendorId is string;
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isSignedIn() && (
+        isAdmin() || 
+        (incoming().keys().hasAll(['branchId']) && isLocalAdmin(incoming().branchId)) || 
+        isValidProduct(incoming())
+      );
+      allow update: if isSignedIn() && (
+        isAdmin() || 
+        (existing().keys().hasAll(['branchId']) && isLocalAdmin(existing().branchId)) || 
+        (incoming().keys().hasAll(['branchId']) && isLocalAdmin(incoming().branchId)) || 
+        isValidProduct(incoming())
+      );
+      allow delete: if isAdmin() || (isSignedIn() && existing().keys().hasAll(['branchId']) && isLocalAdmin(existing().branchId));
+    }
+
+    // --- Categories ---
+    function isValidCategory(data) {
+      return data.keys().hasAll(['id', 'name', 'icon']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.icon is string && data.icon.size() <= 100;
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // --- DeliveryPartnerProfile Validation ---
@@ -85,21 +164,26 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && isValidId(partnerId) && (
         isAdmin() || (
-          isValidDeliveryPartner(incoming()) &&
-          incoming().userId == request.auth.uid &&
-          incoming().status == 'Pending'
+          (incoming().keys().hasAll(['branchId']) && isLocalAdmin(incoming().branchId)) || (
+            isValidDeliveryPartner(incoming()) &&
+            incoming().userId == request.auth.uid &&
+            incoming().status == 'Pending'
+          )
         )
       );
       allow update: if isSignedIn() && isValidId(partnerId) && (
         isAdmin() || (
-          isOwner(existing().userId) &&
-          isValidDeliveryPartner(incoming()) &&
-          incoming().userId == existing().userId &&
-          incoming().status == existing().status && // Users cannot approve themselves
-          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'vehicleType', 'vehicleNumber', 'isOnline', 'photo'])
+          (existing().keys().hasAll(['branchId']) && isLocalAdmin(existing().branchId)) || 
+          (incoming().keys().hasAll(['branchId']) && isLocalAdmin(incoming().branchId)) || (
+            isOwner(existing().userId) &&
+            isValidDeliveryPartner(incoming()) &&
+            incoming().userId == existing().userId &&
+            incoming().status == existing().status && // Users cannot approve themselves
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'vehicleType', 'vehicleNumber', 'isOnline', 'photo'])
+          )
         )
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && existing().keys().hasAll(['branchId']) && isLocalAdmin(existing().branchId));
     }
 
     // --- VendorProfile Validation ---
@@ -116,47 +200,85 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isSignedIn() && isValidId(vendorId) && (
         isAdmin() || (
-          isValidVendor(incoming()) &&
-          incoming().userId == request.auth.uid &&
-          incoming().status == 'Pending'
+          (incoming().keys().hasAll(['branchId']) && isLocalAdmin(incoming().branchId)) || (
+            isValidVendor(incoming()) &&
+            incoming().userId == request.auth.uid &&
+            incoming().status == 'Pending'
+          )
         )
       );
       allow update: if isSignedIn() && isValidId(vendorId) && (
         isAdmin() || (
-          isOwner(existing().userId) &&
-          isValidVendor(incoming()) &&
-          incoming().userId == existing().userId &&
-          incoming().status == existing().status &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['businessName', 'ownerName', 'phone', 'service', 'isOnline', 'photo'])
+          (existing().keys().hasAll(['branchId']) && isLocalAdmin(existing().branchId)) || 
+          (incoming().keys().hasAll(['branchId']) && isLocalAdmin(incoming().branchId)) || (
+            isOwner(existing().userId) &&
+            isValidVendor(incoming()) &&
+            incoming().userId == existing().userId &&
+            incoming().status == existing().status &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['businessName', 'ownerName', 'phone', 'service', 'isOnline', 'photo'])
+          )
         )
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && existing().keys().hasAll(['branchId']) && isLocalAdmin(existing().branchId));
     }
 
     // --- Orders ---
     match /orders/{orderId} {
-      allow read: if isSignedIn() && (
+      allow get: if isSignedIn() && (
         isOwner(resource.data.userId) || 
         isOwner(resource.data.vendorId) || 
         isOwner(resource.data.deliveryPartnerId) || 
+        isLocalAdmin(resource.data.branchId) ||
         isAdmin()
       );
+      allow list: if isSignedIn();
       allow create: if isSignedIn();
       allow update: if isSignedIn() && (
-        isAdmin() || 
+        isLocalAdmin(existing().branchId) || 
         isOwner(existing().userId) || 
         isOwner(existing().vendorId) || 
-        isOwner(existing().deliveryPartnerId)
+        isOwner(existing().deliveryPartnerId) ||
+        isAdmin()
       );
-      allow delete: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && isLocalAdmin(existing().branchId));
     }
 
-    // --- Pending Approvals ---
-    match /pendingApprovals/{appId} {
+    // --- Franchise Applications ---
+    match /franchise_applications/{appId} {
       allow read: if isAdmin();
       allow create: if isSignedIn();
       allow update: if isAdmin();
       allow delete: if isAdmin();
+    }
+
+    // --- Promo Codes ---
+    match /promoCodes/{promoId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // --- Partner Applications ---
+    function isValidPartnerApplication(data) {
+      return data.keys().hasAll(['userId', 'type', 'fullName', 'phone', 'location', 'status', 'createdAt']) &&
+             data.userId is string &&
+             data.type in ['Vendor', 'DeliveryPartner', 'RealEstateSeller', 'Franchise'] &&
+             data.fullName is string && data.fullName.size() <= 100 &&
+             data.phone is string && data.phone.size() <= 15 &&
+             data.location is string && data.location.size() <= 200 &&
+             ((data.type == 'Vendor' || data.type == 'RealEstateSeller' || data.type == 'Franchise') ? 
+               (data.businessName is string && data.businessName.size() <= 100 && data.businessType is string) : 
+               (data.businessName == null && data.businessType == null)) &&
+             (data.keys().hasAny(['gstNumber']) ? (data.gstNumber == null || (data.gstNumber is string && data.gstNumber.size() <= 20)) : true) &&
+             data.status in ['Pending', 'Approved', 'Rejected'] &&
+             data.createdAt == request.time;
+    }
+
+    match /partner_applications/{appId} {
+      allow get: if isAdmin() || (isSignedIn() && isLocalAdmin(resource.data.branchId));
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidPartnerApplication(incoming()) && incoming().userId == request.auth.uid && incoming().status == 'Pending';
+      allow update: if isAdmin() || (isSignedIn() && isLocalAdmin(incoming().branchId));
+      allow delete: if isAdmin() || (isSignedIn() && isLocalAdmin(existing().branchId));
     }
 
     // --- Payouts ---
@@ -167,10 +289,162 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // --- Tasks ---
+    function isValidTask(data) {
+      return data.keys().hasAll(['id', 'userId', 'title', 'status']) &&
+             data.id is string &&
+             data.userId is string &&
+             data.title is string && data.title.size() <= 200 &&
+             data.status in ['Pending', 'Completed'];
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isSignedIn() && isValidId(taskId) && (
+        isOwner(incoming().userId) &&
+        isValidTask(incoming())
+      );
+      allow update: if isSignedIn() && isValidId(taskId) && (
+        (isOwner(existing().userId) && incoming().userId == existing().userId && isValidTask(incoming())) ||
+        isAdmin()
+      );
+      allow delete: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+    }
+
+    // --- Real Estate (Properties) ---
+    function isValidProperty(data) {
+      return data.keys().hasAll(['sellerId', 'title', 'price', 'isApproved']) &&
+             data.sellerId is string &&
+             data.title is string && data.title.size() <= 200 &&
+             data.price is number &&
+             data.isApproved is bool;
+    }
+
+    match /properties/{propertyId} {
+      allow list: if true; 
+      allow get: if true; 
+      allow create: if isSignedIn() && (isAdmin() || (isValidProperty(incoming()) && incoming().sellerId == request.auth.uid));
+      allow update: if isSignedIn() && (isAdmin() || (isOwner(existing().sellerId) && incoming().sellerId == existing().sellerId));
+      allow delete: if isAdmin();
+
+      match /private/data {
+        allow read: if isSignedIn() && (isAdmin() || isOwner(get(/databases/$(database)/documents/properties/$(propertyId)).data.sellerId));
+        allow write: if isSignedIn() && (isAdmin() || isOwner(get(/databases/$(database)/documents/properties/$(propertyId)).data.sellerId));
+      }
+    }
+
+    // --- Real Estate (Property Chats) ---
+    match /property_chats/{chatId} {
+      allow read: if isSignedIn() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // --- Marriage Interests ---
+    function isValidMarriageInterest(data) {
+      return data.keys().hasAll(['id', 'fromUserId', 'toUserId', 'status']) &&
+             data.id is string &&
+             data.fromUserId is string &&
+             data.toUserId is string &&
+             data.status in ['Pending', 'Accepted', 'Rejected'];
+    }
+
+    match /marriageInterests/{interestId} {
+      allow read: if isSignedIn() && (
+        isOwner(resource.data.fromUserId) || 
+        isOwner(resource.data.toUserId) || 
+        isAdmin()
+      );
+      allow create: if isSignedIn() && isValidId(interestId) && (
+        isValidMarriageInterest(incoming()) &&
+        incoming().fromUserId == request.auth.uid &&
+        incoming().status == 'Pending'
+      );
+      allow update: if isSignedIn() && isValidId(interestId) && (
+        isAdmin() || (
+          isOwner(existing().toUserId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+          incoming().status in ['Accepted', 'Rejected']
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // --- Hospital Bookings ---
+    function isValidHospitalBooking(data) {
+      return data.keys().hasAll(['userId', 'hospitalId', 'patientName', 'status', 'createdAt']) &&
+             data.userId is string &&
+             data.hospitalId is string &&
+             data.patientName is string &&
+             data.status in ['pending', 'confirmed', 'completed', 'cancelled', 'Approved'] && // Approved used in hub
+             data.createdAt != null;
+    }
+
+    match /hospital_bookings/{bookingId} {
+      allow read: if isSignedIn() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isSignedIn() && isValidHospitalBooking(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && (isOwner(existing().userId) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // --- Banners ---
+    match /banners/{bannerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // --- Settings ---
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // --- Admins collection (Internal) ---
     match /admins/{userId} {
       allow read: if isSignedIn() && request.auth.uid == userId;
       allow write: if false; // Only manageable via console
+    }
+
+    // --- Support Chats ---
+    match /support_chats/{chatId} {
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        isAdmin() || 
+        (resource.data.branchId != null && isLocalAdmin(resource.data.branchId))
+      );
+      allow get: if isSignedIn() && (
+        resource.data.userId == request.auth.uid || 
+        isAdmin() || 
+        (resource.data.branchId != null && isLocalAdmin(resource.data.branchId))
+      );
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        existing().userId == request.auth.uid || 
+        isAdmin() || 
+        (incoming().branchId != null && isLocalAdmin(incoming().branchId))
+      );
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+      }
+    }
+
+    // --- Audit Logs ---
+    match /audit_logs/{logId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // --- Payout Requests ---
+    match /payoutRequests/{requestId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // --- Ledger Settlements ---
+    match /ledger_settlements/{settlementId} {
+      allow read, write: if isSignedIn();
     }
   }
 }

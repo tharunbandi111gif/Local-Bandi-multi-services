@@ -67,7 +67,7 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {/* Tracking Map Card */}
-        <section className="space-y-4">
+        <section id="live-map-section" className="space-y-4">
           <div className="flex items-center justify-between px-2">
             <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest">Live Tracking</h3>
             <div className="flex items-center gap-2">
@@ -100,6 +100,15 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
 
         {/* Order Details */}
         <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100 space-y-6">
+          <div className="text-center pb-4 border-b border-gray-50">
+            <span className="px-3.5 py-1 bg-emerald-100 text-emerald-700 text-[9px] font-black uppercase tracking-widest rounded-full">
+              Woohoo! Placed Successfully 🎉
+            </span>
+            <p className="text-xs text-gray-500 font-bold mt-2 font-sans">
+              Your order is booked and locked on the decentralised dispatch grid. Keep a watch on delivery updates.
+            </p>
+          </div>
+
           <div className="flex items-center justify-between pb-6 border-b border-gray-50">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-gray-50 rounded-2xl flex items-center justify-center">
@@ -111,19 +120,35 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
               </div>
             </div>
             <div className="text-right">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Amount</p>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Amount Paid</p>
               <h4 className="text-lg font-black text-yellow-600 italic tracking-tighter">₹{finalTotal}</h4>
             </div>
           </div>
 
-          <div className="space-y-4">
+          {/* SUMMARY OF ITEMS ORDERED */}
+          <div className="space-y-3">
+            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest font-mono">Summary of Items Ordered</h4>
+            <div className="divide-y divide-gray-50">
+              {items && items.map((item) => (
+                <div key={item.id} className="py-2.5 flex justify-between items-center text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5.5 h-5.5 bg-indigo-50 text-indigo-600 rounded-lg flex items-center justify-center font-black text-[10px]">{item.quantity}x</span>
+                    <span className="font-bold text-gray-800 uppercase tracking-tight">{item.name}</span>
+                  </div>
+                  <span className="font-black text-gray-700 font-mono">₹{item.price * item.quantity}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4 border-t border-gray-100 pt-4">
             <div className="flex items-start gap-4">
               <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center mt-1">
                 <MapPin className="w-4 h-4 text-indigo-600" />
               </div>
               <div>
                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Delivery Address</p>
-                <p className="text-sm font-bold text-gray-900 leading-relaxed">Bharat Kumar, Flat 402, Sai Residency, Opp. NTR Park, Khammam - 507001</p>
+                <p className="text-sm font-bold text-gray-900 leading-relaxed">Flat 402, Sai Residency, Opp. NTR Park, Khammam - 507001</p>
               </div>
             </div>
           </div>
@@ -143,17 +168,32 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
 
       <div className="p-6 bg-white border-t border-gray-100 flex flex-col gap-3">
         <button 
-          onClick={handleShare}
-          className="w-full py-5 bg-yellow-50 border-2 border-yellow-100 text-yellow-700 rounded-[2rem] font-black flex items-center justify-center gap-3 active:scale-95 transition-all shadow-sm"
+          onClick={() => {
+            alert("✓ Connecting to Lokal Live Dispatch network... Active order tracker initialized!");
+            const trackingEl = document.getElementById('live-map-section');
+            if (trackingEl) {
+              trackingEl.scrollIntoView({ behavior: 'smooth' });
+            }
+          }}
+          className="w-full py-4 bg-emerald-600 text-white rounded-[2rem] font-black text-xs uppercase tracking-widest active:scale-95 transition-all shadow-md shadow-emerald-200 flex items-center justify-center gap-2"
         >
-          <Share2 className="w-5 h-5" />
-          Tell Your Neighbors
+          <Bike className="w-4 h-4 animate-bounce" />
+          <span>Track Order</span>
         </button>
+
+        <button 
+          onClick={handleShare}
+          className="w-full py-4.5 bg-yellow-50 border-2 border-yellow-105 text-yellow-700 hover:bg-yellow-100 rounded-[2rem] font-black flex items-center justify-center gap-2.5 active:scale-95 transition-all text-xs uppercase"
+        >
+          <Share2 className="w-4 h-4" />
+          Share with Neighbors
+        </button>
+
         <button 
           onClick={onHome}
-          className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black shadow-xl shadow-gray-200 active:scale-95 transition-all text-sm uppercase tracking-widest"
+          className="w-full py-4.5 bg-gray-900 text-white rounded-[2rem] font-black shadow-xl shadow-gray-200 active:scale-95 transition-all text-xs uppercase tracking-widest"
         >
-          Return Home
+          Return to Home
         </button>
       </div>
     </div>

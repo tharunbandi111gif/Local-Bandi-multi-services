@@ -104,12 +104,134 @@
         "deliveryPartnerId": { "type": "string" }
       },
       "required": ["id", "userId", "totalAmount", "status", "createdAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A user task.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Completed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "title", "status"]
+    },
+    "PartnerApplication": {
+      "title": "PartnerApplication",
+      "description": "A request for vendor or delivery partner status.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["Vendor", "DeliveryPartner"] },
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "businessName": { "type": "string" },
+        "businessType": { "type": "string" },
+        "location": { "type": "string" },
+        "gstNumber": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "fullName", "phone", "location", "status", "createdAt"]
+    },
+    "Property": {
+      "title": "Property",
+      "description": "A real estate property listing.",
+      "type": "object",
+      "properties": {
+        "sellerId": { "type": "string" },
+        "sellerName": { "type": "string" },
+        "sellerPhone": { "type": "string" },
+        "title": { "type": "string" },
+        "price": { "type": "number" },
+        "type": { "type": "string" },
+        "image": { "type": "string" },
+        "location": {
+          "type": "object",
+          "properties": {
+            "area": { "type": "string" },
+            "city": { "type": "string" },
+            "pincode": { "type": "string" },
+            "fullAddress": { "type": "string" }
+          }
+        },
+        "details": {
+          "type": "object",
+          "properties": {
+            "sqft": { "type": "string" },
+            "bedrooms": { "type": "string" },
+            "furnished": { "type": "string" },
+            "facing": { "type": "string" }
+          }
+        },
+        "isApproved": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sellerId", "title", "price", "isApproved"]
+    },
+    "MarriageInterest": {
+      "title": "MarriageInterest",
+      "description": "Interest expressed between marriage profiles.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fromUserId": { "type": "string" },
+        "fromProfileId": { "type": "string" },
+        "toUserId": { "type": "string" },
+        "toProfileId": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Accepted", "Rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "fromUserId", "toUserId", "status"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "An application category.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "icon": { "type": "string" },
+        "color": { "type": "string" },
+        "image": { "type": "string" }
+      },
+      "required": ["id", "name", "icon"]
+    },
+    "PlatformSettings": {
+      "title": "PlatformSettings",
+      "description": "Global settings for the platform.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "allowBankTransfer": { "type": "boolean" },
+        "allowCashOnRegistration": { "type": "boolean" },
+        "registrationFee": { "type": "number" },
+        "upiId": { "type": "string" },
+        "accountHolder": { "type": "string" }
+      },
+      "required": ["id"]
     }
   },
   "firestore": {
+    "/settings/{settingsId}": {
+      "schema": "PlatformSettings",
+      "description": "Global platform settings."
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "System categories."
+    },
     "/marriageProfiles/{profileId}": {
       "schema": "MarriageProfile",
       "description": "Marriage bureau profiles."
+    },
+    "/marriageInterests/{interestId}": {
+      "schema": "MarriageInterest",
+      "description": "Interests expressed in marriage bureau."
     },
     "/deliveryPartners/{partnerId}": {
       "schema": "DeliveryPartnerProfile",
@@ -123,13 +245,21 @@
       "schema": "Order",
       "description": "General orders."
     },
-    "/pendingApprovals/{appId}": {
-      "schema": "object",
+    "/properties/{propertyId}": {
+      "schema": "Property",
+      "description": "Real estate listings."
+    },
+    "/partner_applications/{appId}": {
+      "schema": "PartnerApplication",
       "description": "Requests for vendor or delivery partner status."
     },
     "/payouts/{payoutId}": {
       "schema": "object",
       "description": "Record of settled payouts."
+    },
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "User tasks."
     }
   }
 }

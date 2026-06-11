@@ -33,7 +33,7 @@ export default function PrivacyPolicy({ onBack, language }: PrivacyPolicyProps) 
           <section>
             <h4 className="font-black text-gray-900 uppercase text-xs tracking-widest mb-2">Introduction</h4>
             <p className="text-sm leading-relaxed">
-              At Lokal, we take your privacy seriously. This Privacy Policy explains how we collect, use, and share your personal information.
+              At Local Bandi Multi Services, we take your privacy seriously. This Privacy Policy explains how we collect, use, and share your personal information.
             </p>
           </section>
 

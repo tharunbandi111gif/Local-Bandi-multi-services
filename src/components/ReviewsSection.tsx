@@ -1,16 +1,30 @@
 import React, { useState } from 'react';
-import { Star, Send, User } from 'lucide-react';
+import { Star, Send, User, Pencil, Trash2, Check, X } from 'lucide-react';
 import { Review } from '../types';
 
 interface ReviewsSectionProps {
   reviews: Review[];
   onAddReview: (rating: number, comment: string) => void;
+  isAdmin?: boolean;
+  onDeleteReview?: (id: string) => void;
+  onEditReview?: (id: string, updatedComment: string, updatedRating: number) => void;
 }
 
-export default function ReviewsSection({ reviews, onAddReview }: ReviewsSectionProps) {
+export default function ReviewsSection({ 
+  reviews, 
+  onAddReview, 
+  isAdmin = false,
+  onDeleteReview,
+  onEditReview
+}: ReviewsSectionProps) {
   const [newRating, setNewRating] = useState(5);
   const [newComment, setNewComment] = useState('');
   const [showAddReview, setShowAddReview] = useState(false);
+
+  // States for inline editing
+  const [editingReviewId, setEditingReviewId] = useState<string | null>(null);
+  const [editingComment, setEditingComment] = useState('');
+  const [editingRating, setEditingRating] = useState(5);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,6 +33,25 @@ export default function ReviewsSection({ reviews, onAddReview }: ReviewsSectionP
     setNewComment('');
     setNewRating(5);
     setShowAddReview(false);
+  };
+
+  const startEditing = (review: Review) => {
+    setEditingReviewId(review.id);
+    setEditingComment(review.comment);
+    setEditingRating(review.rating);
+  };
+
+  const cancelEditing = () => {
+    setEditingReviewId(null);
+    setEditingComment('');
+  };
+
+  const saveEdit = (id: string) => {
+    if (!editingComment.trim()) return;
+    if (onEditReview) {
+      onEditReview(id, editingComment, editingRating);
+    }
+    setEditingReviewId(null);
   };
 
   return (
@@ -102,32 +135,100 @@ export default function ReviewsSection({ reviews, onAddReview }: ReviewsSectionP
 
       <div className="space-y-4">
         {reviews.length > 0 ? (
-          reviews.map((review) => (
-            <div key={review.id} className="bg-white border border-gray-100 p-5 rounded-[2rem] shadow-sm">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
-                    <User className="w-5 h-5 text-yellow-600" />
+          reviews.map((review) => {
+            const isEditing = editingReviewId === review.id;
+            return (
+              <div key={review.id} className="bg-white border border-gray-100 p-5 rounded-[2rem] shadow-sm relative group overflow-hidden">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-yellow-105 rounded-full bg-yellow-50 flex items-center justify-center">
+                      <User className="w-5 h-5 text-yellow-600" />
+                    </div>
+                    <div>
+                      <p className="font-black text-gray-900 text-sm">{review.userName}</p>
+                      <p className="text-[10px] font-bold text-gray-400">{review.date}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-black text-gray-900 text-sm">{review.userName}</p>
-                    <p className="text-[10px] font-bold text-gray-400">{review.date}</p>
-                  </div>
+
+                  {/* Stars/Rating selector */}
+                  {isEditing ? (
+                    <div className="flex gap-1 bg-gray-50 px-2.5 py-1 rounded-xl border border-gray-100">
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <button key={star} onClick={() => setEditingRating(star)}>
+                          <Star className={`w-4 h-4 ${star <= editingRating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-200'}`} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center h-8">
+                      <div className="flex items-center gap-0.5">
+                        {[...Array(5)].map((_, i) => (
+                          <Star 
+                            key={i} 
+                            className={`w-3 h-3 ${i < review.rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-200'}`} 
+                          />
+                        ))}
+                      </div>
+
+                      {/* Administrative Option Handles */}
+                      {isAdmin && (
+                        <div className="flex items-center gap-1.5 ml-4 bg-gray-50 p-1 rounded-xl border border-gray-100 shadow-sm">
+                          <button
+                            onClick={() => startEditing(review)}
+                            className="p-1 hover:bg-white rounded-lg text-indigo-600 transition-colors"
+                            title="Edit Comment"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (onDeleteReview) {
+                                if (window.confirm("Are you sure you want to permanently delete this comment?")) {
+                                  onDeleteReview(review.id);
+                                }
+                              }
+                            }}
+                            className="p-1 hover:bg-rose-50 rounded-lg text-rose-500 transition-colors"
+                            title="Delete Comment"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-0.5">
-                  {[...Array(5)].map((_, i) => (
-                    <Star 
-                      key={i} 
-                      className={`w-3 h-3 ${i < review.rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-200'}`} 
+
+                {isEditing ? (
+                  <div className="space-y-3 pt-2">
+                    <textarea
+                      value={editingComment}
+                      onChange={(e) => setEditingComment(e.target.value)}
+                      className="w-full h-18 bg-gray-50 rounded-xl p-3 text-sm font-medium border-2 border-transparent focus:border-yellow-400 outline-none transition-all resize-none"
                     />
-                  ))}
-                </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveEdit(review.id)}
+                        className="px-4 py-2 bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1 active:scale-95 transition-all"
+                      >
+                        <Check className="w-3.5 h-3.5" /> Save
+                      </button>
+                      <button
+                        onClick={cancelEditing}
+                        className="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1 active:scale-95 transition-all"
+                      >
+                        <X className="w-3.5 h-3.5" /> Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-gray-600 text-sm font-medium leading-relaxed">
+                    {review.comment}
+                  </p>
+                )}
               </div>
-              <p className="text-gray-600 text-sm font-medium leading-relaxed">
-                {review.comment}
-              </p>
-            </div>
-          ))
+            );
+          })
         ) : (
           <div className="py-8 text-center text-gray-400">
             <Star className="w-12 h-12 mx-auto mb-2 opacity-20" />

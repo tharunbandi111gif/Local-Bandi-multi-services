@@ -1,71 +1,237 @@
-import React, { useState } from 'react';
-import { ArrowLeft, User, Phone, MapPin, Bell, Shield, ShieldCheck, LogOut, ChevronRight, Settings as SettingsIcon, Plus, Trash2, Edit2, X, Check, Gift, Share2, Copy, Wallet, Receipt, TrendingUp, TrendingDown, Package, Camera, Bike, Briefcase, Navigation, Loader2, Search } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, User, Phone, MapPin, Bell, Shield, ShieldCheck, LogOut, ChevronRight, Settings as SettingsIcon, Plus, Trash2, Edit2, X, Check, Gift, Share2, Copy, Wallet, Receipt, TrendingUp, TrendingDown, Package, Camera, Bike, Briefcase, Navigation, Loader2, Search, ListTodo, Store, Moon, Sun } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { doc, updateDoc, serverTimestamp, collection, query, where, onSnapshot, limit, orderBy, getDocs } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Address, Transaction, LanguageCode, Screen } from '../types';
 import { translations } from '../translations';
 import { referralService } from '../lib/referral';
 import { useFirebase } from '../contexts/FirebaseContext';
+import { useTheme } from '../contexts/ThemeContext';
 import { compressImage } from '../lib/imageUtils';
+import PartnerOnboarding from './PartnerOnboarding';
 
 interface ProfileProps {
   onBack: () => void;
-  onNavigate: (screen: Screen) => void;
+  onNavigate: (screen: Screen, id?: string) => void;
   language: LanguageCode;
+  isAdmin?: boolean;
 }
 
-export default function Profile({ onBack, onNavigate, language }: ProfileProps) {
+export default function Profile({ onBack, onNavigate, language, isAdmin: propIsAdmin }: ProfileProps) {
   const t = translations[language].profile;
-  const { user, userProfile: contextProfile, isAdmin } = useFirebase();
+  const { user, userProfile: contextProfile, isAdmin: contextIsAdmin, logout } = useFirebase();
+  const isAdmin = propIsAdmin || contextIsAdmin || localStorage.getItem('admin_session_active') === 'true';
+  const { theme, toggleTheme } = useTheme();
+  
+  const isDeliveryPartnerOriginal = contextProfile?.role === 'delivery' || localStorage.getItem('isDeliveryPartner') === 'true';
+  const isVendorOriginal = contextProfile?.role === 'vendor' || localStorage.getItem('isVendor') === 'true';
+
+  const [vendorProfile, setVendorProfile] = useState<any | null>(null);
+  const [deliveryProfile, setDeliveryProfile] = useState<any | null>(null);
+  const [vendorApplication, setVendorApplication] = useState<any | null>(null);
+  const [deliveryApplication, setDeliveryApplication] = useState<any | null>(null);
+  const [isLoadingPartners, setIsLoadingPartners] = useState(true);
+
+  useEffect(() => {
+    if (!user) {
+      setIsLoadingPartners(false);
+      return;
+    }
+
+    const phone = user.phoneNumber?.replace('+91', '') || '';
+
+    // Listen to vendor profile (by userId or phone fallback)
+    const vQueryUser = query(collection(db, 'vendors'), where('userId', '==', user.uid));
+    const unsubVendor = onSnapshot(vQueryUser, (snapshot) => {
+      if (!snapshot.empty) {
+        setVendorProfile({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      } else if (phone) {
+        const vQueryPhone = query(collection(db, 'vendors'), where('phone', '==', phone));
+        getDocs(vQueryPhone).then((phoneSnapshot) => {
+          if (!phoneSnapshot.empty) {
+            setVendorProfile({ id: phoneSnapshot.docs[0].id, ...phoneSnapshot.docs[0].data() });
+          } else {
+            setVendorProfile(null);
+          }
+        }).catch(() => setVendorProfile(null));
+      } else {
+        setVendorProfile(null);
+      }
+    });
+
+    // Listen to delivery profile (by userId or phone fallback)
+    const dQueryUser = query(collection(db, 'deliveryPartners'), where('userId', '==', user.uid));
+    const unsubDelivery = onSnapshot(dQueryUser, (snapshot) => {
+      if (!snapshot.empty) {
+        setDeliveryProfile({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      } else if (phone) {
+        const dQueryPhone = query(collection(db, 'deliveryPartners'), where('phone', '==', phone));
+        getDocs(dQueryPhone).then((phoneSnapshot) => {
+          if (!phoneSnapshot.empty) {
+            setDeliveryProfile({ id: phoneSnapshot.docs[0].id, ...phoneSnapshot.docs[0].data() });
+          } else {
+            setDeliveryProfile(null);
+          }
+        }).catch(() => setDeliveryProfile(null));
+      } else {
+        setDeliveryProfile(null);
+      }
+    });
+
+    // Listen to partner applications
+    const appQuery = query(
+      collection(db, 'partner_applications'),
+      where('userId', '==', user.uid)
+    );
+    const unsubApps = onSnapshot(appQuery, (snapshot) => {
+      let vApp = null;
+      let dApp = null;
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.type === 'Vendor') {
+          vApp = { id: docSnap.id, ...data };
+        } else if (data.type === 'DeliveryPartner') {
+          dApp = { id: docSnap.id, ...data };
+        }
+      });
+      setVendorApplication(vApp);
+      setDeliveryApplication(dApp);
+      setIsLoadingPartners(false);
+    });
+
+    return () => {
+      unsubVendor();
+      unsubDelivery();
+      unsubApps();
+    };
+  }, [user]);
+
   const [view, setView] = useState<'main' | 'addresses' | 'refer' | 'wallet' | 'editProfile'>('main');
-  const [isDeliveryPartner] = useState(() => localStorage.getItem('isDeliveryPartner') === 'true');
-  const [isVendor] = useState(() => localStorage.getItem('isVendor') === 'true');
+
+  const validateProfileForm = () => {
+    const errs: Record<string, string> = {};
+    if (!editForm.name.trim()) {
+      errs.name = 'Full name is required';
+    } else if (editForm.name.trim().length < 3) {
+      errs.name = 'Name must be at least 3 characters';
+    }
+
+    if (editForm.email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(editForm.email.trim())) {
+        errs.email = 'Please enter a valid email address';
+      }
+    }
+
+    if (!editForm.phone.trim()) {
+      errs.phone = 'Phone number is required';
+    } else {
+      const phoneDigits = editForm.phone.replace(/\D/g, '');
+      if (phoneDigits.length !== 10) {
+        errs.phone = 'Phone number must be exactly 10 digits';
+      } else if (!/^[6-9]/.test(phoneDigits)) {
+        errs.phone = 'Please enter a valid Indian mobile number';
+      }
+    }
+
+    if (editForm.fullAddress && editForm.fullAddress.trim() && editForm.fullAddress.trim().length < 10) {
+      errs.fullAddress = 'Address details must be at least 10 characters long';
+    }
+
+    setProfileErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
 
   const [walletBalance, setWalletBalance] = useState(() => referralService.getWalletBalance());
   const [transactions, setTransactions] = useState<Transaction[]>(() => referralService.getTransactions());
   const [supportInfo] = useState(() => {
     const saved = localStorage.getItem('supportInfo');
-    return saved ? JSON.parse(saved) : { phone: '9876543210', email: 'localbharathkhammam@gmail.com' };
+    return saved ? JSON.parse(saved) : { 
+      phone: '7416574197', 
+      secondaryPhone: '8790729816',
+      email: 'localbharathkhammam@gmail.com' 
+    };
   });
 
   const [userProfile, setUserProfile] = useState({
     name: contextProfile?.name || user?.displayName || 'Lokal User',
     email: contextProfile?.email || user?.email || '',
     phone: contextProfile?.phone || '',
-    photo: user?.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&h=400&fit=crop'
+    photo: (contextProfile as any)?.photo || user?.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&h=400&fit=crop',
+    fullAddress: (contextProfile as any)?.fullAddress || ''
   });
 
   const [editForm, setEditForm] = useState(userProfile);
+  const [profileErrors, setProfileErrors] = useState<Record<string, string>>({});
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [activeOrder, setActiveOrder] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, 'orders'),
+      where('userId', '==', user.uid),
+      where('status', 'in', ['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery']),
+      orderBy('timestamp', 'desc'),
+      limit(1)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setActiveOrder({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      } else {
+        setActiveOrder(null);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   React.useEffect(() => {
     if (contextProfile) {
-      setUserProfile({
+      const updated = {
         name: contextProfile.name || user?.displayName || 'Lokal User',
         email: contextProfile.email || user?.email || '',
         phone: contextProfile.phone || '',
-        photo: user?.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&h=400&fit=crop'
-      });
-    }
-  }, [contextProfile, user]);
-  const [addresses, setAddresses] = useState<Address[]>(() => {
-    const saved = localStorage.getItem('user_addresses');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse addresses", e);
+        photo: (contextProfile as any).photo || user?.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&h=400&fit=crop',
+        fullAddress: (contextProfile as any).fullAddress || ''
+      };
+      setUserProfile(updated);
+      // Sync editForm only if not in the middle of editing
+      if (view !== 'editProfile') {
+        setEditForm(updated);
       }
     }
-    return [
-      { id: '1', label: 'Home', recipientName: 'Tharun Bandi', phone: '9876543210', pincode: '500081', address: 'Plot No. 42, Hitech City, Hyderabad', isDefault: true },
-      { id: '2', label: 'Work', recipientName: 'Tharun Bandi', phone: '9876543210', pincode: '500081', address: 'Mindspace IT Park, Bldg 12, Hyderabad', isDefault: false },
-      { id: '3', label: 'Parents', recipientName: 'Bandi Family', phone: '9123456789', pincode: '500090', address: 'H.No 4-12/A, Krishna Nagar, Nizampet', isDefault: false },
-    ];
-  });
+  }, [contextProfile, user, view]);
+  const [addresses, setAddresses] = useState<Address[]>([]);
 
   React.useEffect(() => {
-    localStorage.setItem('user_addresses', JSON.stringify(addresses));
+    if (contextProfile && contextProfile.addresses) {
+      setAddresses(contextProfile.addresses);
+    } else {
+      const saved = localStorage.getItem('user_addresses');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setAddresses(parsed);
+        } catch (e) {
+          console.error("Failed to parse addresses", e);
+        }
+      } else {
+        setAddresses([
+          { id: '1', label: 'Home', recipientName: '', phone: '', pincode: '', address: '', isDefault: true },
+        ]);
+      }
+    }
+  }, [contextProfile]);
+
+  React.useEffect(() => {
+    if (addresses.length > 0) {
+      localStorage.setItem('user_addresses', JSON.stringify(addresses));
+    }
   }, [addresses]);
 
   React.useEffect(() => {
@@ -93,6 +259,32 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoadingPincode, setIsLoadingPincode] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const fetchAddressSuggestions = async (query: string) => {
+    if (query.length < 3) {
+      setAddressSuggestions([]);
+      return;
+    }
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=in&limit=5`);
+      const data = await response.json();
+      setAddressSuggestions(data);
+      setShowSuggestions(true);
+    } catch (err) {
+      console.error('Error fetching address suggestions:', err);
+    }
+  };
+
+  const handleSuggestionClick = (suggestion: any) => {
+    setCurrentAddress({
+      ...currentAddress,
+      address: suggestion.display_name
+    });
+    setAddressSuggestions([]);
+    setShowSuggestions(false);
+  };
 
   const lookupPincode = async (pincode: string) => {
     if (!/^[1-9][0-9]{5}$/.test(pincode)) return;
@@ -115,6 +307,64 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
     } finally {
       setIsLoadingPincode(false);
     }
+  };
+
+  const handleLinkPartnerProfileWithCallback = async (pin: string, expectedType: 'vendor' | 'delivery') => {
+    if (!pin || (pin.trim().length !== 5 && pin.trim().length !== 4)) {
+      alert("Please enter a valid 5-digit Access Code.");
+      return false;
+    }
+    
+    setIsLoadingPartners(true);
+    try {
+      const phone = user?.phoneNumber?.replace('+91', '') || '';
+      
+      if (expectedType === 'vendor') {
+        const vQuery = query(collection(db, 'vendors'), where('accessCode', '==', pin));
+        const vSnap = await getDocs(vQuery);
+        
+        if (!vSnap.empty) {
+          const vendorDoc = vSnap.docs[0];
+          await updateDoc(vendorDoc.ref, {
+            phone: phone,
+            userId: user?.uid,
+            status: 'Approved',
+            updatedAt: serverTimestamp()
+          });
+          localStorage.setItem(`vendor_unlocked_${vendorDoc.id}`, 'true');
+          alert(`Success! Linked to Vendors Dash: ${vendorDoc.data().businessName || 'Shop'}.`);
+          setIsLoadingPartners(false);
+          onNavigate('vendor');
+          return true;
+        }
+        alert("Access Code not found in our matching vendor list. Please contact administration.");
+      } else {
+        const dQuery = query(collection(db, 'deliveryPartners'), where('accessCode', '==', pin));
+        const dSnap = await getDocs(dQuery);
+        
+        if (!dSnap.empty) {
+          const deliveryDoc = dSnap.docs[0];
+          await updateDoc(deliveryDoc.ref, {
+            phone: phone,
+            userId: user?.uid,
+            status: 'Approved',
+            updatedAt: serverTimestamp()
+          });
+          localStorage.setItem(`delivery_unlocked_${deliveryDoc.id}`, 'true');
+          alert(`Success! Linked to Delivery Console: ${deliveryDoc.data().name || 'Rider'}.`);
+          setIsLoadingPartners(false);
+          onNavigate('delivery');
+          return true;
+        }
+        alert("Access Code not found in our matching delivery partners list. Please contact administration.");
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`Error linking console: ${err.message || err}`);
+    } finally {
+      setIsLoadingPartners(false);
+    }
+    return false;
   };
 
   const handleUseLocation = () => {
@@ -195,7 +445,7 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
     return error === '';
   };
 
-  const referralCode = 'LOKAL500';
+  const referralCode = 'BANDI777';
 
   const handleCopy = () => {
     navigator.clipboard.writeText(referralCode);
@@ -292,8 +542,12 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
     setShowAddForm(true);
   };
 
+  const [showInstallGuide, setShowInstallGuide] = useState(false);
+  const [showPartnerOnboarding, setShowPartnerOnboarding] = useState(false);
+  const [defaultPartnerType, setDefaultPartnerType] = useState<string | undefined>(undefined);
+
   const menuItems = [
-    ...(isAdmin ? [{ 
+    ...((isAdmin) ? [{ 
       icon: ShieldCheck, 
       label: 'Founder Dashboard', 
       sub: 'Manage App & Approvals', 
@@ -302,6 +556,24 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
         localStorage.setItem('openAdminOnHome', 'true');
       }
     }] : []),
+    ...((isAdmin) ? [
+      { 
+        icon: Briefcase, 
+        label: 'Vendors Dash', 
+        sub: 'Admin Override Access',
+        onClick: async () => {
+          onNavigate('vendor', 'admin-store');
+        } 
+      },
+      { 
+        icon: Bike, 
+        label: 'Delivery Console', 
+        sub: 'Admin Override Access',
+        onClick: async () => {
+          onNavigate('delivery', 'admin-rider');
+        } 
+      }
+    ] : []),
     { 
       icon: User, 
       label: t.editProfile, 
@@ -312,45 +584,68 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
       }
     },
     { icon: Package, label: t.myOrders, sub: 'View order history', onClick: () => onNavigate('orders') },
-    ...((isAdmin || isVendor) ? [{ 
-      icon: Briefcase, 
-      label: 'Vendor Dashboard', 
-      sub: 'Manage items & prices', 
-      onClick: () => {
-        onNavigate('vendor');
-      } 
-    }] : []),
-    ...((isAdmin || isDeliveryPartner) ? [{ icon: Bike, label: 'Delivery Console', sub: 'For Partners Only', onClick: () => onNavigate('delivery') }] : []),
     { icon: MapPin, label: t.savedAddresses, sub: `${addresses.length} Addresses saved`, onClick: () => setView('addresses') },
     { icon: Wallet, label: t.lokalWallet, sub: `Balance: ₹${walletBalance}`, onClick: () => setView('wallet') },
     { icon: Gift, label: t.referAndEarn, sub: 'Get ₹15 for every friend', onClick: () => setView('refer') },
     { icon: Bell, label: t.notifications, sub: 'Order updates and offers', onClick: () => onNavigate('notifications') },
+    { 
+      icon: Package, 
+      label: 'Manual Order Testing', 
+      sub: 'Simulate a real order flow',
+      onClick: () => {
+        onNavigate('home');
+        // We'll handle this in Home.tsx via a custom event or localStorage
+        localStorage.setItem('runTestOrder', 'true');
+      }
+    },
+    { 
+      icon: Share2, 
+      label: 'Invite Partners', 
+      sub: 'Share Local Bandi Multi Services with friends',
+      onClick: async () => {
+        if (navigator.share) {
+          try {
+            await navigator.share({
+              title: 'Local Bandi Multi Services',
+              text: 'Join the local revolution! Join as a partner or customer on Local Bandi Multi Services.',
+              url: window.location.origin,
+            });
+          } catch (err) {
+            console.log('Share failed:', err);
+          }
+        } else {
+          // Fallback to clipboard
+          navigator.clipboard.writeText(window.location.origin);
+          alert('Link copied to clipboard! Share it with your partners.');
+        }
+      }
+    },
+    { 
+      icon: Navigation, 
+      label: 'Get the App', 
+      sub: 'Install on your home screen', 
+      onClick: () => setShowInstallGuide(true)
+    },
     { icon: Shield, label: t.accountSecurity, sub: t.dataSecuritySub || '256-bit Data Encryption' },
     { icon: SettingsIcon, label: t.appSettings, sub: 'Dark mode, language etc', onClick: () => onNavigate('settings') },
-    ...(!isVendor && !isAdmin ? [{ 
-      icon: Briefcase, 
-      label: 'Local Vendor Program', 
-      sub: 'Sell your products online', 
-      onClick: () => {
-        onNavigate('home');
-        localStorage.setItem('openPartnerForm', 'vendor');
-      } 
-    }] : []),
-    ...(!isDeliveryPartner && !isAdmin ? [{ 
-      icon: Bike, 
-      label: 'Delivery Fleet', 
-      sub: 'Join our logistics team', 
-      onClick: () => {
-        onNavigate('home');
-        localStorage.setItem('openPartnerForm', 'delivery');
-      } 
-    }] : []),
     { 
       icon: Phone, 
       label: t.customerCare, 
       sub: `Instant Q&A | Support Desk`,
       onClick: () => {
         window.dispatchEvent(new CustomEvent('open_customer_care'));
+      }
+    },
+    {
+      icon: LogOut,
+      label: 'Sign Out',
+      sub: 'Securely exit your account',
+      danger: true,
+      onClick: async () => {
+        if (window.confirm('Are you sure you want to sign out?')) {
+          await logout();
+          onNavigate('login');
+        }
       }
     },
   ];
@@ -647,7 +942,7 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
                     <input 
                       id="addr-phone"
                       type="tel"
-                      placeholder="9876543210"
+                      placeholder="Phone Number"
                       value={currentAddress.phone}
                       onChange={(e) => {
                         const val = e.target.value;
@@ -660,39 +955,59 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
                     {errors.phone && <p className="text-[9px] font-black text-rose-500 mt-1 pl-2 uppercase tracking-widest">{errors.phone}</p>}
                   </div>
 
-                  <div>
-                    <div className="flex items-center justify-between mb-2 px-2">
-                      <label htmlFor="addr-full" className="block text-[10px] font-black uppercase tracking-widest text-gray-400">
-                        Full Address
-                      </label>
-                      <button 
-                        type="button"
-                        onClick={handleUseLocation}
-                        disabled={isLocating}
-                        className="text-[9px] font-black text-yellow-600 uppercase tracking-widest flex items-center gap-1.5 hover:text-gray-900 transition-colors disabled:opacity-50"
-                      >
-                        {isLocating ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Navigation className="w-3 h-3" />
-                        )}
-                        Use Current Location
-                      </button>
+                    <div className="relative">
+                      <div className="flex items-center justify-between mb-2 px-2">
+                        <label htmlFor="addr-full" className="block text-[10px] font-black uppercase tracking-widest text-gray-400">
+                          Full Address
+                        </label>
+                        <button 
+                          type="button"
+                          onClick={handleUseLocation}
+                          disabled={isLocating}
+                          className="text-[9px] font-black text-yellow-600 uppercase tracking-widest flex items-center gap-1.5 hover:text-gray-900 transition-colors disabled:opacity-50"
+                        >
+                          {isLocating ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Navigation className="w-3 h-3" />
+                          )}
+                          Use Current Location
+                        </button>
+                      </div>
+                      <textarea 
+                        id="addr-full"
+                        placeholder="Enter flat/house no, street, locality..."
+                        value={currentAddress.address}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCurrentAddress({ ...currentAddress, address: val });
+                          validateField('address', val);
+                          fetchAddressSuggestions(val);
+                        }}
+                        onBlur={() => {
+                          validateField('address', currentAddress.address || '');
+                          setTimeout(() => setShowSuggestions(false), 200);
+                        }}
+                        onFocus={() => {
+                          if (addressSuggestions.length > 0) setShowSuggestions(true);
+                        }}
+                        className={`w-full h-24 bg-gray-50 rounded-[2rem] p-5 text-xs text-gray-900 font-bold placeholder:text-gray-300 outline-none border-2 transition-all resize-none ${errors.address ? 'border-rose-300 bg-rose-50/30' : 'border-transparent focus:border-yellow-400'}`}
+                      />
+                      {showSuggestions && addressSuggestions.length > 0 && (
+                        <div className="absolute z-[100] left-0 right-0 bottom-full mb-2 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden max-h-48 overflow-y-auto">
+                          {addressSuggestions.map((s, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => handleSuggestionClick(s)}
+                              className="w-full text-left px-4 py-3 text-[10px] font-bold text-gray-600 hover:bg-yellow-50 border-b border-gray-50 last:border-0 border-dashed"
+                            >
+                              {s.display_name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <textarea 
-                      id="addr-full"
-                      placeholder="Enter flat/house no, street, locality..."
-                      value={currentAddress.address}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCurrentAddress({ ...currentAddress, address: val });
-                        validateField('address', val);
-                      }}
-                      onBlur={() => validateField('address', currentAddress.address || '')}
-                      className={`w-full h-24 bg-gray-50 rounded-[2rem] p-5 text-xs text-gray-900 font-bold placeholder:text-gray-300 outline-none border-2 transition-all resize-none ${errors.address ? 'border-rose-300 bg-rose-50/30' : 'border-transparent focus:border-yellow-400'}`}
-                    />
-                    {errors.address && <p className="text-[9px] font-black text-rose-500 mt-1 pl-2 uppercase tracking-widest">{errors.address}</p>}
-                  </div>
 
                   <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-2xl border border-gray-100">
                     <button 
@@ -729,7 +1044,7 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
           <button onClick={() => setView('main')} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
             <ArrowLeft className="w-6 h-6 text-gray-900" />
           </button>
-          <h2 className="text-xl font-black text-gray-900">Lokal Wallet</h2>
+          <h2 className="text-xl font-black text-gray-900">Local Bandi Wallet</h2>
         </header>
 
         <div className="px-6 py-6">
@@ -815,7 +1130,7 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
             Refer & Earn<br />Free Cash
           </h3>
           <p className="text-gray-500 font-bold text-center mb-10 px-8 leading-relaxed">
-            Invite friends to Lokal Bharath. New users get <span className="text-gray-900 font-black">₹10</span> instantly after first order. You get <span className="text-gray-900 font-black">₹15</span> after their first successful order!
+            Invite friends to <span className="text-gray-900 font-black">Local Bandi Multi Services</span>. New users get <span className="text-emerald-600 font-black">₹15</span> bonus via your link, and you get <span className="text-indigo-600 font-black">₹15</span> after their first successful order !
           </p>
 
           <div className="w-full bg-gray-50 p-8 rounded-[3rem] border-2 border-dashed border-gray-200 flex flex-col items-center gap-4">
@@ -834,12 +1149,16 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
           <div className="w-full grid grid-cols-1 gap-4 mt-10">
             <button 
               onClick={() => {
+                const referralLink = `${window.location.origin}?ref=${referralCode}`;
                 if (navigator.share) {
                   navigator.share({
-                    title: 'Lokal Bharath',
-                    text: `Use my code ${referralCode} to get ₹10 in your Lokal Wallet!`,
-                    url: window.location.origin,
+                    title: 'Local Bandi Multi Services',
+                    text: `Hey! Check out Local Bandi Multi Services - it's the easiest way to get things delivered and find local services. Use my referral link to get an instant ₹15 reward in your wallet! 🎁`,
+                    url: referralLink,
                   });
+                } else {
+                  navigator.clipboard.writeText(referralLink);
+                  alert('Referral link copied to clipboard!');
                 }
               }}
               className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black uppercase tracking-widest shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-all"
@@ -854,7 +1173,7 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
             <div className="space-y-4">
               {[
                 { step: 1, text: 'Share your code with friends' },
-                { step: 2, text: 'Friend downloads & gets ₹10 bonus' },
+                { step: 2, text: 'Friend downloads & gets ₹15 bonus via link' },
                 { step: 3, text: 'Friend completes their 1st successful order' },
                 { step: 4, text: 'You receive ₹15 in your wallet instantly!' }
               ].map((item) => (
@@ -873,20 +1192,52 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
   }
 
   return (
-    <div className="h-full w-full bg-white flex flex-col font-sans">
-      <header className="px-6 pt-12 pb-4 flex items-center gap-4 bg-white/90 backdrop-blur-xl border-b border-gray-50 sticky top-0 z-50">
+    <div className="h-full w-full bg-white dark:bg-slate-900 flex flex-col font-sans transition-colors">
+      <header className="px-6 pt-12 pb-4 flex items-center gap-4 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-gray-50 dark:border-slate-800 sticky top-0 z-50 transition-colors">
         <motion.button 
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={onBack} 
-          className="p-2 hover:bg-gray-100 rounded-xl transition-colors"
+          className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
         >
-          <ArrowLeft className="w-6 h-6 text-gray-900" />
+          <ArrowLeft className="w-6 h-6 text-gray-900 dark:text-white" />
         </motion.button>
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-black text-gray-900 font-display italic tracking-tight">{t.title}</h2>
+          <h2 className="text-xl font-black text-gray-900 dark:text-white font-display italic tracking-tight">{t.title}</h2>
         </div>
+        <div className="flex-1" />
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.9 }}
+          onClick={toggleTheme}
+          className="w-10 h-10 rounded-2xl bg-gray-50 dark:bg-slate-800 border border-gray-100 dark:border-slate-700 flex items-center justify-center transition-colors shadow-sm"
+        >
+          {theme === 'light' ? (
+            <Moon className="w-5 h-5 text-gray-600" />
+          ) : (
+            <Sun className="w-5 h-5 text-yellow-400" />
+          )}
+        </motion.button>
       </header>
+
+      <AnimatePresence>
+        {saveSuccess && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mx-6 mt-4 p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl flex items-center gap-3 shadow-md"
+          >
+            <div className="w-8 h-8 rounded-xl bg-emerald-500 flex items-center justify-center text-white shrink-0">
+              <Check className="w-4 h-4" />
+            </div>
+            <div>
+              <p className="text-xs font-black text-emerald-900 dark:text-emerald-400 uppercase tracking-wide">Profile Updated</p>
+              <p className="text-[11px] font-bold text-emerald-600/90 dark:text-emerald-500/90">Your name, email, phone number, and address are saved.</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-8 flex flex-col items-center">
@@ -907,35 +1258,120 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
               <Edit2 className="w-4 h-4 text-yellow-400" />
             </div>
           </motion.div>
-          <h3 className="text-2xl font-black text-gray-900 italic tracking-tighter font-display">{userProfile.name}</h3>
-          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-1.5 flex items-center gap-2">
-            <span className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse" />
-            Platinum Member
-          </p>
+          <h3 className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter font-display transition-colors">{userProfile.name}</h3>
+          
+          {userProfile.fullAddress && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 font-bold text-center mt-1 px-8 transition-colors">{userProfile.fullAddress}</p>
+          )}
+
+          <div className="flex flex-col items-center gap-2 mt-2">
+            <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest transition-colors">{userProfile.phone || user?.email || 'Authenticated Account'}</p>
+            <div className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-100 dark:border-emerald-500/20 transition-colors">
+              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+              <span className="text-[8px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">Live Cloud Connection</span>
+            </div>
+          </div>
           
           <div className="flex gap-4 w-full mt-8">
-            <div className="flex-1 bg-white p-5 rounded-[2.5rem] border border-gray-100 text-center shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Orders</p>
-              <p className="text-2xl font-black text-gray-900 italic font-display">42</p>
+            <div className="flex-1 bg-white dark:bg-slate-800 p-5 rounded-[2.5rem] border border-gray-100 dark:border-slate-700 text-center shadow-sm hover:shadow-md transition-all">
+              <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 transition-colors">Orders</p>
+              <p className="text-2xl font-black text-gray-900 dark:text-white italic font-display transition-colors">42</p>
             </div>
-            <div className="flex-1 bg-white p-5 rounded-[2.5rem] border border-gray-100 text-center shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Savings</p>
-              <p className="text-2xl font-black text-gray-900 italic font-display">₹1,240</p>
+            <div className="flex-1 bg-white dark:bg-slate-800 p-5 rounded-[2.5rem] border border-gray-100 dark:border-slate-700 text-center shadow-sm hover:shadow-md transition-all">
+              <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-1.5 transition-colors">Savings</p>
+              <p className="text-2xl font-black text-gray-900 dark:text-white italic font-display transition-colors">₹1,240</p>
             </div>
           </div>
         </div>
 
         <div className="px-6 mb-6">
-          <div className="bg-emerald-50 border border-emerald-100 rounded-[2.5rem] p-5 flex items-center gap-4 relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-white/20 rounded-full -mr-12 -mt-12 blur-xl group-hover:scale-110 transition-transform" />
-            <div className="w-11 h-11 bg-white rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm shrink-0">
+          <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 rounded-[2.5rem] p-5 flex items-center gap-4 relative overflow-hidden group transition-colors">
+            <div className="absolute top-0 right-0 w-24 h-24 bg-white/20 dark:bg-emerald-500/10 rounded-full -mr-12 -mt-12 blur-xl group-hover:scale-110 transition-transform" />
+            <div className="w-11 h-11 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400 shadow-sm shrink-0 transition-colors">
               <Shield className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-[10px] font-black text-emerald-900 uppercase tracking-widest leading-none mb-1.5">Safe & Secure Transactions</p>
-              <p className="text-[9px] font-bold text-emerald-700/70 leading-relaxed">Encrypted processing for your personal and payment data.</p>
+              <p className="text-[10px] font-black text-emerald-900 dark:text-emerald-100 uppercase tracking-widest leading-none mb-1.5 transition-colors">Safe & Secure Transactions</p>
+              <p className="text-[9px] font-bold text-emerald-700/70 dark:text-emerald-400/60 leading-relaxed transition-colors">Encrypted processing for your personal and payment data.</p>
             </div>
           </div>
+        </div>
+
+        {/* Active Order Tracking - Real-time tracking shortcut */}
+        {activeOrder && (
+          <div className="px-6 mb-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => {
+                localStorage.setItem('trackOrderId', activeOrder.id);
+                onNavigate('orders');
+              }}
+              className="bg-gray-900 dark:bg-slate-800 rounded-[2.5rem] p-6 text-white shadow-xl shadow-gray-200 dark:shadow-none flex items-center justify-between cursor-pointer relative overflow-hidden group transition-colors"
+            >
+              <div className="absolute right-0 top-0 opacity-10 group-hover:scale-110 transition-transform">
+                <Bike className="w-24 h-24 -mr-4 -mt-4 text-white" />
+              </div>
+              <div className="relative z-10 flex items-center gap-4">
+                <div className="w-12 h-12 bg-yellow-400 rounded-2xl flex items-center justify-center shadow-lg relative shrink-0">
+                  <Navigation className="w-6 h-6 text-gray-900 animate-pulse" />
+                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-gray-900 animate-ping" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/50 mb-1">Live Tracking</p>
+                  <h3 className="text-sm font-black italic tracking-tight">Order #{activeOrder.id.slice(-6).toUpperCase()}</h3>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                    <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-tight">{activeOrder.status}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col items-end relative z-10">
+                <button className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white/20 transition-colors">
+                  Track
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Share Section - Added per user request */}
+        <div className="px-6 mb-4">
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={async () => {
+              const shareData = {
+                title: 'Local Bandi Multi Services',
+                text: 'Join the local revolution! Join as a partner or customer on Local Bandi Multi Services.',
+                url: window.location.origin,
+              };
+              if (navigator.share) {
+                try {
+                  await navigator.share(shareData);
+                } catch (err) {
+                  console.log('Share failed:', err);
+                }
+              } else {
+                navigator.clipboard.writeText(window.location.origin);
+                alert('Link copied to clipboard! Share it with your friends.');
+              }
+            }}
+            className="bg-indigo-600 dark:bg-indigo-700 rounded-[2.5rem] p-6 text-white shadow-xl shadow-indigo-100 dark:shadow-none flex items-center justify-between cursor-pointer relative overflow-hidden group transition-colors"
+          >
+            <div className="absolute right-0 top-0 opacity-10 group-hover:scale-110 transition-transform">
+              <Share2 className="w-24 h-24 -mr-4 -mt-4 text-white" />
+            </div>
+            <div className="relative z-10">
+              <p className="text-[10px] font-black uppercase tracking-widest text-indigo-100 mb-1">Spread the Word</p>
+              <h3 className="text-xl font-black italic tracking-tight">Share Local Bandi</h3>
+            </div>
+            <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center relative z-10">
+              <Share2 className="w-6 h-6" />
+            </div>
+          </motion.div>
         </div>
 
         <div className="px-6 space-y-3 pb-12">
@@ -946,16 +1382,16 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: i * 0.05 }}
               onClick={item.onClick}
-              className="w-full flex items-center gap-4 p-5 hover:bg-gray-50 rounded-[2.5rem] transition-all text-left border border-transparent shadow-sm hover:shadow-md hover:border-gray-50 group"
+              className="w-full flex items-center gap-4 p-5 hover:bg-gray-50 dark:hover:bg-slate-800 rounded-[2.5rem] transition-all text-left border border-transparent shadow-sm hover:shadow-md hover:border-gray-50 dark:hover:border-slate-800 group"
             >
-              <div className="bg-gray-50 p-4 rounded-2xl group-hover:bg-white transition-colors group-hover:shadow-sm">
-                <item.icon className="w-5 h-5 text-gray-600 group-hover:text-gray-900" />
+              <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-2xl group-hover:bg-white dark:group-hover:bg-slate-700 transition-colors group-hover:shadow-sm">
+                <item.icon className="w-5 h-5 text-gray-600 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" />
               </div>
               <div className="flex-1">
-                <p className="font-extrabold text-sm text-gray-900 group-hover:translate-x-0.5 transition-transform">{item.label}</p>
-                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight mt-0.5">{item.sub}</p>
+                <p className="font-extrabold text-sm text-gray-900 dark:text-white group-hover:translate-x-0.5 transition-transform">{item.label}</p>
+                <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-tight mt-0.5">{item.sub}</p>
               </div>
-              <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-gray-900 group-hover:translate-x-1 transition-all" />
+              <ChevronRight className="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-gray-900 dark:group-hover:text-white group-hover:translate-x-1 transition-all" />
             </motion.button>
           ))}
           
@@ -963,78 +1399,27 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.8 }}
-            onClick={() => onNavigate('login')}
-            className="w-full flex items-center gap-4 p-5 hover:bg-rose-50 rounded-[2.5rem] transition-all text-left text-rose-500 mt-10 border border-transparent hover:border-rose-100 group"
+            onClick={async () => {
+              if (window.confirm("Are you sure you want to logout?")) {
+                await logout();
+                localStorage.removeItem('admin_session_active');
+                localStorage.removeItem('lokal_maintenance_mode');
+                localStorage.removeItem('activeDeliveryProfile');
+                localStorage.removeItem('approvedVendors');
+                localStorage.removeItem('localInventory');
+                window.dispatchEvent(new Event('storage'));
+                onNavigate('login');
+              }
+            }}
+            className="w-full flex items-center gap-4 p-5 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-[2.5rem] transition-all text-left text-rose-500 mt-10 border border-transparent hover:border-rose-100 dark:hover:border-rose-500/20 group"
           >
-            <div className="bg-rose-50 p-4 rounded-2xl group-hover:bg-white transition-colors shadow-sm">
+            <div className="bg-rose-50 dark:bg-rose-500/10 p-4 rounded-2xl group-hover:bg-white dark:group-hover:bg-slate-800 transition-colors shadow-sm">
               <LogOut className="w-5 h-5" />
             </div>
             <span className="font-black uppercase tracking-widest text-xs">{t.signOut}</span>
           </motion.button>
         </div>
       </div>
-      {/* Referral Modal */}
-      <AnimatePresence>
-        {view === 'refer' && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-md z-[60] flex items-end sm:items-center justify-center p-4"
-          >
-            <motion.div 
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              className="w-full max-w-md bg-white rounded-[3rem] p-8 shadow-2xl relative"
-            >
-              <div className="flex justify-between items-center mb-8">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-yellow-100 rounded-2xl flex items-center justify-center">
-                    <Gift className="w-6 h-6 text-yellow-600" />
-                  </div>
-                  <h3 className="text-xl font-black text-gray-900">Refer & Earn</h3>
-                </div>
-                <button onClick={() => setView('main')} className="p-2 bg-gray-100 rounded-full text-gray-500">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="text-center mb-10">
-                <div className="w-32 h-32 bg-yellow-400 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-yellow-100">
-                  <Gift className="w-16 h-16 text-gray-900" />
-                </div>
-                <h4 className="text-3xl font-black text-gray-900 mb-2 italic">Earn ₹15</h4>
-                <p className="text-gray-500 font-bold px-6 leading-relaxed">
-                  Refer your friends and get ₹15 in your Lokal Wallet when they complete their first order.
-                </p>
-              </div>
-
-              <div className="bg-gray-50 p-6 rounded-[2rem] border-2 border-dashed border-gray-200 mb-8">
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center mb-2">Your Referral Code</p>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-2xl font-black text-gray-900 tracking-tighter">{referralCode}</span>
-                  <button 
-                    onClick={handleCopy}
-                    className={`text-[10px] font-black text-yellow-600 uppercase tracking-widest bg-yellow-100 px-4 py-2 rounded-xl active:scale-95 transition-all ${copied ? 'bg-green-500 text-white' : ''}`}
-                  >
-                    {copied ? 'Copied!' : 'Copy'}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex gap-4">
-                <button 
-                  onClick={() => setView('main')}
-                  className="flex-1 py-5 bg-gray-900 text-white rounded-[2rem] font-black uppercase tracking-widest shadow-xl shadow-gray-100 flex items-center justify-center gap-2 active:scale-95 transition-all text-sm"
-                >
-                  Invite Friends
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Edit Profile View */}
       <AnimatePresence>
@@ -1102,46 +1487,147 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
                 <p className="mt-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">Tap photo to change</p>
               </div>
 
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 pl-2">Full Name</label>
-                  <input 
-                    type="text"
-                    value={editForm.name}
-                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                    className="w-full bg-gray-50 rounded-2xl p-5 text-sm font-black text-gray-900 outline-none border-2 border-transparent focus:border-yellow-400 transition-all shadow-sm"
-                  />
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 pl-2">Full Name</label>
+                      <input 
+                        type="text"
+                        value={editForm.name}
+                        onChange={(e) => {
+                          setEditForm({ ...editForm, name: e.target.value });
+                          if (profileErrors.name) setProfileErrors(prev => ({ ...prev, name: '' }));
+                        }}
+                        className={`w-full bg-gray-50 rounded-2xl p-5 text-sm font-black text-gray-900 outline-none border-2 transition-all shadow-sm ${profileErrors.name ? 'border-rose-400 bg-rose-50/20' : 'border-transparent focus:border-yellow-400'}`}
+                      />
+                      {profileErrors.name && (
+                        <p className="text-[10px] font-bold text-rose-500 mt-1.5 pl-2 uppercase tracking-wide">{profileErrors.name}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 pl-2">Full Address</label>
+                      <textarea 
+                        value={editForm.fullAddress || ''}
+                        onChange={(e) => {
+                          setEditForm({ ...editForm, fullAddress: e.target.value });
+                          if (profileErrors.fullAddress) setProfileErrors(prev => ({ ...prev, fullAddress: '' }));
+                        }}
+                        placeholder="House No, Street, Landmark, Area"
+                        className={`w-full bg-gray-50 rounded-2xl p-5 text-sm font-black text-gray-900 outline-none border-2 transition-all shadow-sm min-h-[100px] resize-none ${profileErrors.fullAddress ? 'border-rose-400 bg-rose-50/20' : 'border-transparent focus:border-yellow-400'}`}
+                      />
+                      {profileErrors.fullAddress && (
+                        <p className="text-[10px] font-bold text-rose-500 mt-1.5 pl-2 uppercase tracking-wide">{profileErrors.fullAddress}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 pl-2">Email Address</label>
+                      <input 
+                        type="email"
+                        value={editForm.email}
+                        onChange={(e) => {
+                          setEditForm({ ...editForm, email: e.target.value });
+                          if (profileErrors.email) setProfileErrors(prev => ({ ...prev, email: '' }));
+                        }}
+                        className={`w-full bg-gray-50 rounded-2xl p-5 text-sm font-black text-gray-900 outline-none border-2 transition-all shadow-sm ${profileErrors.email ? 'border-rose-400 bg-rose-50/20' : 'border-transparent focus:border-yellow-400'}`}
+                      />
+                      {profileErrors.email && (
+                        <p className="text-[10px] font-bold text-rose-500 mt-1.5 pl-2 uppercase tracking-wide">{profileErrors.email}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 pl-2">Phone Number</label>
+                      <input 
+                        type="tel"
+                        value={editForm.phone}
+                        onChange={(e) => {
+                          setEditForm({ ...editForm, phone: e.target.value });
+                          if (profileErrors.phone) setProfileErrors(prev => ({ ...prev, phone: '' }));
+                        }}
+                        className={`w-full bg-gray-50 rounded-2xl p-5 text-sm font-black text-gray-900 outline-none border-2 transition-all shadow-sm ${profileErrors.phone ? 'border-rose-400 bg-rose-50/20' : 'border-transparent focus:border-yellow-400'}`}
+                      />
+                      {profileErrors.phone && (
+                        <p className="text-[10px] font-bold text-rose-500 mt-1.5 pl-2 uppercase tracking-wide">{profileErrors.phone}</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 pl-2">Email Address</label>
-                  <input 
-                    type="email"
-                    value={editForm.email}
-                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                    className="w-full bg-gray-50 rounded-2xl p-5 text-sm font-black text-gray-900 outline-none border-2 border-transparent focus:border-yellow-400 transition-all shadow-sm"
-                  />
+ 
+              <div className="p-6 bg-white border-t border-gray-50">
+                <button 
+                  onClick={() => {
+                    if (validateProfileForm()) {
+                      setShowProfileConfirm(true);
+                    }
+                  }}
+                  className="w-full py-5 bg-yellow-400 text-gray-900 rounded-[2rem] font-black uppercase tracking-widest shadow-xl shadow-yellow-100 flex items-center justify-center gap-2 active:scale-95 transition-all text-sm"
+                >
+                  <Check className="w-5 h-5" />
+                  Save Changes
+                </button>
+              </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showInstallGuide && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-md z-[120] flex items-end justify-center"
+            onClick={() => setShowInstallGuide(false)}
+          >
+            <motion.div 
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="w-full bg-white rounded-t-[3rem] p-8 pb-12 shadow-2xl relative"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="w-12 h-1.5 bg-gray-200 rounded-full mx-auto mb-8" />
+              
+              <div className="text-center mb-10">
+                <div className="w-20 h-20 bg-yellow-400 rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-xl shadow-yellow-100">
+                  <Navigation className="w-10 h-10 text-gray-900" />
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 pl-2">Phone Number</label>
-                  <input 
-                    type="tel"
-                    value={editForm.phone}
-                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                    className="w-full bg-gray-50 rounded-2xl p-5 text-sm font-black text-gray-900 outline-none border-2 border-transparent focus:border-yellow-400 transition-all shadow-sm"
-                  />
+                <h3 className="text-2xl font-black text-gray-900 mb-2">Install Local Bandi Multi Services</h3>
+                <p className="text-gray-400 font-bold text-sm tracking-tight px-8">Get the app-like experience with faster access and full screen view.</p>
+              </div>
+
+              <div className="space-y-6 mb-10">
+                <div className="flex items-start gap-4">
+                  <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center font-black shrink-0">1</div>
+                  <div>
+                    <p className="font-black text-gray-900 text-sm">Open in Browser</p>
+                    <p className="text-xs text-gray-400 font-bold">Ensure you are using Safari (iOS) or Chrome (Android).</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center font-black shrink-0">2</div>
+                  <div>
+                    <p className="font-black text-gray-900 text-sm">Tap Share or Menu</p>
+                    <p className="text-xs text-gray-400 font-bold">Look for the share icon or the three-dot menu at the top/bottom.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="w-8 h-8 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center font-black shrink-0">3</div>
+                  <div>
+                    <p className="font-black text-gray-900 text-sm">Add to Home Screen</p>
+                    <p className="text-xs text-gray-400 font-bold">Find and tap "Add to Home Screen" to install the app.</p>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="p-6 bg-white border-t border-gray-50">
               <button 
-                onClick={() => setShowProfileConfirm(true)}
-                className="w-full py-5 bg-yellow-400 text-gray-900 rounded-[2rem] font-black uppercase tracking-widest shadow-xl shadow-yellow-100 flex items-center justify-center gap-2 active:scale-95 transition-all text-sm"
+                onClick={() => setShowInstallGuide(false)}
+                className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black uppercase tracking-widest text-[11px] shadow-xl shadow-gray-200 active:scale-95 transition-all"
               >
-                <Check className="w-5 h-5" />
-                Save Changes
+                Got It, Thanks!
               </button>
-            </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1173,31 +1659,66 @@ export default function Profile({ onBack, onNavigate, language }: ProfileProps) 
                   Cancel
                 </button>
                 <button 
+                  disabled={isSavingProfile}
                   onClick={async () => {
                     if (user) {
+                      setIsSavingProfile(true);
+                      const path = `users/${user.uid}`;
                       try {
-                        await updateDoc(doc(db, 'users', user.uid), {
+                        const updates: any = {
                           name: editForm.name,
                           email: editForm.email,
                           phone: editForm.phone,
+                          photo: editForm.photo,
+                          fullAddress: editForm.fullAddress || '',
+                          addresses: addresses,
                           updatedAt: serverTimestamp()
-                        });
+                        };
+                        await updateDoc(doc(db, 'users', user.uid), updates);
                         setUserProfile(editForm);
                         setView('main');
                         setShowProfileConfirm(false);
+                        setSaveSuccess(true);
+                        setTimeout(() => setSaveSuccess(false), 3000);
                       } catch (e) {
                         console.error("Failed to update profile", e);
+                        handleFirestoreError(e, OperationType.UPDATE, path);
                         alert("Failed to update profile. Please try again.");
+                      } finally {
+                        setIsSavingProfile(false);
                       }
                     }
                   }}
-                  className="flex-1 py-4 bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-emerald-200"
+                  className={`flex-1 py-4 bg-emerald-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-emerald-200 flex items-center justify-center gap-1.5 ${isSavingProfile ? 'opacity-70 cursor-not-allowed' : ''}`}
                 >
-                  Save
+                  {isSavingProfile ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save'
+                  )}
                 </button>
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showPartnerOnboarding && user && (
+          <PartnerOnboarding 
+            userId={user.uid}
+            defaultType={defaultPartnerType as any}
+            onClose={() => {
+              setShowPartnerOnboarding(false);
+              setDefaultPartnerType(undefined);
+            }}
+            onSuccess={() => {
+              setShowPartnerOnboarding(false);
+              setDefaultPartnerType(undefined);
+            }}
+          />
         )}
       </AnimatePresence>
     </div>

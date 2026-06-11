@@ -45,9 +45,20 @@ export const referralService = {
       localStorage.setItem('lokal_app_initialized', 'true');
       localStorage.setItem(FIRST_ORDER_KEY, 'false');
       
-      // Give ₹10 Welcome Bonus
-      referralService.updateWallet(10, 'Welcome Bonus: New Downloader', 'credit');
+      const pendingCode = localStorage.getItem(REFERRAL_KEY);
+      if (pendingCode) {
+        localStorage.setItem(REFERRED_BY_KEY, pendingCode);
+        // Give higher bonus for using a link (₹15 instead of ₹10)
+        referralService.updateWallet(15, `Welcome Bonus: Referred by ${pendingCode}`, 'credit');
+      } else {
+        // Give ₹15 Welcome Bonus
+        referralService.updateWallet(15, 'Welcome Bonus: New Downloader', 'credit');
+      }
     }
+  },
+
+  savePendingReferral: (code: string) => {
+    localStorage.setItem(REFERRAL_KEY, code);
   },
 
   // Called when an order is completed successfully

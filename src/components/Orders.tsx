@@ -1,28 +1,76 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Package, ChevronRight, Clock, AlertTriangle, X, MapPin, Bike, Check, Search, Filter, StickyNote, Save, ClipboardList, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowLeft, Package, ChevronRight, Clock, AlertTriangle, X, MapPin, Bike, Check, Search, Filter, StickyNote, Save, ClipboardList, TrendingUp, Loader2, Star, Edit2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { LanguageCode, Transaction } from '../types';
+import { LanguageCode, Transaction, CartItem } from '../types';
 import { translations } from '../translations';
 import { referralService } from '../lib/referral';
+import { useFirebase } from '../contexts/FirebaseContext';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { downloadCSV } from '../lib/exportUtils';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 interface OrdersProps {
   onBack: () => void;
   onReorder?: (orderId: string) => void;
   onTrackOrder?: (orderId: string) => void;
+  onEditOrder?: (orderId: string) => void;
   language: LanguageCode;
 }
 
-export default function Orders({ onBack, onReorder, onTrackOrder, language }: OrdersProps) {
+export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, language }: OrdersProps) {
+  const { user } = useFirebase();
   const t = translations[language].orders || translations['en-IN'].orders;
   const common = translations[language].common || translations['en-IN'].common;
-  const [orders, setOrders] = useState<any[]>(() => {
-    const saved = localStorage.getItem('customer_orders');
-    if (saved) return JSON.parse(saved);
-    return [
-      { id: 'ORD-9021', status: 'Processing', date: '2024-04-24', displayDate: 'Just now', total: 540, items: 2, orderItems: [] },
-      { id: 'ORD-8923', status: 'Delivered', date: '2024-04-22', displayDate: '22 April 2024', total: 450, items: 3, orderItems: [] },
-    ];
-  });
+  const [orders, setOrders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) {
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'orders'),
+      where('userId', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        date: doc.data().timestamp || doc.data().createdAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+        displayDate: doc.data().timestamp ? new Date(doc.data().timestamp).toLocaleDateString() : 'Just now'
+      }));
+      
+      // Sort client side to avoid index requirement for simple POC
+      const sorted = docs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      
+      setOrders(sorted);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    if (localStorage.getItem('downloadUserOrders') === 'true' && orders.length > 0) {
+      downloadCSV(orders, `orders_export_${user?.uid.slice(0, 5)}`);
+      localStorage.removeItem('downloadUserOrders');
+    }
+  }, [orders, user]);
+
+  useEffect(() => {
+    const trackId = localStorage.getItem('trackOrderId');
+    if (trackId && onTrackOrder) {
+      localStorage.removeItem('trackOrderId');
+      onTrackOrder(trackId);
+    }
+  }, [onTrackOrder]);
 
   const [selectedOrderDetail, setSelectedOrderDetail] = useState<any | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('All');
@@ -33,6 +81,7 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
   const [orderToCancel, setOrderToCancel] = useState<string | null>(null);
+  const [orderToReorder, setOrderToReorder] = useState<string | null>(null);
   const [cancellationStep, setCancellationStep] = useState<'confirm' | 'reason'>('confirm');
   const [selectedReason, setSelectedReason] = useState<string>('');
   const [customReason, setCustomReason] = useState<string>('');
@@ -52,44 +101,54 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'Delivered': return 'bg-green-100 text-green-700';
+      case 'OutForDelivery': return 'bg-emerald-100 text-emerald-700';
       case 'In Transit': return 'bg-blue-100 text-blue-700';
       case 'Cancelled': return 'bg-red-100 text-red-700';
       case 'Processing': return 'bg-yellow-100 text-yellow-700';
+      case 'Editing': return 'bg-indigo-100 text-indigo-700';
+      case 'ReadyForPickup': return 'bg-cyan-100 text-cyan-700';
       default: return 'bg-gray-100 text-gray-700';
     }
   };
 
   const isCancellable = (status: string) => {
-    return status === 'Processing' || status === 'Placed';
+    return ['Pending', 'Accepted', 'Preparing', 'Editing', 'Placed', 'Processing'].includes(status);
   };
 
   const isTrackable = (status: string) => {
-    return status === 'Processing' || status === 'In Transit';
+    return ['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery'].includes(status);
   };
 
-  const handleCancelOrder = (orderId: string) => {
+  const handleCancelOrder = async (orderId: string) => {
     const finalReason = selectedReason === 'Other' ? customReason : selectedReason;
-    const updatedOrders = orders.map(order => 
-      order.id === orderId ? { ...order, status: 'Cancelled', cancellationReason: finalReason } : order
-    );
-    setOrders(updatedOrders);
-    localStorage.setItem('customer_orders', JSON.stringify(updatedOrders));
-    setOrderToCancel(null);
-    setCancellationStep('confirm');
-    setSelectedReason('');
-    setCustomReason('');
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: 'Cancelled',
+        cancellationReason: finalReason,
+        updatedAt: serverTimestamp()
+      });
+      setOrderToCancel(null);
+      setCancellationStep('confirm');
+      setSelectedReason('');
+      setCustomReason('');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+    }
   };
 
-  const handleCompleteOrder = (orderId: string) => {
-    const updatedOrders = orders.map(order => 
-      order.id === orderId ? { ...order, status: 'Delivered' } : order
-    );
-    setOrders(updatedOrders);
-    localStorage.setItem('customer_orders', JSON.stringify(updatedOrders));
-    setSelectedOrderDetail(prev => prev ? { ...prev, status: 'Delivered' } : null);
-    
-    // Trigger Referral Reward Logic strictly for the first order
-    referralService.handleOrderCompletion(orderId);
+  const handleCompleteOrder = async (orderId: string) => {
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: 'Delivered',
+        updatedAt: serverTimestamp()
+      });
+      setSelectedOrderDetail(prev => prev ? { ...prev, status: 'Delivered' } : null);
+      
+      // Trigger Referral Reward Logic strictly for the first order
+      referralService.handleOrderCompletion(orderId);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+    }
   };
 
   const openCancelModal = (orderId: string) => {
@@ -142,11 +201,22 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
 
   return (
     <div className="h-full w-full bg-white flex flex-col relative">
-      <header className="px-6 pt-12 pb-4 flex items-center gap-4 bg-white border-b border-gray-50 sticky top-0 z-10">
-        <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
-          <ArrowLeft className="w-6 h-6 text-gray-900" />
-        </button>
-        <h2 className="text-xl font-black text-gray-900">{t.title}</h2>
+      <header className="px-6 pt-12 pb-4 flex items-center justify-between bg-white border-b border-gray-50 sticky top-0 z-10">
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
+            <ArrowLeft className="w-6 h-6 text-gray-900" />
+          </button>
+          <h2 className="text-xl font-black text-gray-900">{t.title}</h2>
+        </div>
+        {orders.length > 0 && (
+          <button 
+            onClick={() => downloadCSV(orders, 'my_orders')}
+            className="p-3 bg-yellow-400 rounded-2xl text-gray-900 shadow-sm active:scale-90 transition-transform"
+            title="Download CSV"
+          >
+            <Save className="w-5 h-5" />
+          </button>
+        )}
       </header>
 
       <div className="bg-gray-50 border-b border-gray-100 px-6 py-4 space-y-4">
@@ -234,7 +304,12 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-6 pb-20 space-y-4">
-        {filteredOrders.length > 0 ? filteredOrders.map((order) => (
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Loader2 className="w-10 h-10 text-yellow-400 animate-spin mb-4" />
+            <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Loading your orders...</p>
+          </div>
+        ) : filteredOrders.length > 0 ? filteredOrders.map((order) => (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -267,7 +342,15 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
               </div>
               <div className="flex-1">
                 <p className="font-extrabold text-gray-900">{order.items} {common.items}</p>
-                <p className="text-sm text-yellow-600 font-black">₹{order.total}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-yellow-600 font-black">₹{order.total}</p>
+                  {order.rewardItem && (
+                    <div className="flex items-center gap-1 bg-indigo-50 px-2 py-0.5 rounded-lg">
+                      <Star className="w-2.5 h-2.5 text-indigo-500 fill-indigo-500" />
+                      <span className="text-[8px] font-black text-indigo-600 uppercase">+ Reward</span>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex flex-col items-end">
                 <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-gray-900 group-hover:translate-x-1 transition-all" />
@@ -337,6 +420,20 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
             </div>
             
             <div className="pt-2 flex gap-3">
+              {['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'Editing', 'Placed', 'Processing'].includes(order.status) && onEditOrder && (
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if(confirm("Add more items to this order?")) {
+                      onEditOrder(order.id);
+                    }
+                  }}
+                  className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-xl shadow-indigo-100 active:scale-95 transition-all"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  Edit Items
+                </button>
+              )}
               {isTrackable(order.status) && (
                 <button 
                   onClick={(e) => {
@@ -363,7 +460,7 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    onReorder?.(order.id);
+                    setOrderToReorder(order.id);
                   }}
                   className="flex-1 py-4 bg-yellow-400 text-gray-900 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-yellow-100 active:scale-95 transition-all"
                 >
@@ -439,7 +536,22 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
 
               <div className="flex-1 overflow-y-auto space-y-6 pr-2 scrollbar-hide">
                 <section className="space-y-4">
-                  <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Items Ordered</h4>
+                  <div className="flex items-center justify-between ml-1">
+                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Items Ordered</h4>
+                    {['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'Editing', 'Placed', 'Processing'].includes(selectedOrderDetail.status) && onEditOrder && (
+                      <button 
+                         onClick={() => {
+                           if(confirm("Add more items to this order? You can keep adding until it's picked up.")) {
+                             onEditOrder(selectedOrderDetail.id);
+                             setSelectedOrderDetail(null);
+                           }
+                         }}
+                         className="text-[10px] font-black text-indigo-600 uppercase tracking-widest bg-indigo-50 px-3 py-1.5 rounded-xl hover:bg-indigo-100 transition-colors"
+                      >
+                        Edit Order
+                      </button>
+                    )}
+                  </div>
                   <div className="space-y-2">
                     {selectedOrderDetail.orderItems && selectedOrderDetail.orderItems.length > 0 ? selectedOrderDetail.orderItems.map((item: any, idx: number) => (
                       <div key={idx} className="flex items-center gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100">
@@ -455,6 +567,28 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
                     )) : (
                       <div className="p-4 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-center">
                         <p className="text-[10px] font-bold text-gray-400 italic">Item details not available for legacy orders</p>
+                      </div>
+                    )}
+                    {selectedOrderDetail.rewardItem && (
+                      <div className="flex items-center gap-3 p-3 bg-indigo-50 border border-indigo-100 rounded-2xl shadow-sm">
+                        <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm overflow-hidden">
+                          {selectedOrderDetail.rewardItem.img ? (
+                            <img src={selectedOrderDetail.rewardItem.img} className="w-full h-full object-cover" alt={selectedOrderDetail.rewardItem.name} />
+                          ) : (
+                            <Star className="w-5 h-5 text-indigo-500 fill-indigo-500" />
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <Star className="w-3 h-3 text-indigo-600 fill-indigo-600" />
+                            <p className="text-xs font-black text-indigo-900">{selectedOrderDetail.rewardItem.name}</p>
+                          </div>
+                          <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">Special Reward Item</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs font-black text-indigo-600">₹{selectedOrderDetail.rewardItem.rewardPrice || 1}</p>
+                          <p className="text-[8px] font-black text-slate-400 line-through">₹{selectedOrderDetail.rewardItem.originalPrice}</p>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -502,10 +636,35 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
                     Complete Order (Simulate Success)
                   </button>
                 )}
+                {isTrackable(selectedOrderDetail.status) && (
+                  <button 
+                    onClick={() => {
+                      onTrackOrder?.(selectedOrderDetail.id);
+                      setSelectedOrderDetail(null);
+                    }}
+                    className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-xl shadow-gray-200 active:scale-95 transition-all flex items-center justify-center gap-2"
+                  >
+                    <MapPin className="w-5 h-5 text-yellow-400" />
+                    {t.trackOrder}
+                  </button>
+                )}
+                {['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'Editing', 'Placed', 'Processing'].includes(selectedOrderDetail.status) && onEditOrder && (
+                  <button 
+                    onClick={() => {
+                      if(confirm("Edit this order and add more items?")) {
+                        onEditOrder(selectedOrderDetail.id);
+                        setSelectedOrderDetail(null);
+                      }
+                    }}
+                    className="w-full py-5 bg-indigo-600 text-white rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-xl shadow-indigo-100 active:scale-95 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Edit2 className="w-5 h-5" />
+                    Edit Order Items
+                  </button>
+                )}
                 <button 
                   onClick={() => {
-                    onReorder?.(selectedOrderDetail.id);
-                    setSelectedOrderDetail(null);
+                    setOrderToReorder(selectedOrderDetail.id);
                   }}
                   className="flex-1 py-5 bg-yellow-400 text-gray-900 rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-xl shadow-yellow-100 active:scale-95 transition-all"
                 >
@@ -623,6 +782,60 @@ export default function Orders({ onBack, onReorder, onTrackOrder, language }: Or
                   </div>
                 </div>
               )}
+            </motion.div>
+          </motion.div>
+        )}
+
+        {orderToReorder && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ y: '100%', scale: 0.95 }}
+              animate={{ y: 0, scale: 1 }}
+              exit={{ y: '100%', scale: 0.95 }}
+              className="w-full max-w-md bg-white rounded-[3rem] p-8 shadow-2xl flex flex-col"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <div className="w-12 h-12 bg-yellow-50 rounded-2xl flex items-center justify-center animate-bounce">
+                  <ClipboardList className="w-5 h-5 text-gray-900" />
+                </div>
+                <button 
+                  onClick={() => setOrderToReorder(null)}
+                  className="p-2 bg-gray-50 rounded-full text-gray-400 hover:bg-gray-100"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="text-center">
+                <h3 className="text-xl font-black text-gray-900 mb-2 uppercase tracking-tight italic">Confirm Reorder</h3>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wider leading-relaxed mb-6">
+                  Are you sure you want to duplicate this order? This will copy all items from Order ID <span className="text-gray-900 font-extrabold">{orderToReorder}</span> into your active cart.
+                </p>
+                
+                <div className="w-full space-y-3">
+                  <button 
+                    onClick={() => {
+                      onReorder?.(orderToReorder);
+                      setOrderToReorder(null);
+                      setSelectedOrderDetail(null);
+                    }}
+                    className="w-full py-4 bg-yellow-400 text-gray-900 rounded-[2rem] font-black uppercase tracking-widest shadow-xl shadow-yellow-100 active:scale-95 transition-all text-[10px]"
+                  >
+                    Confirm Reorder
+                  </button>
+                  <button 
+                    onClick={() => setOrderToReorder(null)}
+                    className="w-full py-4 bg-gray-100 text-gray-700 rounded-[2rem] font-black uppercase tracking-widest active:scale-95 transition-all text-[10px]"
+                  >
+                    Nevermind
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </motion.div>
         )}

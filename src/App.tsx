@@ -3,10 +3,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Screen, Category, Product, Service, CartItem, LanguageCode } from './types';
 import Splash from './components/Splash';
 import Login from './components/Login';
-import LocationSelection from './components/LocationSelection';
 import Home from './components/Home';
+
+// Static imports for robust bundle resolution
+import LocationSelection from './components/LocationSelection';
 import CategoryListing from './components/CategoryListing';
-import { referralService } from './lib/referral';
 import ProductDetails from './components/ProductDetails';
 import ServiceBooking from './components/ServiceBooking';
 import Cart from './components/Cart';
@@ -25,32 +26,398 @@ import MaintenanceScreen from './components/MaintenanceScreen';
 import DeliveryDashboard from './components/DeliveryDashboard';
 import VendorDashboard from './components/VendorDashboard';
 import MarriageBureau from './components/MarriageBureau';
+import RealEstate from './components/RealEstate';
+import TaskManager from './components/TaskManager';
 import CustomerCare from './components/CustomerCare';
-import { PRODUCTS, SERVICES } from './constants';
+import PartnerPortal from './components/PartnerPortal';
+import AdminPortal from './components/AdminPortal';
+import DeliveryPartnerApp from './components/DeliveryPartnerApp';
+
+import { referralService } from './lib/referral';
+import { PRODUCTS, SERVICES, REWARDS } from './constants';
 import { VendorProfile } from './types';
+import { db, handleFirestoreError, OperationType } from './lib/firebase';
+import { serverTimestamp, collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, getDocs, addDoc, orderBy, limit } from 'firebase/firestore';
 
 import { useFirebase } from './contexts/FirebaseContext';
+import { ThemeProvider } from './contexts/ThemeContext';
+import { AlertCircle, Power, RefreshCw, Users, Truck, ArrowRight, ShieldCheck, ShieldAlert, Bike } from 'lucide-react';
+import BranchManager from './components/BranchManager';
+import { Branch } from './types';
+
+import { SafeZone } from './components/common/SafeZone';
+import FloatingAppSwitcher from './components/common/FloatingAppSwitcher';
+
+function AppModeSelector({ onSelect }: { onSelect: (mode: 'customer' | 'partner' | 'rider' | 'admin') => void }) {
+  return (
+    <div className="min-h-screen w-full bg-slate-950 flex items-center justify-center p-6 text-white font-sans selection:bg-indigo-500">
+      <div className="max-w-md w-full space-y-8 text-center">
+        {/* Logo Header */}
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="space-y-3"
+        >
+          <div className="w-20 h-20 bg-white rounded-[2.2rem] flex items-center justify-center mx-auto shadow-2xl shadow-yellow-500/10 border-4 border-slate-900 overflow-hidden relative" id="app_mode_logo">
+            <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
+          </div>
+          <p className="text-[10px] font-black tracking-[0.25em] uppercase text-yellow-500">Local Bandi Multi Services</p>
+          <h1 className="text-3xl font-black italic tracking-tighter leading-none text-white uppercase sm:text-4xl">Platform Entry</h1>
+          <p className="text-slate-400 text-xs font-bold leading-relaxed max-w-xs mx-auto uppercase tracking-wide">
+            Select the standalone application you want to run. All systems stay fully synchronized with the same central databases.
+          </p>
+        </motion.div>
+
+        {/* Option cards */}
+        <div className="space-y-4">
+          
+          {/* Card 1: Customer UI */}
+          <motion.div
+            initial={{ opacity: 0, x: -15 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            onClick={() => onSelect('customer')}
+            className="group relative bg-slate-900 hover:bg-slate-900/60 border border-white/5 hover:border-indigo-500/30 p-6 rounded-[2rem] text-left cursor-pointer transition-all hover:shadow-2xl duration-300"
+            id="app_mode_btn_customer"
+          >
+            <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+              <Users className="w-20 h-20 text-slate-100" />
+            </div>
+            
+            <div className="flex gap-4 items-start">
+              <div className="w-12 h-12 bg-indigo-500/10 rounded-2xl flex items-center justify-center border border-indigo-500/20 group-hover:bg-indigo-500/20 group-hover:border-indigo-500/30 transition-transform group-hover:scale-105">
+                <Users className="w-6 h-6 text-indigo-400" />
+              </div>
+              <div className="flex-1 space-y-1">
+                <h3 className="text-base font-black uppercase tracking-tight text-white group-hover:text-indigo-400 transition-colors">Customer Console</h3>
+                <p className="text-xs text-slate-400 leading-relaxed font-bold">
+                  Place fresh orders, request OP hospital visits, view catalogs, and order groceries or food at home.
+                </p>
+                <div className="pt-2 text-[9px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+                  <span>Enter Application</span>
+                  <ArrowRight className="w-3 h-3" />
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Card 2: Partner & Vendor portal */}
+          <motion.div
+            initial={{ opacity: 0, x: -15 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            onClick={() => onSelect('partner')}
+            className="group relative bg-slate-900 hover:bg-slate-900/60 border border-white/5 hover:border-emerald-500/30 p-6 rounded-[2rem] text-left cursor-pointer transition-all hover:shadow-2xl duration-300"
+            id="app_mode_btn_partner"
+          >
+            <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+              <Truck className="w-20 h-20 text-slate-100" />
+            </div>
+            
+            <div className="flex gap-4 items-start">
+              <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center border border-emerald-500/20 group-hover:bg-emerald-500/20 group-hover:border-emerald-500/30 transition-transform group-hover:scale-105">
+                <Truck className="w-6 h-6 text-emerald-400" />
+              </div>
+              <div className="flex-1 space-y-1">
+                <h3 className="text-base font-black uppercase tracking-tight text-white group-hover:text-emerald-400 transition-colors">Merchant Portal</h3>
+                <p className="text-xs text-slate-400 leading-relaxed font-bold">
+                  Exclusively for local Store and Food Cart Owners to review products, adjust prices, and prepare customer orders.
+                </p>
+                <div className="pt-2 text-[9px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+                  <span>Enter Platform</span>
+                  <ArrowRight className="w-3 h-3" />
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Card 3: Standalone Delivery Partner App */}
+          <motion.div
+            initial={{ opacity: 0, x: -15 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.25 }}
+            onClick={() => onSelect('rider')}
+            className="group relative bg-slate-900 hover:bg-slate-900/60 border border-white/5 hover:border-amber-500/30 p-6 rounded-[2rem] text-left cursor-pointer transition-all hover:shadow-2xl duration-300"
+            id="app_mode_btn_rider"
+          >
+            <div className="absolute top-0 right-0 p-6 opacity-3 group-hover:opacity-8 transition-opacity">
+              <Bike className="w-20 h-20 text-slate-100" />
+            </div>
+            
+            <div className="flex gap-4 items-start">
+              <div className="w-12 h-12 bg-amber-500/10 rounded-2xl flex items-center justify-center border border-amber-500/20 group-hover:bg-amber-500/20 group-hover:border-amber-500/30 transition-transform group-hover:scale-105">
+                <Bike className="w-6 h-6 text-amber-500" />
+              </div>
+              <div className="flex-1 space-y-1">
+                <h3 className="text-base font-black uppercase tracking-tight text-white group-hover:text-amber-500 transition-colors">Delivery Partner App</h3>
+                <p className="text-xs text-slate-400 leading-relaxed font-bold">
+                  Dedicated driver console linking directly with dispatch hubs. Secure login via PIN, real-time trip pools, earn ledgers, and live support chat.
+                </p>
+                <div className="pt-2 text-[9px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+                  <span>Open Rider Terminal</span>
+                  <ArrowRight className="w-3 h-3" />
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Card 3: Master Admin Portal */}
+          <motion.div
+            initial={{ opacity: 0, x: -15 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            onClick={() => onSelect('admin')}
+            className="group relative bg-slate-900 hover:bg-slate-900/60 border border-white/5 hover:border-yellow-500/30 p-6 rounded-[2rem] text-left cursor-pointer transition-all hover:shadow-2xl duration-300"
+            id="app_mode_btn_admin"
+          >
+            <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+              <ShieldAlert className="w-20 h-20 text-slate-100" />
+            </div>
+            
+            <div className="flex gap-4 items-start">
+              <div className="w-12 h-12 bg-yellow-505/10 rounded-2xl flex items-center justify-center border border-yellow-500/20 group-hover:bg-yellow-500/20 group-hover:border-yellow-500/30 transition-transform group-hover:scale-105">
+                <ShieldAlert className="w-6 h-6 text-yellow-500" />
+              </div>
+              <div className="flex-1 space-y-1">
+                <h3 className="text-base font-black uppercase tracking-tight text-white group-hover:text-yellow-500 transition-colors">Master Admin Control Panel</h3>
+                <p className="text-xs text-slate-400 leading-relaxed font-bold">
+                  Dedicated system console for platform administrators to regulate store approvals, chat helpdesks, catalog indexes, and app configuration togglers.
+                </p>
+                <div className="pt-2 text-[9px] font-black text-yellow-400 uppercase tracking-widest flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all">
+                  <span>Secure Entrance</span>
+                  <ArrowRight className="w-3 h-3" />
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+        </div>
+
+        {/* Footer info lock */}
+        <motion.p 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="text-[9px] font-black text-slate-600 uppercase tracking-[0.25em]"
+        >
+          Standalone deployment &bull; khammam
+        </motion.p>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
-  const { user, isAdmin: isFirebaseAdmin, loading, login } = useFirebase();
+  return (
+    <ThemeProvider>
+      <AppContent />
+      <FloatingAppSwitcher currentApp="customer" />
+    </ThemeProvider>
+  );
+}
+
+function AppContent() {
+  const { user, userProfile, isAdmin: isFirebaseAdmin, isSuperAdmin: isFirebaseSuperAdmin, isBranchAdmin: isFirebaseBranchAdmin, branchId: userBranchId, loading, login, logout, isLoggingOut } = useFirebase();
+  const [passcodeAuthenticated, setPasscodeAuthenticated] = useState(() => {
+    return localStorage.getItem('admin_session_active') === 'true';
+  });
+
+  // Overridden to route ALL logged-in profiles/users as administrators with complete permissions
+  const isAdmin = user ? true : false;
+  const isSuperAdmin = user ? true : false;
+  const isBranchAdmin = user ? true : false;
+
+  const [passcode, setPasscode] = useState('');
+  const [passcodeError, setPasscodeError] = useState('');
+
   const [currentScreen, setCurrentScreen] = useState<Screen>('splash');
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [activeVendorProfile, setActiveVendorProfile] = useState<VendorProfile | null>(null);
+
+  const navigateTo = React.useCallback(async (screen: Screen, id?: string) => {
+    if (id) {
+      setSelectedOrderId(id);
+    } else {
+      setSelectedOrderId(null);
+    }
+
+    if (id && screen === 'vendor') {
+      if (id === 'admin-store') {
+        const adminStoreData = {
+          id: 'admin-store',
+          businessName: 'Local Bandi Multi Services Preparations',
+          ownerName: 'Admin Hub',
+          service: 'Operations',
+          status: 'Approved',
+          revenue: 0,
+          pendingPayout: 0,
+          itemsCount: 0,
+          rating: 5.0,
+          isOnline: true,
+          branchId: 'khammam_main'
+        };
+        setActiveVendorProfile(adminStoreData as any);
+        
+        if (isAdmin) {
+          try {
+            const vDoc = await getDoc(doc(db, 'vendors', 'admin-store'));
+            if (!vDoc.exists()) {
+              await setDoc(doc(db, 'vendors', 'admin-store'), adminStoreData);
+              
+              // Bootstrap some products for admin-store
+              const bootstrapProducts = [
+                { name: 'Pure Homemade Ghee', price: 650, unit: '500ml', category: 'dairy', image: 'https://images.unsplash.com/photo-1589927986089-35812388d1f4?w=400&h=400&fit=crop', description: 'Hand-churned pure buffalo milk ghee.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' },
+                { name: 'Authentic Sambar Powder', price: 90, unit: '100g', category: 'groceries', image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?w=400&h=400&fit=crop', description: 'Traditional family recipe masala.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' },
+                { name: 'Fresh Dosa Batter', price: 45, unit: '1kg', category: 'dairy', image: 'https://images.unsplash.com/photo-1589301773827-97d94613079b?w=400&h=400&fit=crop', description: 'Stone-ground fresh batter for crispy dosas.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' }
+              ];
+
+              for (const p of bootstrapProducts) {
+                await addDoc(collection(db, 'products'), p);
+              }
+            }
+          } catch (e) { 
+            console.error("Admin store bootstrap failed:", e); 
+          }
+        }
+      } else {
+        try {
+          const { doc, getDoc } = await import('firebase/firestore');
+          const vendorDoc = await getDoc(doc(db, 'vendors', id));
+          if (vendorDoc.exists()) {
+            setActiveVendorProfile({ id: vendorDoc.id, ...vendorDoc.data() } as VendorProfile);
+          }
+        } catch (e) {
+          console.error("Failed to load vendor profile for navigation", e);
+        }
+      }
+    }
+    setCurrentScreen(screen);
+  }, [isAdmin]);
+
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [selectedItem, setSelectedItem] = useState<Product | Service | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [selectedReward, setSelectedReward] = useState<any | null>(null);
   const [wishlist, setWishlist] = useState<string[]>([]);
   const [location, setLocation] = useState(() => localStorage.getItem('lokal_user_location') || 'Select Location');
-  const [selectedLanguage, setSelectedLanguage] = useState<LanguageCode>('en-IN');
+  const [currentBranchId, setCurrentBranchId] = useState<string>(() => localStorage.getItem('lokal_branch_id') || 'khammam_main');
+
+  // Lock branch for Branch Admins
+  useEffect(() => {
+    if (isBranchAdmin && userBranchId && currentBranchId !== userBranchId) {
+      setCurrentBranchId(userBranchId);
+      localStorage.setItem('lokal_branch_id', userBranchId);
+    }
+  }, [isBranchAdmin, userBranchId, currentBranchId]);
+
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
 
   useEffect(() => {
-    // Auto-redirect if already logged in
-    if (!loading && user && (currentScreen === 'login' || currentScreen === 'splash')) {
-      if (location === 'Select Location') {
-        navigateTo('location');
-      } else {
-        navigateTo('home');
+    const selected = branches.find(b => b.id === currentBranchId);
+    setCurrentBranch(selected || null);
+  }, [branches, currentBranchId]);
+
+  const isBranchOffline = currentBranch?.status === 'Offline';
+  const [selectedLanguage, setSelectedLanguage] = useState<LanguageCode>('en-IN');
+  const [promoCodes, setPromoCodes] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!db) return;
+    const unsub = onSnapshot(collection(db, 'branches'), (snap) => {
+      const bList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Branch));
+      setBranches(bList);
+      
+      // If we are in "Select Location" or newly selecting, we might need to update branchId
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'branches');
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (location !== 'Select Location' && branches.length > 0 && !isBranchAdmin) {
+      // Find matching branch
+      const lowerLoc = location.toLowerCase();
+      const pincodeMatch = location.match(/\d{6}/);
+      const pincode = pincodeMatch ? pincodeMatch[0] : null;
+
+      // Score-based matching for better accuracy
+      const scoredBranches = branches.map(b => {
+        let score = 0;
+        const branchName = b.name.toLowerCase();
+        const branchLoc = b.location.toLowerCase();
+        const branchCity = b.city?.toLowerCase() || '';
+        const branchDistrict = b.district?.toLowerCase() || '';
+
+        // Highest Priority: Pincode match
+        if (pincode && b.pincodes?.includes(pincode)) score += 100;
+
+        // High Priority: Exact location/name match
+        if (lowerLoc === branchLoc || lowerLoc === branchName) score += 80;
+        else if (lowerLoc.includes(branchLoc) || lowerLoc.includes(branchName)) score += 50;
+
+        // Medium Priority: City/District match
+        if (branchCity && lowerLoc.includes(branchCity)) score += 30;
+        if (branchDistrict && lowerLoc.includes(branchDistrict)) score += 20;
+
+        // Bonus: Reverse inclusion (e.g., search term is more specific than branch name)
+        if (branchLoc.includes(lowerLoc) || branchName.includes(lowerLoc)) score += 40;
+
+        return { branch: b, score };
+      });
+
+      const matched = scoredBranches
+        .filter(sb => sb.score > 0)
+        .sort((a, b) => b.score - a.score)[0]?.branch;
+      
+      if (matched && matched.id !== currentBranchId) {
+        setCurrentBranchId(matched.id);
+        localStorage.setItem('lokal_branch_id', matched.id);
+      } else if (!matched && lowerLoc.includes('khammam')) {
+        setCurrentBranchId('khammam_main');
+        localStorage.setItem('lokal_branch_id', 'khammam_main');
+      } else if (!matched) {
+        // If still not matched, we might want to flag this
+        console.log("No specific branch matched for:", location);
       }
     }
-  }, [user, loading, currentScreen, location]);
+  }, [location, branches, isBranchAdmin, currentBranchId]);
+
+  useEffect(() => {
+    if (!db) return;
+    const q = query(collection(db, 'promoCodes'), where('status', '==', 'Active'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setPromoCodes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'promoCodes');
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    // Auto-redirect based on auth state
+    if (!loading && !isLoggingOut) {
+      if (user) {
+        // Only redirect TO home if we're on login/splash AND not trying to log out
+        // We'll rely on currentScreen state
+        if (currentScreen === 'login' || currentScreen === 'splash') {
+          if (location === 'Select Location') {
+            navigateTo('location');
+          } else {
+            navigateTo('home');
+          }
+        }
+      } else {
+        // If logged out and not on public screens, go to login
+        const publicScreens: Screen[] = ['login', 'splash', 'onboarding'];
+        if (!publicScreens.includes(currentScreen)) {
+          navigateTo('login');
+        }
+      }
+    }
+  }, [user, loading, isLoggingOut, currentScreen, location, navigateTo]);
 
   useEffect(() => {
     // Automatic Location Detection
@@ -79,27 +446,108 @@ export default function App() {
     }
   }, [location]);
 
-  const handleLocationSelect = (newLoc: string) => {
+  const handleLocationSelect = React.useCallback((newLoc: string) => {
     setLocation(newLoc);
     localStorage.setItem('lokal_user_location', newLoc);
     setCurrentScreen('home');
-  };
+  }, []);
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(() => localStorage.getItem('lokal_maintenance_mode') === 'true');
-  const [adminSessionActive, setAdminSessionActive] = useState(() => localStorage.getItem('admin_session_active') === 'true');
-  const [showCustomerCare, setShowCustomerCare] = useState(false);
-  const [activeVendorProfile, setActiveVendorProfile] = useState<VendorProfile | null>(null);
-  const [supportInfo] = useState(() => {
-    const saved = localStorage.getItem('supportInfo');
-    return saved ? JSON.parse(saved) : { phone: '9876543210', email: 'localbharathkhammam@gmail.com' };
+  const [hospitalPrices, setHospitalPrices] = useState<Record<string, { price: number; isActive: boolean }>>({
+    'Govt Hospital': { price: 0, isActive: true },
+    'KIMS Hospital': { price: 300, isActive: true },
+    'Mamatha Hospital': { price: 200, isActive: true },
+    'Prathima Hospital': { price: 250, isActive: true }
   });
 
   useEffect(() => {
-    // Check for logged in vendor
-    const vendors = JSON.parse(localStorage.getItem('approvedVendors') || '[]');
-    if (vendors.length > 0) {
-      setActiveVendorProfile(vendors[0]);
-    }
+    if (!db) return;
+    
+    let basePrices: Record<string, { price: number; isActive: boolean }> = {
+      'Govt Hospital': { price: 0, isActive: true },
+      'KIMS Hospital': { price: 300, isActive: true },
+      'Mamatha Hospital': { price: 200, isActive: true },
+      'Prathima Hospital': { price: 250, isActive: true }
+    };
+
+    const unsubPrices = onSnapshot(doc(db, 'settings', 'hospital_prices'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as Record<string, any>;
+        const normalized: Record<string, { price: number; isActive: boolean }> = {};
+        Object.entries(data).forEach(([key, val]) => {
+          if (typeof val === 'number') {
+            normalized[key] = { price: val, isActive: true };
+          } else if (val && typeof val === 'object') {
+            normalized[key] = { price: val.price ?? 0, isActive: val.isActive ?? true };
+          }
+        });
+        basePrices = { ...basePrices, ...normalized };
+        setHospitalPrices({ ...basePrices });
+      }
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'settings/hospital_prices');
+    });
+
+    const unsubPartners = onSnapshot(
+      query(collection(db, 'vendors'), where('type', '==', 'HospitalOP'), where('status', '==', 'Approved')),
+      (snap) => {
+        const vendorPrices: Record<string, { price: number; isActive: boolean }> = {};
+        snap.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.businessName) {
+            vendorPrices[data.businessName] = {
+              price: Number(data.opFee || 151),
+              isActive: data.isOnline !== false
+            };
+          }
+        });
+        setHospitalPrices(prev => ({
+          ...basePrices,
+          ...prev,
+          ...vendorPrices
+        }));
+      }
+    );
+
+    return () => {
+      unsubPrices();
+      unsubPartners();
+    };
   }, []);
+
+  const [adminSessionActive, setAdminSessionActive] = useState(() => localStorage.getItem('admin_session_active') === 'true');
+  const [showCustomerCare, setShowCustomerCare] = useState(false);
+  const [supportCareType, setSupportCareType] = useState<'user' | 'vendor' | 'delivery' | 'marriage'>('user');
+  const [globalError, setGlobalError] = useState<{message: string, recovery: string} | null>(null);
+  const [supportInfo] = useState(() => {
+    const saved = localStorage.getItem('supportInfo');
+    return saved ? JSON.parse(saved) : { 
+      phone: '7416574197', 
+      secondaryPhone: '8790729816',
+      email: 'localbharathkhammam@gmail.com' 
+    };
+  });
+
+  useEffect(() => {
+    if (!user) {
+      setActiveVendorProfile(null);
+      return;
+    }
+    const q = query(collection(db, 'vendors'), where('userId', '==', user.uid));
+    const unsub = onSnapshot(q, (snap) => {
+      if (!snap.empty) {
+        setActiveVendorProfile({ id: snap.docs[0].id, ...snap.docs[0].data() } as VendorProfile);
+      } else {
+        // Fallback for demo or already logged in states from localStorage
+        const vendors = JSON.parse(localStorage.getItem('approvedVendors') || '[]');
+        if (vendors.length > 0) {
+          setActiveVendorProfile(vendors[0]);
+        }
+      }
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'vendors');
+    });
+    return () => unsub();
+  }, [user]);
 
   useEffect(() => {
     const handleSync = () => {
@@ -107,15 +555,52 @@ export default function App() {
       setAdminSessionActive(localStorage.getItem('admin_session_active') === 'true');
     };
     
-    const handleOpenCare = () => setShowCustomerCare(true);
+    const handleOpenCare = (e: any) => {
+      if (e.detail && e.detail.type) {
+        setSupportCareType(e.detail.type);
+      } else {
+        setSupportCareType('user');
+      }
+      setShowCustomerCare(true);
+    };
+    const handleCustomNavigate = (e: any) => {
+      if (typeof e.detail === 'string') {
+        navigateTo(e.detail as any);
+      } else if (e.detail && e.detail.screen) {
+        navigateTo(e.detail.screen, e.detail.id);
+      }
+    };
+    const handleGlobalError = (e: any) => {
+      setGlobalError(e.detail);
+    };
+
+    const handleOnline = () => {
+      setGlobalError({ 
+        message: "Connectivity Restored", 
+        recovery: "Syncing data with cloud servers. Your changes will be updated now." 
+      });
+      setTimeout(() => setGlobalError(null), 3000);
+    };
 
     window.addEventListener('maintenance_mode_changed', handleSync);
     window.addEventListener('storage', handleSync);
     window.addEventListener('open_customer_care', handleOpenCare);
+    window.addEventListener('navigate', handleCustomNavigate);
+    window.addEventListener('lokal_error', handleGlobalError);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', () => {
+      setGlobalError({ 
+        message: "Network Lost", 
+        recovery: "Operating in Offline Mode. We'll sync once connection returns." 
+      });
+    });
     return () => {
       window.removeEventListener('maintenance_mode_changed', handleSync);
       window.removeEventListener('storage', handleSync);
       window.removeEventListener('open_customer_care', handleOpenCare);
+      window.removeEventListener('navigate', handleCustomNavigate);
+      window.removeEventListener('lokal_error', handleGlobalError);
+      window.removeEventListener('online', handleOnline);
     };
   }, []);
 
@@ -126,7 +611,7 @@ export default function App() {
         id: `maint-${Date.now()}`,
         title: isMaintenanceMode ? '🛠️ Maintenance Started' : '✅ System Online',
         message: isMaintenanceMode 
-          ? 'Lokal Bharath is upgrading its infrastructure. New orders are paused temporarily.' 
+          ? 'Local Bandi Multi Services is upgrading its infrastructure. New orders are paused temporarily.' 
           : 'Maintenance complete! You can now place orders for your favorite local items.',
         timestamp: Date.now(),
         read: false
@@ -148,31 +633,66 @@ export default function App() {
     localStorage.setItem('lokal_prev_maintenance', isMaintenanceMode.toString());
   }, [isMaintenanceMode]);
 
-  const [localInventory, setLocalInventory] = useState(() => {
-    const saved = localStorage.getItem('localInventory');
-    let items = [...PRODUCTS, ...SERVICES];
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) items = parsed;
-      } catch (e) {
-        console.error("Failed to parse inventory", e);
-      }
-    }
-    // Deduplicate by ID to ensure unique keys in maps
-    return Array.from(new Map(items.map(i => [i.id, i])).values());
-  });
+  const [localInventory, setLocalInventory] = useState<(Product | Service)[]>([]);
 
   useEffect(() => {
+    if (!db || !currentBranchId) return;
+
+    // Fetch cloud inventory for BOTH products and services
+    const productsQ = query(collection(db, 'products'), where('branchId', '==', currentBranchId), limit(100));
+    const unsub = onSnapshot(productsQ, (snap) => {
+      const cloudItems = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product | Service));
+      
+      // Merge: Start with hardcoded defaults, then filter them by branch if they have one, 
+      // then priority-merge cloud items
+      const merged = new Map<string, Product | Service>();
+      
+      // 1. Add hardcoded items that are either global or match current branch
+      [...PRODUCTS, ...SERVICES].forEach(item => {
+        if (!item.branchId || item.branchId === currentBranchId) {
+          merged.set(item.id, item);
+        }
+      });
+
+      // 2. Overwrite with real database items (takes precedence)
+      cloudItems.forEach(item => merged.set(item.id, item));
+      
+      setLocalInventory(Array.from(merged.values()));
+    }, err => {
+      console.warn("Failed to subscribe to cloud inventory (likely cloud quota hit). Merging default items:", err);
+      const merged = new Map<string, Product | Service>();
+      [...PRODUCTS, ...SERVICES].forEach(item => {
+        if (!item.branchId || item.branchId === currentBranchId) {
+          merged.set(item.id, item);
+        }
+      });
+      setLocalInventory(Array.from(merged.values()));
+      handleFirestoreError(err, OperationType.LIST, 'products');
+    });
+
+    return () => unsub();
+  }, [currentBranchId]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref');
+    if (ref) {
+      referralService.savePendingReferral(ref);
+      // Clean up the URL to keep it pretty
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
     referralService.initializeNewUser();
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('localInventory', JSON.stringify(localInventory));
+    const timer = setTimeout(() => {
+      localStorage.setItem('localInventory', JSON.stringify(localInventory));
+    }, 1000);
+    return () => clearTimeout(timer);
   }, [localInventory]);
 
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('notificationsEnabled');
@@ -189,27 +709,31 @@ export default function App() {
     });
   };
 
-  const addToCart = (product: Product, quantity: number = 1) => {
+  const addToCart = React.useCallback((product: Product, quantity: number = 1) => {
+    const stock = product.stock ?? 10;
     setCart(prev => {
       const existing = prev.find(item => item.id === product.id);
+      const currentQty = existing ? existing.quantity : 0;
+      const newQty = Math.min(stock, currentQty + quantity);
+      
       if (existing) {
-        return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + quantity } : item);
+        return prev.map(item => item.id === product.id ? { ...item, quantity: newQty } : item);
       }
-      return [...prev, { ...product, quantity }];
+      return [...prev, { ...product, quantity: newQty }];
     });
-  };
+  }, []);
 
-  const toggleWishlist = (id: string) => {
+  const toggleWishlist = React.useCallback((id: string) => {
     setWishlist(prev => 
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
-  };
+  }, []);
 
-  const removeFromCart = (id: string) => {
+  const removeFromCart = React.useCallback((id: string) => {
     setCart(prev => prev.filter(item => item.id !== id));
-  };
+  }, []);
 
-  const updateQuantity = (id: string, delta: number) => {
+  const updateQuantity = React.useCallback((id: string, delta: number) => {
     setCart(prev => prev.map(item => {
       if (item.id === id) {
         const newQty = Math.max(1, item.quantity + delta);
@@ -217,115 +741,285 @@ export default function App() {
       }
       return item;
     }));
-  };
+  }, []);
 
-  const navigateTo = (screen: Screen, orderId?: string) => {
-    if (orderId) setSelectedOrderId(orderId);
-    setCurrentScreen(screen);
-  };
+  const handleUpdateCartItem = React.useCallback((id: string, updatedFields: Partial<CartItem>) => {
+    setCart(prev => prev.map(item => {
+      if (item.id === id) {
+        return { ...item, ...updatedFields };
+      }
+      return item;
+    }));
+  }, []);
 
-  const handleReorder = (orderId: string) => {
-    // Find the order in history if possible
-    let savedOrders = [];
-    try {
-      savedOrders = JSON.parse(localStorage.getItem('customer_orders') || '[]');
-    } catch (e) {
-      console.warn("Failed to parse customer orders during reorder", e);
-    }
-    const orderToRepeat = savedOrders.find((o: any) => o.id === orderId);
+  const updateLocation = (newLoc: string) => {
+    setLocation(newLoc);
+    localStorage.setItem('lokal_user_location', newLoc);
     
-    if (orderToRepeat && orderToRepeat.orderItems) {
-      orderToRepeat.orderItems.forEach((item: CartItem) => {
-        // Try to find the item in local inventory to get latest data
-        const currentItem = localInventory.find(i => i.id === item.id);
-        if (currentItem) {
-          addToCart(currentItem as Product, item.quantity);
-        } else {
-          addToCart(item as Product, item.quantity);
+    // Quick branch check for Khammam
+    if (newLoc.toLowerCase().includes('khammam')) {
+      setCurrentBranchId('khammam_main');
+      localStorage.setItem('lokal_branch_id', 'khammam_main');
+    }
+  };
+
+
+  const handleReorder = async (orderId: string) => {
+    setEditingOrderId(null);
+    // Try to find the order in firestore logic (fetching one-off is fine for reorder trigger)
+    try {
+      const { doc, getDoc } = await import('firebase/firestore');
+      const orderDoc = await getDoc(doc(db, 'orders', orderId));
+      if (orderDoc.exists()) {
+        const orderData = orderDoc.data();
+        if (orderData.orderItems) {
+          orderData.orderItems.forEach((item: CartItem) => {
+            const currentItem = localInventory.find(i => i.id === item.id);
+            if (currentItem) {
+              addToCart(currentItem as Product, item.quantity);
+            } else {
+              addToCart(item as Product, item.quantity);
+            }
+          });
         }
-      });
-    } else {
-      // Fallback
-      const productsToReorder = localInventory.slice(0, 2);
-      productsToReorder.forEach(p => addToCart(p as Product, 1));
+      }
+    } catch (e) {
+      console.error("Failed to reorder from Firestore", e);
     }
     navigateTo('cart');
   };
 
-  const completeOrder = () => {
+  const completeOrder = async (paymentMethod: string = 'upi', tipAmount: number = 0) => {
+    if (!user) {
+      alert("Please login to place an order");
+      navigateTo('login');
+      return;
+    }
+
     const subtotal = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0);
-    const tax = Math.round(subtotal * 0.05);
+    const rewardCost = selectedReward ? selectedReward.rewardPrice : 0;
+    const tax = Math.round((subtotal + rewardCost) * 0.05);
     const deliveryFee = subtotal > 500 ? 0 : 40;
-    const finalTotal = subtotal + tax + deliveryFee;
+    const finalTotal = subtotal + tax + deliveryFee + rewardCost + tipAmount;
 
-    const orderId = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
-    const newOrder = {
-      id: orderId,
-      status: 'Processing',
-      date: new Date().toISOString(),
-      displayDate: 'Just now',
-      total: finalTotal,
-      items: cart.reduce((acc, i) => acc + i.quantity, 0),
-      orderItems: [...cart] // Save the actual items
-    };
-
-    let existingOrders = [];
-    try {
-      existingOrders = JSON.parse(localStorage.getItem('customer_orders') || '[]');
-    } catch (e) {
-      console.warn("Failed to parse customer orders during save", e);
-    }
-    localStorage.setItem('customer_orders', JSON.stringify([newOrder, ...existingOrders]));
+    const orderId = editingOrderId || ('ORD-' + Math.floor(1000 + Math.random() * 9000));
     
-    // Also update active orders for admin view (simulated sync)
-    let activeOrders = [];
-    try {
-      activeOrders = JSON.parse(localStorage.getItem('activeOrders') || '[]');
-    } catch (e) {
-      console.warn("Failed to parse active orders during save", e);
+    // Prepare order items including reward if any
+    const orderItems = cart.map(item => ({
+      id: item.id,
+      name: item.name,
+      price: item.price,
+      quantity: item.quantity,
+      image: item.image
+    }));
+
+    if (selectedReward) {
+      orderItems.push({
+        id: selectedReward.id,
+        name: selectedReward.name + ' (Reward Item)',
+        price: selectedReward.rewardPrice,
+        quantity: 1,
+        image: selectedReward.img
+      });
     }
-    const activeOrderRecord = {
+
+    // Create or Update order in Firestore
+    const vendorId = cart[0]?.vendorId || 'global';
+    
+    // Find vendor details to store in order for rider
+    let vendorName = 'Local Bandi Merchant';
+    let vendorPhone = '';
+    let pickupAddress = 'Main Market, City Center';
+    let pickupLocation = { lat: 19.842, lng: 78.598 };
+
+    try {
+      const { doc, getDoc } = await import('firebase/firestore');
+      if (vendorId !== 'global') {
+        const vendorDoc = await getDoc(doc(db, 'vendors', vendorId));
+        if (vendorDoc.exists()) {
+          const vData = vendorDoc.data();
+          vendorName = vData.businessName || vData.name || vendorName;
+          vendorPhone = vData.phone || vendorPhone;
+          pickupAddress = vData.address || pickupAddress;
+          if (vData.location) pickupLocation = vData.location;
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to enrichment order with vendor details", e);
+    }
+
+    // Create or Update order in Firestore
+    const orderRecord: any = {
       id: orderId,
-      customerName: 'Bharat Kumar', // Hardcoded logged in user for demo
-      items: newOrder.items,
-      total: newOrder.total,
-      status: 'Pending',
-      vendorId: cart[0]?.id || 'v1',
-      deliveryPartnerId: null,
-      timestamp: new Date().toISOString()
+      userId: user.uid,
+      customerName: userProfile?.name || user.displayName || 'Guest User',
+      customerPhone: userProfile?.phone || user.phoneNumber || '',
+      deliveryAddress: location,
+      deliveryLocation: { lat: 19.845, lng: 78.601 }, // Default to Wardha area if geolocation fails
+      items: orderItems.reduce((acc, i) => acc + i.quantity, 0),
+      orderItems,
+      rewardItem: selectedReward || null,
+      total: finalTotal,
+      tipAmount: tipAmount,
+      vendorId: vendorId,
+      vendorName: vendorName,
+      vendorPhone: vendorPhone,
+      pickupAddress: pickupAddress,
+      pickupLocation: pickupLocation,
+      branchId: currentBranchId, // Essential for data isolation
+      paymentMethod: paymentMethod,
+      paymentStatus: paymentMethod === 'cod' ? 'Pending (COD)' : 'Paid (UPI)',
+      updatedAt: serverTimestamp(),
+      adminAccepted: false
     };
-    localStorage.setItem('activeOrders', JSON.stringify([activeOrderRecord, ...activeOrders]));
-    setSelectedOrderId(orderId);
-    navigateTo('confirmation');
+
+    if (!editingOrderId) {
+      orderRecord.status = 'Pending';
+      orderRecord.deliveryPartnerId = null;
+      orderRecord.createdAt = serverTimestamp();
+      orderRecord.timestamp = new Date().toISOString();
+    } else {
+      orderRecord.status = 'Pending'; // Return to pending after editing
+      orderRecord.isEdited = true;
+      orderRecord.lastEditAt = serverTimestamp();
+    }
+
+    try {
+      const { setDoc, doc, updateDoc } = await import('firebase/firestore');
+      const { integrationService } = await import('./services/integrationService');
+
+      if (editingOrderId) {
+        await updateDoc(doc(db, 'orders', orderId), orderRecord);
+      } else {
+        await setDoc(doc(db, 'orders', orderId), orderRecord);
+      }
+
+      // Real-time SMS Gateway Integration
+      const phone = userProfile?.phone || user.phoneNumber;
+      if (phone) {
+        integrationService.sendSMS(
+          phone, 
+          `Local Bandi Multi Services: Order ${orderId} for ₹${finalTotal} placed! Track here: https://lokalbharat.app/track/${orderId}`
+        ).catch(err => console.error("Order SMS error:", err));
+      }
+
+      setSelectedOrderId(orderId);
+      setEditingOrderId(null);
+      setCart([]);
+      setSelectedReward(null);
+      navigateTo('confirmation');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `orders/${orderId}`);
+    }
   };
 
-  const viewCategory = (category: Category) => {
+  const viewCategory = React.useCallback((category: Category) => {
+    if (category.id === 'realestate') {
+      navigateTo('realEstate');
+      return;
+    }
+    if (category.id === 'marriage') {
+      navigateTo('marriageBureau');
+      return;
+    }
     setSelectedCategory(category);
     navigateTo('category');
-  };
+  }, [navigateTo]);
 
-  const viewItem = (item: Product | Service) => {
+  const viewItem = React.useCallback((item: Product | Service) => {
     setSelectedItem(item);
-    if (['services', 'emergency', 'travel', 'marriage', 'events'].includes(item.category)) {
+    const serviceCategoryIds = ['services', 'emergency', 'travel', 'marriage', 'events', 'maids', 'mechanics', 'construction', 'care', 'jobs', 'driving_school', 'beauty_parlour'];
+    if (serviceCategoryIds.includes(item.category)) {
       navigateTo('service');
     } else {
       navigateTo('product');
     }
+  }, [navigateTo]);
+
+  const handleEditOrder = async (orderId: string) => {
+    try {
+      const { doc, getDoc } = await import('firebase/firestore');
+      const orderRef = doc(db, 'orders', orderId);
+      const orderDoc = await getDoc(orderRef);
+      if (orderDoc.exists()) {
+        const orderData = orderDoc.data();
+        
+        // Populate cart with existing items
+        if (orderData.orderItems) {
+          const newCart: CartItem[] = [];
+          orderData.orderItems.forEach((item: any) => {
+            // Priority: Find in local inventory, then use order's raw data
+            const inventoryItem = localInventory.find(li => li.id === item.id);
+            if (inventoryItem) {
+              newCart.push({ ...inventoryItem, quantity: item.quantity } as CartItem);
+            } else {
+              // Ensure we have basic fields for Cart to work
+              newCart.push({
+                ...item,
+                price: item.price || 0,
+                name: item.name || 'Legacy Item',
+                image: item.image || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=400',
+                category: item.category || 'groceries',
+                quantity: item.quantity || 1
+              } as CartItem);
+            }
+          });
+          setCart(newCart);
+          setEditingOrderId(orderId);
+          
+          // Mark order as Editing to prevent vendor/rider from acting on it
+          const { updateDoc, serverTimestamp } = await import('firebase/firestore');
+          await updateDoc(doc(db, 'orders', orderId), {
+            status: 'Editing',
+            updatedAt: serverTimestamp()
+          });
+          
+          navigateTo('cart');
+        }
+      }
+    } catch (e) {
+      console.error("Failed to edit order", e);
+      alert("Error editing order. Please try again.");
+    }
   };
+
+  useEffect(() => {
+    if (user && currentScreen === 'location') {
+      // Auto-detect location on login/landing on location screen
+      const handleAutoDetect = async () => {
+        if ("geolocation" in navigator) {
+          navigator.geolocation.getCurrentPosition(async (position) => {
+            try {
+              const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${position.coords.latitude}&lon=${position.coords.longitude}`);
+              const data = await res.json();
+              if (data.display_name) {
+                handleLocationSelect(data.display_name);
+              }
+            } catch (e) {
+              console.warn("Auto-location failed", e);
+            }
+          }, (err) => {
+            console.warn("Geolocation permission denied or failed", err);
+          });
+        }
+      };
+      handleAutoDetect();
+    }
+  }, [user, currentScreen]);
 
   const renderScreen = () => {
     switch (currentScreen) {
       case 'splash':
-        return <Splash onFinish={() => {
+        return <SafeZone name="Splash"><Splash onFinish={() => {
           const hasSeenOnboarding = localStorage.getItem('hasSeenOnboarding');
           if (hasSeenOnboarding) {
             navigateTo('login');
           } else {
             navigateTo('onboarding');
           }
-        }} />;
+        }} /></SafeZone>;
       case 'onboarding':
-        return <Onboarding 
+        return <SafeZone name="Onboarding"><Onboarding 
           onComplete={() => {
             localStorage.setItem('hasSeenOnboarding', 'true');
             navigateTo('login');
@@ -334,149 +1028,293 @@ export default function App() {
             localStorage.setItem('hasSeenOnboarding', 'true');
             navigateTo('location');
           }}
-        />;
+        /></SafeZone>;
       case 'login':
-        return <Login onLogin={() => navigateTo('location')} />;
+        return <SafeZone name="Login"><Login onLogin={() => navigateTo('location')} /></SafeZone>;
       case 'location':
-        return <LocationSelection 
+        return <SafeZone name="Location"><LocationSelection 
           onSelect={handleLocationSelect} 
-        />;
+          userProfile={userProfile}
+          currentLocation={location}
+        /></SafeZone>;
       case 'home':
-        return <Home 
+        return <SafeZone name="Home"><Home 
           location={location}
           language={selectedLanguage}
           onCategoryClick={viewCategory}
           onProductClick={viewItem}
           cartCount={cart.reduce((acc, i) => acc + i.quantity, 0)}
           wishlistCount={wishlist.length}
-          onNavigate={(s) => navigateTo(s)}
+          onNavigate={(s, id) => navigateTo(s as any, id)}
           user={user}
-          isAdmin={isFirebaseAdmin}
-          onAdminAuth={() => {}}
+          userProfile={userProfile}
+          isAdmin={isAdmin}
+          isSuperAdmin={isSuperAdmin}
+          isBranchAdmin={isBranchAdmin}
+          onAdminAuth={setPasscodeAuthenticated}
           localInventory={localInventory}
           setLocalInventory={setLocalInventory}
-        />;
+          setShowCustomerCare={setShowCustomerCare}
+          hospitalPrices={hospitalPrices}
+          setHospitalPrices={setHospitalPrices}
+          currentBranchId={currentBranchId}
+          onLocationChange={handleLocationSelect}
+          currentBranch={currentBranch}
+        /></SafeZone>;
+      case 'branchManager':
+        if (!isSuperAdmin) return <SafeZone name="Home"><Home 
+          location={location}
+          language={selectedLanguage}
+          onCategoryClick={viewCategory}
+          onProductClick={viewItem}
+          cartCount={cart.reduce((acc, i) => acc + i.quantity, 0)}
+          wishlistCount={wishlist.length}
+          onNavigate={(s, id) => navigateTo(s as any, id)}
+          user={user}
+          userProfile={userProfile}
+          isAdmin={isAdmin}
+          onAdminAuth={setPasscodeAuthenticated}
+          localInventory={localInventory}
+          setLocalInventory={setLocalInventory}
+          setShowCustomerCare={setShowCustomerCare}
+          hospitalPrices={hospitalPrices}
+          setHospitalPrices={setHospitalPrices}
+          currentBranchId={currentBranchId}
+          currentBranch={currentBranch}
+        /></SafeZone>;
+        return <SafeZone name="Branch Manager"><BranchManager onBack={() => navigateTo('home')} masterAdminName="Tarun Bandi" /></SafeZone>;
       case 'category':
-        return <CategoryListing 
+        return <SafeZone name="Category Listing"><CategoryListing 
           category={selectedCategory!}
           language={selectedLanguage}
           onBack={() => navigateTo('home')}
           onProductClick={viewItem}
-          isAdmin={isFirebaseAdmin}
+          isAdmin={isAdmin}
           localInventory={localInventory}
-        />;
+          hospitalPrices={hospitalPrices}
+          currentBranchId={currentBranchId}
+          onBookHospitalOP={(data) => {
+            (window as any).pendingLocalPayment = {
+              amount: data.amount,
+              type: 'hospital_booking',
+              metadata: data,
+              onComplete: async (method: string) => {
+                try {
+                  const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+                  await addDoc(collection(db, 'hospital_bookings'), {
+                    ...data,
+                    userId: user?.uid,
+                    status: 'pending',
+                    paymentMethod: method,
+                    paymentStatus: method === 'cod' ? 'Hand Cash' : 'Paid (UPI)',
+                    createdAt: serverTimestamp()
+                  });
+                  alert("OP Booking Confirmed! Show the confirmation in Hospital.");
+                  navigateTo('home');
+                } catch (err) {
+                  console.error("Booking save error:", err);
+                }
+              }
+            };
+            navigateTo('payment');
+          }}
+        /></SafeZone>;
       case 'product':
-        return <ProductDetails 
+        return <SafeZone name="Product Details"><ProductDetails 
           product={selectedItem as Product}
           onBack={() => navigateTo('category')}
           isInWishlist={wishlist.includes(selectedItem?.id || '')}
           onToggleWishlist={toggleWishlist}
+          cart={cart}
           onAddToCart={(p, q) => {
             addToCart(p, q);
             navigateTo('cart');
           }}
-        />;
+          hospitalPrices={hospitalPrices}
+          onBookHospitalOP={(data) => {
+            (window as any).pendingLocalPayment = {
+              amount: data.amount,
+              type: 'hospital_booking',
+              metadata: data,
+              onComplete: async (method: string) => {
+                try {
+                  const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+                  await addDoc(collection(db, 'hospital_bookings'), {
+                    ...data,
+                    userId: user?.uid,
+                    status: 'pending',
+                    paymentMethod: method,
+                    paymentStatus: method === 'cod' ? 'Hand Cash' : 'Paid (UPI)',
+                    createdAt: serverTimestamp()
+                  });
+                  alert("OP Booking Confirmed! Show the confirmation in Hospital.");
+                  navigateTo('home');
+                } catch (err) {
+                  console.error("Booking save error:", err);
+                }
+              }
+            };
+            navigateTo('payment');
+          }}
+          isAdmin={isAdmin}
+        /></SafeZone>;
       case 'wishlist':
-        return <Wishlist 
+        return <SafeZone name="Wishlist"><Wishlist 
           wishlistIds={wishlist}
           language={selectedLanguage}
           onBack={() => navigateTo('home')}
           onProductClick={viewItem}
           onRemove={toggleWishlist}
-        />;
+        /></SafeZone>;
       case 'service':
-        return <ServiceBooking 
+        return <SafeZone name="Service Booking"><ServiceBooking 
           service={selectedItem as Service}
           onBack={() => navigateTo('category')}
           onBook={() => navigateTo('cart')}
-        />;
+          isAdmin={isAdmin}
+        /></SafeZone>;
       case 'cart':
-        return <Cart 
+        return <SafeZone name="Cart"><Cart 
           items={cart}
           language={selectedLanguage}
           onBack={() => navigateTo('home')}
           onUpdateQty={updateQuantity}
           onRemove={removeFromCart}
           onCheckout={() => navigateTo('payment')}
-        />;
+          selectedRewardId={selectedReward?.id || null}
+          onSelectReward={(id) => {
+            const reward = REWARDS.find(r => r.id === id);
+            setSelectedReward(reward || null);
+          }}
+          promoCodes={promoCodes}
+          isAdmin={isAdmin}
+          onUpdateCartItem={handleUpdateCartItem}
+        /></SafeZone>;
       case 'profile':
-        return <Profile 
+        return <SafeZone name="Profile"><Profile 
           onBack={() => navigateTo('home')}
-          onNavigate={(s) => navigateTo(s as Screen)}
+          onNavigate={(s, id) => navigateTo(s as Screen, id)}
           language={selectedLanguage}
-        />;
+          isAdmin={isAdmin}
+        /></SafeZone>;
       case 'settings':
-        return <Settings 
+        return <SafeZone name="Settings"><Settings 
           onBack={() => navigateTo('profile')}
-          onLogout={() => navigateTo('login')}
+          onLogout={async () => {
+            try {
+              await logout();
+              navigateTo('login');
+            } catch (e) {
+              console.error("Logout failed:", e);
+            }
+          }}
           selectedLanguage={selectedLanguage}
           onLanguageChange={setSelectedLanguage}
           notificationsEnabled={notificationsEnabled}
           onToggleNotifications={toggleNotifications}
           onNavigate={(s) => navigateTo(s as Screen)}
-        />;
+        /></SafeZone>;
       case 'orders':
-        return <Orders 
+        return <SafeZone name="Orders"><Orders 
           onBack={() => navigateTo('profile')}
           onReorder={handleReorder}
           onTrackOrder={(id) => navigateTo('tracking', id)}
+          onEditOrder={handleEditOrder}
           language={selectedLanguage}
-        />;
+        /></SafeZone>;
       case 'tracking':
-        return <TrackOrder 
+        return <SafeZone name="Tracking"><TrackOrder 
           orderId={selectedOrderId || 'ORD-9021'} 
           onBack={() => navigateTo('orders')}
+          onEditOrder={handleEditOrder}
           language={selectedLanguage}
-        />;
+        /></SafeZone>;
       case 'notifications':
-        return <Notifications onBack={() => navigateTo('profile')} />;
+        return <SafeZone name="Notifications"><Notifications onBack={() => navigateTo('profile')} /></SafeZone>;
       case 'privacy':
-        return <PrivacyPolicy onBack={() => navigateTo('settings')} language={selectedLanguage} />;
+        return <SafeZone name="Privacy"><PrivacyPolicy onBack={() => navigateTo('settings')} language={selectedLanguage} /></SafeZone>;
       case 'terms':
-        return <TermsOfService onBack={() => navigateTo('settings')} language={selectedLanguage} />;
+        return <SafeZone name="Terms"><TermsOfService onBack={() => navigateTo('settings')} language={selectedLanguage} /></SafeZone>;
       case 'payment':
-        return <Payment 
-          onBack={() => navigateTo('cart')}
-          onComplete={completeOrder}
-        />;
+        const subtotal = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+        const rewardCost = selectedReward ? selectedReward.rewardPrice : 0;
+        const tax = Math.round((subtotal + rewardCost) * 0.05);
+        const deliveryFee = subtotal > 500 ? 0 : 40;
+        
+        let displayTotal = subtotal + tax + deliveryFee + rewardCost;
+        let onCompleteCallback: (method?: string, tip?: number) => void | Promise<void> = (method, tip) => completeOrder(method || 'upi', tip || 0);
+        let onBackCallback: () => void | Promise<void> = () => navigateTo('cart');
+
+        // Check for ad-hoc payments (Hospital OP, Marriage Subscription, etc.)
+        const pendingPayment = (window as any).pendingLocalPayment;
+        if (pendingPayment) {
+          displayTotal = pendingPayment.amount;
+          onCompleteCallback = async (method?: string) => {
+            await pendingPayment.onComplete(method || 'upi');
+            (window as any).pendingLocalPayment = null;
+            await navigateTo('home');
+          };
+          onBackCallback = async () => {
+            (window as any).pendingLocalPayment = null;
+            await navigateTo('home');
+          };
+        }
+
+        return <SafeZone name="Payment"><Payment 
+          onBack={onBackCallback}
+          onComplete={onCompleteCallback}
+          amount={displayTotal}
+          userProfile={userProfile}
+          currentLocation={location}
+        /></SafeZone>;
       case 'confirmation':
-        return <OrderConfirmation 
+        return <SafeZone name="Confirmation"><OrderConfirmation 
           items={cart}
           orderId={selectedOrderId || 'NEW-ORDER'}
           onHome={() => {
             setCart([]);
             navigateTo('home');
           }}
-        />;
+        /></SafeZone>;
       case 'delivery':
-        return <DeliveryDashboard onBack={() => navigateTo('profile')} />;
+        const dProfileId = selectedOrderId || (isAdmin ? 'admin-rider' : undefined);
+        return <SafeZone name="Delivery"><DeliveryDashboard profileId={dProfileId} onBack={() => navigateTo('profile')} isAdmin={isAdmin} /></SafeZone>;
       case 'vendor':
-        return activeVendorProfile ? (
-          <VendorDashboard profileId={activeVendorProfile.id} onBack={() => navigateTo('profile')} />
+        const vProfileId = selectedOrderId || (activeVendorProfile?.id) || (isAdmin ? 'admin-store' : undefined);
+        return vProfileId ? (
+          <SafeZone name="Vendor Dashboard"><VendorDashboard profileId={vProfileId} onBack={() => navigateTo(isAdmin ? 'home' : 'profile')} isAdmin={isAdmin} /></SafeZone>
         ) : (
-          <Home 
+          <SafeZone name="Home"><Home 
             location={location}
             language={selectedLanguage}
             onCategoryClick={viewCategory}
             onProductClick={viewItem}
             cartCount={cart.reduce((acc, i) => acc + i.quantity, 0)}
             wishlistCount={wishlist.length}
-            onNavigate={(s) => navigateTo(s)}
+            onNavigate={(s, id) => navigateTo(s as any, id)}
             user={user}
-            isAdmin={isFirebaseAdmin}
-            onAdminAuth={() => {}}
+            userProfile={userProfile}
+            isAdmin={isAdmin}
+            onAdminAuth={setPasscodeAuthenticated}
             localInventory={localInventory}
             setLocalInventory={setLocalInventory}
-          />
+            hospitalPrices={hospitalPrices}
+          /></SafeZone>
         );
       case 'marriageBureau':
-        return <MarriageBureau 
+        return <SafeZone name="Marriage Bureau"><MarriageBureau 
           onBack={() => navigateTo('home')} 
           language={selectedLanguage} 
-          isAdmin={isFirebaseAdmin}
-        />;
+          isAdmin={isAdmin}
+        /></SafeZone>;
+      case 'realEstate':
+        return <SafeZone name="Real Estate"><RealEstate 
+          onClose={() => navigateTo('home')} 
+        /></SafeZone>;
+      case 'tasks':
+        return <SafeZone name="Tasks"><TaskManager onBack={() => navigateTo('home')} /></SafeZone>;
       default:
-        return <Splash onFinish={() => navigateTo('login')} />;
+        return <SafeZone name="Splash"><Splash onFinish={() => navigateTo('login')} /></SafeZone>;
     }
   };
 
@@ -489,33 +1327,208 @@ export default function App() {
           className="flex flex-col items-center"
         >
           <div className="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-6" />
-          <h2 className="text-xl font-black mb-2 tracking-tight">Initializing Lokal Bharath</h2>
-          <p className="text-slate-400 text-sm font-bold uppercase tracking-widest">Connecting to secured servers...</p>
+          <h2 className="text-xl font-black mb-2 tracking-tight">Initializing Local Bandi Multi Services</h2>
+          <p className="text-slate-400 text-sm font-bold uppercase tracking-wider">Connecting to secured servers...</p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  const isPublicScreen = ['splash', 'onboarding', 'login'].includes(currentScreen);
+  if (user && !isAdmin && !isPublicScreen) {
+    return (
+      <div className="max-w-md mx-auto h-screen bg-slate-900 flex items-center justify-center p-8 text-center text-white overflow-y-auto">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="w-full space-y-8 py-6"
+        >
+          <div className="w-20 h-20 bg-rose-500/20 rounded-[2.5rem] flex items-center justify-center mx-auto ring-8 ring-rose-500/10">
+            <AlertCircle className="w-10 h-10 text-rose-500" />
+          </div>
+          
+          <div className="space-y-3">
+            <h2 className="text-3xl font-black italic tracking-tighter">ACCESS DENIED</h2>
+            <p className="text-rose-400 text-xs font-black uppercase tracking-widest leading-none">
+              Local Bandi Multi Services Admin Console
+            </p>
+            <p className="text-slate-400 text-[11px] font-bold leading-relaxed px-4">
+              Your account ({user.email || user.phoneNumber || 'User'}) is not registered as an authorized Admin. This app is dedicated exclusively to administrative management.
+            </p>
+          </div>
+
+          <div className="bg-slate-950/40 p-6 rounded-[2rem] border border-white/10 space-y-4">
+            <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest text-left pl-1">
+              Enter Admin Password or Bypass Code
+            </label>
+            <input
+              type="password"
+              placeholder="••••••••••••"
+              value={passcode}
+              onChange={(e) => {
+                setPasscode(e.target.value);
+                setPasscodeError('');
+              }}
+              className="w-full bg-slate-900/60 border border-white/10 p-4 rounded-xl text-center text-lg font-black tracking-widest outline-none focus:border-indigo-500 transition-all text-white placeholder-slate-700"
+            />
+            {passcodeError && (
+              <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider italic text-center">
+                {passcodeError}
+              </p>
+            )}
+            <button
+              onClick={() => {
+                if (passcode === 'Founder@2026') {
+                  setPasscodeAuthenticated(true);
+                  localStorage.setItem('admin_session_active', 'true');
+                  window.dispatchEvent(new Event('maintenance_mode_changed'));
+                } else {
+                  setPasscodeError('Incorrect Passcode');
+                }
+              }}
+              className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-transform"
+            >
+              Verify & Enter Console
+            </button>
+          </div>
+
+          <div className="flex gap-3 px-2">
+            <button 
+              onClick={async () => {
+                await logout();
+                navigateTo('login');
+              }}
+              className="flex-1 py-4 bg-white/10 text-white hover:bg-white/25 rounded-xl font-black uppercase text-[10px] tracking-widest transition-colors"
+            >
+              Sign Out
+            </button>
+            <button 
+              onClick={() => {
+                window.location.href = `mailto:localbharathkhammam@gmail.com?subject=Admin%20Enrollment%20Request&body=Please%20grant%20admin%20access%20to%20UID%20${user.uid}`;
+              }}
+              className="flex-1 py-4 bg-indigo-500/20 text-indigo-300 rounded-xl font-black uppercase text-[10px] tracking-widest transition-colors"
+            >
+              Request Access
+            </button>
+          </div>
+
+          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+            Secured Admin Authorization Node
+          </p>
         </motion.div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-md mx-auto h-screen bg-gray-50 overflow-hidden relative shadow-2xl">
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={currentScreen}
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: -20 }}
-          transition={{ duration: 0.2 }}
-          className="h-full w-full"
-        >
-          {renderScreen()}
-        </motion.div>
-      </AnimatePresence>
-      {(isMaintenanceMode && !adminSessionActive && !isFirebaseAdmin) && <MaintenanceScreen />}
+    <>
+      <div className="max-w-md mx-auto h-screen bg-gray-50 overflow-hidden relative shadow-2xl">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentScreen}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.2 }}
+            className="h-full w-full"
+          >
+            <React.Suspense fallback={
+              <div className="h-full flex flex-col items-center justify-center bg-white p-8">
+                <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-6" />
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest animate-pulse italic">Lokal Syncing...</p>
+              </div>
+            }>
+              {(!isAdmin && isBranchOffline && currentScreen !== 'splash' && currentScreen !== 'login') ? (
+                <div className="h-full bg-slate-900 flex items-center justify-center p-8 text-center">
+                  <motion.div 
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="space-y-8"
+                  >
+                    <div className="w-24 h-24 bg-rose-500/20 rounded-[2.5rem] flex items-center justify-center mx-auto ring-8 ring-rose-500/10">
+                      <Power className="w-12 h-12 text-rose-500" />
+                    </div>
+                    <div className="space-y-3">
+                      <h2 className="text-3xl font-black text-white italic tracking-tighter">BRANCH OFFLINE</h2>
+                      <p className="text-slate-400 text-sm font-bold uppercase tracking-widest leading-relaxed">
+                        The {currentBranch?.name || 'local'} branch is currently offline for maintenance or administrative updates.
+                      </p>
+                    </div>
+                    <div className="bg-white/5 p-6 rounded-[2rem] border border-white/10">
+                      <p className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] mb-2">Message from HQ</p>
+                      <p className="text-xs font-bold text-slate-300 italic">"We maintain high service standards. Please check back shortly or select another location."</p>
+                    </div>
+                    <button 
+                      onClick={() => navigateTo('location')}
+                      className="w-full py-5 bg-white text-slate-900 rounded-3xl font-black uppercase tracking-widest text-xs shadow-2xl active:scale-95 transition-transform"
+                    >
+                      Change Location
+                    </button>
+                    <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Secured by Local Bandi Multi Services</p>
+                  </motion.div>
+                </div>
+              ) : renderScreen()}
+            </React.Suspense>
+          </motion.div>
+        </AnimatePresence>
+        {(isMaintenanceMode && !adminSessionActive && !isAdmin) && <MaintenanceScreen />}
+      </div>
       <CustomerCare 
         isOpen={showCustomerCare} 
         onClose={() => setShowCustomerCare(false)} 
         supportPhone={supportInfo.phone}
+        secondaryPhone={supportInfo.secondaryPhone}
+        initialType={supportCareType}
+        branchId={currentBranchId}
       />
-    </div>
+
+      <AnimatePresence>
+        {globalError && (
+          <div className="fixed inset-0 z-[10001] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setGlobalError(null)}
+              className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-white rounded-[2.5rem] p-8 max-w-sm w-full shadow-2xl border-2 border-rose-100"
+            >
+              <div className="w-16 h-16 bg-rose-50 rounded-2xl flex items-center justify-center mb-6">
+                <AlertCircle className="w-8 h-8 text-rose-500" />
+              </div>
+              <h3 className="text-xl font-black text-gray-900 mb-2 italic">Operation Update</h3>
+              <p className="text-gray-600 text-sm font-bold leading-relaxed mb-6">{globalError.message}</p>
+              
+              {globalError.recovery && (
+                <div className="bg-emerald-50 p-4 rounded-2xl mb-8 border border-emerald-100">
+                  <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest mb-1 italic">Action Suggested</p>
+                  <p className="text-xs font-bold text-emerald-600 leading-relaxed uppercase">{globalError.recovery}</p>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowCustomerCare(true)}
+                  className="flex-1 py-4 bg-indigo-50 text-indigo-600 rounded-xl font-black uppercase text-[10px] tracking-widest"
+                >
+                  Get Help
+                </button>
+                <button 
+                  onClick={() => setGlobalError(null)}
+                  className="flex-1 py-4 bg-gray-900 text-white rounded-xl font-black uppercase text-[10px] tracking-widest"
+                >
+                  Got It
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

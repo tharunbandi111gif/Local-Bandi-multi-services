@@ -21,7 +21,10 @@ export type Screen =
   | 'delivery'
   | 'vendor'
   | 'marriageBureau'
-  | 'logistics';
+  | 'realEstate'
+  | 'tasks'
+  | 'logistics'
+  | 'branchManager';
 
 export type LanguageCode = 
   | 'en-IN' | 'hi-IN' | 'te-IN' | 'ta-IN' | 'kn-IN' | 'ml-IN' 
@@ -40,6 +43,7 @@ export interface Category {
   name: string;
   icon: string;
   color: string;
+  image?: string;
 }
 
 export interface Review {
@@ -50,8 +54,31 @@ export interface Review {
   date: string;
 }
 
+export interface Branch {
+  id: string;
+  name: string;
+  location: string;
+  city?: string;
+  district?: string;
+  state?: string;
+  adminId: string;
+  adminName: string;
+  status: 'Active' | 'Offline';
+  joinDate: any;
+  agreementExpiry: any;
+  profitShare: number; // percentage
+  contactPhone: string;
+  adminEmail?: string;
+  vendorsCount: number;
+  ordersCount: number;
+  revenue: number;
+  rating?: number;
+  pincodes?: string[];
+}
+
 export interface Product {
   id: string;
+  branchId?: string;
   name: string;
   price: number;
   originalPrice?: number;
@@ -66,6 +93,93 @@ export interface Product {
   isAvailable?: boolean;
 }
 
+export interface VendorProfile {
+  id: string;
+  branchId?: string;
+  userId?: string;
+  businessName: string;
+  ownerName: string;
+  phone: string;
+  service: string;
+  status: 'Approved' | 'Pending' | 'Terminated';
+  isOnline: boolean;
+  revenue: number;
+  pendingPayout: number;
+  itemsCount: number;
+  rating: number;
+  address?: string;
+  location?: { area: string, city: string, pincode: string } | null;
+  lastPayoutDate?: string;
+  totalPaid?: number;
+  photo?: string | null;
+  documentPhoto?: string | null;
+  gstNumber?: string | null;
+  bankName?: string;
+  accountHolder?: string;
+  accountNumber?: string;
+  ifscCode?: string;
+  upiId?: string;
+  accessCode?: string;
+}
+
+export interface DeliveryPartnerProfile {
+  id: string;
+  branchId?: string;
+  userId?: string;
+  name: string;
+  phone: string;
+  vehicleType: string;
+  vehicleNumber?: string;
+  status: 'Online' | 'Offline' | 'On Trip' | 'Banned' | 'Approved' | 'Pending';
+  isOnline: boolean;
+  earnings: number;
+  pendingPayout: number;
+  rating: number;
+  trips: number;
+  cashInHand?: number; // Cash from COD orders
+  remittanceRequests?: { id: string, amount: number, date: string, status: 'Pending' | 'Approved' | 'Rejected' }[];
+  lastPayoutDate?: string;
+  totalPaid?: number;
+  photo?: string | null;
+  documentPhoto?: string | null;
+  bankName?: string;
+  accountHolder?: string;
+  accountNumber?: string;
+  ifscCode?: string;
+  upiId?: string;
+  accessCode?: string;
+}
+
+export interface Property {
+  id: string;
+  sellerId: string;
+  sellerName: string;
+  title: string;
+  price: number;
+  type: 'Sell' | 'Rent';
+  category: string; // Residential, Commercial, Land, etc.
+  description: string;
+  image: string;
+  images?: string[];
+  location: {
+    area: string;
+    city: string;
+    pincode: string;
+    fullAddress?: string;
+  };
+  sellerPhone?: string;
+  details: {
+    sqft?: string;
+    bedrooms?: string;
+    bathrooms?: string;
+    furnished?: 'Unfurnished' | 'Semi-furnished' | 'Fully-furnished';
+    facing?: string;
+  };
+  isApproved: boolean;
+  editCount?: number;
+  createdAt: string;
+}
+
 export interface PartnerPreferences {
   ageMin?: string;
   ageMax?: string;
@@ -77,6 +191,7 @@ export interface PartnerPreferences {
 
 export interface MarriageProfile {
   id: string;
+  userId: string;
   name: string;
   surname: string;
   age: string;
@@ -106,11 +221,20 @@ export interface MarriageProfile {
   isApproved: boolean;
   rejectionReason?: string;
   canViewSensisitve?: boolean; // Permission to see others sensitive info
+  subscription?: {
+    plan: 'free' | 'maintenance_59' | 'maintenance_99';
+    expiryDate: string;
+    visitsRemaining: number;
+    totalVisitsBought: number;
+    weeklyLikesCount: number;
+    lastLikeResetDate: string;
+  };
   partnerPreferences?: PartnerPreferences;
 }
 
 export interface Service {
   id: string;
+  branchId?: string;
   name: string;
   price: number;
   originalPrice?: number;
@@ -143,87 +267,117 @@ export interface Transaction {
 
 export interface CartItem extends Product {
   quantity: number;
+  vendorId?: string;
 }
 
-export interface DeliveryPartnerProfile {
-  id: string;
-  userId?: string;
-  name: string;
-  phone: string;
-  vehicleType: string;
-  vehicleNumber?: string;
-  status: 'Online' | 'Offline' | 'On Trip' | 'Banned' | 'Approved';
-  isOnline: boolean;
-  earnings: number;
-  pendingPayout: number;
-  rating: number;
-  trips: number;
-  cashInHand?: number; // Cash from COD orders
-  remittanceRequests?: { id: string, amount: number, date: string, status: 'Pending' | 'Approved' | 'Rejected' }[];
-  lastPayoutDate?: string;
-  totalPaid?: number;
-  photo?: string | null;
-}
-
-export interface VendorProfile {
-  id: string;
-  userId?: string;
-  businessName: string;
-  ownerName: string;
-  phone: string;
-  service: string;
-  status: 'Approved' | 'Pending' | 'Terminated';
-  isOnline: boolean;
-  revenue: number;
-  pendingPayout: number;
-  itemsCount: number;
-  rating: number;
-  address?: string;
-  location?: { area: string, city: string, pincode: string } | null;
-  lastPayoutDate?: string;
-  totalPaid?: number;
-  photo?: string | null;
-}
 
 export interface VendorOrder {
   id: string;
+  branchId?: string;
   customerName: string;
   customerPhone: string;
-  items: { name: string, quantity: number, price: number }[];
-  totalAmount: number;
-  status: 'Pending' | 'Preparing' | 'Ready' | 'PickedUp' | 'Delivered' | 'Cancelled';
+  deliveryAddress?: string;
+  items: number;
+  orderItems: { id: string, name: string, quantity: number, price: number, image?: string }[];
+  total: number;
+  status: 'Pending' | 'Preparing' | 'ReadyForPickup' | 'PickedUp' | 'Delivered' | 'Cancelled' | 'Editing' | 'Accepted' | 'Assigned';
   createdAt: string;
   paymentMethod: 'COD' | 'Online';
   deliveryType: 'Delivery' | 'Pickup';
+  deliveryPartnerId?: string | null;
+  deliveryPartnerName?: string | null;
+  deliveryPartnerPhone?: string | null;
+  customerInstructions?: string | null;
+  deliveryInstructions?: string | null;
+  notes?: string | null;
+  instructions?: string | null;
 }
 
 export interface DeliveryOrder {
   id: string;
+  branchId?: string;
   customerName: string;
   customerPhone: string;
   pickupAddress: string;
   deliveryAddress: string;
   items: string[];
   amount: number;
-  status: 'Pending' | 'Accepted' | 'PickedUp' | 'Delivered';
+  status: 'Pending' | 'Accepted' | 'PickedUp' | 'Delivered' | 'ReadyForPickup' | 'Assigned';
   pickupLocation: { lat: number, lng: number };
   deliveryLocation: { lat: number, lng: number };
   createdAt: string;
+  vendorName?: string;
+  vendorPhone?: string;
 }
 
 export interface SupportMessage {
   id: string;
   senderId: string;
   senderName: string;
-  senderType: 'partner' | 'admin';
+  senderType: 'user' | 'partner' | 'admin' | 'bot';
   text: string;
-  timestamp: string;
+  timestamp: any;
+  careType?: string;
 }
 
 export interface SupportChat {
-  partnerId: string;
-  partnerName: string;
+  userId: string;
+  userName: string;
+  userEmail?: string;
   messages: SupportMessage[];
-  lastMessageTimestamp: string;
+  lastMessageTimestamp: any;
   unreadCount?: number;
+  partnerId?: string;
+  partnerName?: string;
+}
+
+export type PartnerApplicationType = 'Vendor' | 'DeliveryPartner' | 'RealEstateSeller' | 'Franchise';
+
+export interface PartnerApplication {
+  id: string;
+  userId: string;
+  branchId?: string;
+  type: PartnerApplicationType;
+  fullName: string;
+  phone: string;
+  businessName?: string;
+  businessType?: string;
+  location: string;
+  pincode?: string;
+  gstNumber?: string | null;
+  bankName?: string;
+  accountHolder?: string;
+  accountNumber?: string;
+  ifscCode?: string;
+  upiId?: string;
+  photo?: string | null;
+  documentPhoto?: string | null;
+  initialProduct?: any;
+  status: 'Pending' | 'Approved' | 'Rejected';
+  createdAt: any;
+}
+
+export interface PlatformSettings {
+  id: string;
+  allowBankTransfer: boolean;
+  allowCashOnRegistration: boolean;
+  registrationFee: number;
+  upiId?: string;
+  accountHolder?: string;
+}
+
+export interface PromoCode {
+  id: string;
+  branchId?: string; // Optional: restrict to specific branch
+  code: string;
+  type: 'percentage' | 'fixed';
+  value: number;
+  minOrderAmount?: number;
+  maxDiscountAmount?: number;
+  expiryDate: string;
+  usageLimit?: number;
+  usageCount: number;
+  status: 'Active' | 'Inactive';
+  description?: string;
+  createdAt: any;
 }

@@ -27,12 +27,20 @@ import {
   SlidersHorizontal,
   Share2,
   Edit2,
-  AlertCircle
+  AlertCircle,
+  Zap,
+  ArrowRight,
+  Plus,
+  FileText,
+  MessageCircle,
+  MessageSquare
 } from 'lucide-react';
 import { MarriageProfile } from '../types';
-import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType, setupRecaptcha } from '../lib/firebase';
+import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, setDoc, limit } from 'firebase/firestore';
+import type { ConfirmationResult } from '../lib/firebase';
 import { useFirebase } from '../contexts/FirebaseContext';
+// msg91Service removed
 
 interface MarriageBureauProps {
   onBack: () => void;
@@ -42,8 +50,8 @@ interface MarriageBureauProps {
 
 const RELIGIONS = [
   { id: 'all', name: 'All', icon: 'Heart' },
-  { id: 'unmarried', name: 'Unmarried', icon: 'User' },
-  { id: 'married', name: 'Married', icon: 'Users' },
+  { id: 'unmarried', name: 'Unmarried Only', icon: 'User' },
+  { id: 'married', name: '2nd Marriage / Divorced', icon: 'Users' },
   { id: '3rd-marriage', name: '3rd Marriage', icon: 'Star' },
   { id: 'hindu', name: 'Hindu', icon: 'Sun' },
   { id: 'muslim', name: 'Muslim', icon: 'Moon' },
@@ -78,23 +86,85 @@ const BANNERS = [
   }
 ];
 
-export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageBureauProps) {
-  const { user, isAdmin } = useFirebase();
+const MB_PLANS = [
+    { id: 'standard', name: 'Standard Connection', price: 59, limit: 20, validity: '2 Months', desc: 'View 20 profiles with 2 months validity' },
+    { id: 'unlimited', name: 'Golden Link', price: 99, limit: 9999, validity: '6 Months', desc: 'Unlimited profile views with 6 months validity' }
+  ];
+
+  const MB_POLICY = [
+    "Marriages are made in heaven let us push for link that connectivity.",
+    "Only local bharath can introducing contacts, you can find good or not bride or groom, don't blame to us, remember that we are mediators only thanks🌹 to everyone.",
+    "We provide the introduction, you make the evaluation"
+  ];
+
+export default function MarriageBureau({ onBack, isAdmin: propIsAdmin, language = 'en-IN' }: MarriageBureauProps) {
+  const { user, isAdmin: firebaseIsAdmin, phoneLogin, userProfile } = useFirebase();
+  const isAdmin = propIsAdmin || firebaseIsAdmin;
   const [profiles, setProfiles] = useState<MarriageProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showSubscription, setShowSubscription] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<any>(null);
 
   useEffect(() => {
-    // Real-time listener for profiles
+    // Show subscription if male, approved, and hasn't paid
+    if (userProfile?.gender?.toLowerCase() === 'male' && userProfile?.isApproved && !(userProfile as any).hasPaidMB) {
+        setShowSubscription(true);
+    }
+  }, [userProfile]);
+
+  const handleSubscribe = (plan: any) => {
+    if (!user) return;
+    
+    // Set pending payment globally so App.tsx can switch to Payment screen
+    (window as any).pendingLocalPayment = {
+      amount: plan.price,
+      type: 'marriage_sub',
+      metadata: { planId: plan.id, planName: plan.name, userId: user.uid },
+      onComplete: async (method: string) => {
+        try {
+          await updateDoc(doc(db, 'users', user.uid), {
+            hasPaidMB: true,
+            mbPlanId: plan.id,
+            mbPlanExpires: new Date(Date.now() + (plan.id === 'standard' ? 60 : 180) * 24 * 60 * 60 * 1000),
+            mbViewsLeft: plan.limit,
+            mbPaymentMethod: method,
+            mbPaymentStatus: method === 'cod' ? 'Hand Cash' : 'Paid (UPI)',
+            updatedAt: serverTimestamp()
+          });
+          alert(`Successfully subscribed to ${plan.name}! You can now view all matching profiles.`);
+          setShowSubscription(false);
+          setRegistrationStatus('idle');
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+        }
+      }
+    };
+
+    // Trigger App navigation to payment
+    // We assume App.tsx is listening to this or we use navigateTo if passed down
+    // Since we don't have onNavigate prop here, we'll try to find it or use a global event.
+    // Actually, App.tsx handles 'payment' screen by checking this global.
+    // I'll dispatch a custom event that App.tsx can listen to if needed, or just tell the user to go to payment.
+    setRegistrationStatus('submitting');
+    // Dispatch event to App.tsx to jump to payment
+    window.dispatchEvent(new CustomEvent('navigate', { detail: { screen: 'payment' } }));
+  };
+  
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Real-time listener for profiles using the correct filtered query
     const profilesQuery = isAdmin 
-      ? collection(db, 'marriageProfiles')
-      : query(collection(db, 'marriageProfiles'), where('isApproved', '==', true));
+      ? query(collection(db, 'marriageProfiles'), limit(45))
+      : query(collection(db, 'marriageProfiles'), where('isApproved', '==', true), limit(45));
     
-    // If user is not admin, we might also want to show THEIR unapproved profile
-    // But for simplicity in displayProfiles logic, let's fetch based on role
-    
-    const unsubscribe = onSnapshot(collection(db, 'marriageProfiles'), (snapshot) => {
+    const unsubscribe = onSnapshot(profilesQuery, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as MarriageProfile));
       setProfiles(docs);
+      setLoading(false);
     }, (error) => {
+      setLoading(false);
       handleFirestoreError(error, OperationType.LIST, 'marriageProfiles');
     });
 
@@ -103,7 +173,8 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
 
   const [currentBanner, setCurrentBanner] = useState(0);
   const [selectedReligion, setSelectedReligion] = useState('all');
-  const handleShareProfile = (profile: MarriageProfile) => {
+  
+  const handleShareProfile = React.useCallback((profile: MarriageProfile) => {
     if (navigator.share) {
       navigator.share({
         title: `Lokal Marriage Bureau - ${profile.name} ${profile.surname}`,
@@ -115,7 +186,7 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
         alert('Profile details copied to clipboard!');
       });
     }
-  };
+  }, []);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState({
@@ -126,7 +197,7 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const bannerRef = React.useRef<HTMLDivElement>(null);
 
-  const scrollBanner = (index: number) => {
+  const scrollBanner = React.useCallback((index: number) => {
     if (bannerRef.current) {
       bannerRef.current.scrollTo({
         left: bannerRef.current.offsetWidth * index,
@@ -134,7 +205,7 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
       });
       setCurrentBanner(index);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -142,7 +213,7 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
       scrollBanner(next);
     }, 5000);
     return () => clearInterval(timer);
-  }, [currentBanner]);
+  }, [currentBanner, scrollBanner]);
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const scrollLeft = e.currentTarget.scrollLeft;
@@ -153,8 +224,8 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
     }
   };
 
-  const displayProfiles = profiles
-    .filter(p => {
+  const displayProfiles = React.useMemo(() => 
+    profiles.filter(p => {
       // Visibility Logic: Admin sees all, User sees approved or their own
       if (!isAdmin && !p.isApproved && p.userId !== user?.uid) return false;
 
@@ -182,12 +253,13 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
       if (filters.location && !p.nativePlace?.toLowerCase().includes(filters.location.toLowerCase())) return false;
 
       return true;
-    });
+    }),
+  [profiles, isAdmin, user?.uid, searchQuery, selectedReligion, filters]);
   const [showRegForm, setShowRegForm] = useState(false);
   const [editingProfile, setEditingProfile] = useState<MarriageProfile | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<MarriageProfile | null>(null);
-  const [registrationStatus, setRegistrationStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
+  const [registrationStatus, setRegistrationStatus] = useState<'idle' | 'submitting' | 'success' | 'form' | 'otp'>('idle');
   const [showReasonModal, setShowReasonModal] = useState<{ id: string, type: 'suspend' | 'approve' | 'delete' } | null>(null);
   const [showCancellationReason, setShowCancellationReason] = useState<{ id: string } | null>(null);
   const [selectedCancellationReason, setSelectedCancellationReason] = useState('');
@@ -195,12 +267,38 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
   const [otpFlow, setOtpFlow] = useState<{
     isOpen: boolean;
     phoneNumber: string;
-    generatedOtp: string;
     userInput: string;
     tempProfileData: any | null;
+    generatedOtp?: string;
   } | null>(null);
+
+  useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    if (showRegForm && !otpFlow?.isOpen) {
+      // Delay slightly to ensure DOM element is rendered
+      timeout = setTimeout(() => {
+        try {
+          const verifier = setupRecaptcha('marriage-recaptcha');
+          if (!verifier) {
+            console.error("Failed to initialize reCAPTCHA");
+          }
+        } catch (err) {
+          console.error("Recaptcha useEffect error:", err);
+        }
+      }, 300);
+    }
+    return () => {
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [showRegForm, otpFlow]);
+
   const [selectedRejectionReason, setSelectedRejectionReason] = useState('');
   const [customRejectionReason, setCustomRejectionReason] = useState('');
+  const [showSubscriptionModal, setShowSubscriptionModal] = useState(false);
+
+  const myProfile = profiles.find(p => p.userId === user?.uid);
+  const isMaleUser = myProfile?.gender === 'Male';
+  const hasActiveSubscription = isAdmin || (userProfile as any)?.hasPaidMB || (myProfile?.subscription && new Date(myProfile.subscription.expiryDate) > new Date());
 
   const PROFILE_REJECTION_REASONS = [
     'Inappropriate Photos',
@@ -230,32 +328,66 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
       }
       localStorage.removeItem('edit_marriage_profile_id');
     }
+
+    // Handle direct registration signal
+    const openReg = localStorage.getItem('open_marriage_reg');
+    if (openReg) {
+      setShowRegForm(true);
+      setRegistrationStatus('form');
+      localStorage.removeItem('open_marriage_reg');
+    }
   }, [profiles]);
+
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   const handleDeleteProfile = async (id: string, reason?: string) => {
     const confirmationMsg = reason 
       ? `Are you sure you want to close your profile? Reason: ${reason}`
       : 'Are you sure you want to delete this profile? This action cannot be undone.';
       
-    if (window.confirm(confirmationMsg)) {
-      try {
-        if (reason) {
-          // Log closure reason if needed or just delete
-          console.log(`Profile ${id} closed. Reason: ${reason}`);
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Profile?",
+      message: confirmationMsg,
+      onConfirm: async () => {
+        try {
+          if (reason) {
+            console.log(`Profile ${id} closed. Reason: ${reason}`);
+          }
+          await deleteDoc(doc(db, 'marriageProfiles', id));
+          if (selectedProfile?.id === id) {
+            setSelectedProfile(null);
+          }
+          if (localStorage.getItem('my_marriage_profile_id') === id) {
+            localStorage.removeItem('my_marriage_profile_id');
+          }
+          setShowCancellationReason(null);
+          setSelectedCancellationReason('');
+        } catch (error) {
+          handleFirestoreError(error, OperationType.DELETE, `marriageProfiles/${id}`);
         }
-        await deleteDoc(doc(db, 'marriageProfiles', id));
-        if (selectedProfile?.id === id) {
-          setSelectedProfile(null);
-        }
-        if (localStorage.getItem('my_marriage_profile_id') === id) {
-          localStorage.removeItem('my_marriage_profile_id');
-        }
-        setShowCancellationReason(null);
-        setSelectedCancellationReason('');
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `marriageProfiles/${id}`);
       }
+    });
+  };
+
+  const canSeeFullProfile = (targetProfile: MarriageProfile) => {
+    if (isAdmin) return true;
+    if (user?.uid === targetProfile.userId) return true;
+    if (targetProfile.gender === 'Female' && isMaleUser && !hasActiveSubscription) return false;
+    return true;
+  };
+
+  const handleProfileClick = (profile: MarriageProfile) => {
+    if (!canSeeFullProfile(profile)) {
+      setShowSubscriptionModal(true);
+      return;
     }
+    setSelectedProfile(profile);
   };
 
   const handleEditClick = (profile: MarriageProfile) => {
@@ -284,37 +416,38 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
   const handleVerifyAndSave = async (userInputOtp: string) => {
     if (!otpFlow || !user) return;
     
-    if (userInputOtp === otpFlow.generatedOtp) {
-      setRegistrationStatus('submitting');
+    setError(null);
+    setRegistrationStatus('submitting');
+    try {
+      // MSG91 integration removed. Bypassing real verification.
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
       const profileData = otpFlow.tempProfileData;
-      try {
-        if (editingProfile) {
-          await updateDoc(doc(db, 'marriageProfiles', editingProfile.id), {
-            ...profileData,
-            updatedAt: serverTimestamp()
-          });
-        } else {
-          const profileId = `m-${Date.now()}`;
-          await setDoc(doc(db, 'marriageProfiles', profileId), {
-            ...profileData,
-            id: profileId,
-            userId: user.uid,
-            isApproved: false,
-            createdAt: serverTimestamp()
-          });
-          localStorage.setItem('my_marriage_profile_id', profileId);
-        }
-        
-        setRegistrationStatus('success');
-        setOtpFlow(null);
-        setImagePreview(null);
-        setEditingProfile(null);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, 'marriageProfiles');
-        setRegistrationStatus('idle');
+      if (editingProfile) {
+        await updateDoc(doc(db, 'marriageProfiles', editingProfile.id), {
+          ...profileData,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        const profileId = `m-${Date.now()}`;
+        await setDoc(doc(db, 'marriageProfiles', profileId), {
+          ...profileData,
+          id: profileId,
+          userId: user.uid,
+          isApproved: false,
+          createdAt: serverTimestamp()
+        });
+        localStorage.setItem('my_marriage_profile_id', profileId);
       }
-    } else {
-      alert("Invalid OTP! Please try again.");
+      
+      setRegistrationStatus('success');
+      setOtpFlow(null);
+      setImagePreview(null);
+      setEditingProfile(null);
+      setShowRegForm(false);
+    } catch (err: any) {
+      setError(err.message || "Invalid OTP! Please try again.");
+      setRegistrationStatus('idle');
     }
   };
 
@@ -325,10 +458,10 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
       return;
     }
     
+    setError(null);
     setRegistrationStatus('submitting');
     
     try {
-      // Create new profile object
       const formData = new FormData(e.target as HTMLFormElement);
       const phone = formData.get('phone') as string || '';
 
@@ -373,23 +506,44 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
         }
       };
 
-      // Simulate OTP sending
-      const mockOtp = Math.floor(1000 + Math.random() * 9000).toString();
+      if (isAdmin) {
+        // Admins skip OTP
+        if (editingProfile) {
+          await updateDoc(doc(db, 'marriageProfiles', editingProfile.id), {
+            ...profileData,
+            updatedAt: serverTimestamp()
+          });
+          alert("Profile updated successfully (Admin)");
+        } else {
+          const profileId = `m-${Date.now()}`;
+          await setDoc(doc(db, 'marriageProfiles', profileId), {
+            ...profileData,
+            id: profileId,
+            userId: user.uid,
+            isApproved: true,
+            createdAt: serverTimestamp()
+          });
+          alert("Profile created successfully (Admin)");
+        }
+        setShowRegForm(false);
+        setRegistrationStatus('idle');
+        return;
+      }
+
+      // MSG91 integration removed. Simulating OTP send for now.
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
       setOtpFlow({
         isOpen: true,
         phoneNumber: phone,
-        generatedOtp: mockOtp,
         userInput: '',
         tempProfileData: profileData
       });
       
-      // In real app, call SMS API here
-      console.log(`Lokal verification code for ${phone}: ${mockOtp}`);
-      alert(`VERIFICATION CODE: ${mockOtp}\n\nPlease enter this in the next screen.`);
-      setRegistrationStatus('idle'); // Set to idle so button works if they close modal
-    } catch (error) {
-      console.error("Error in handleRegister:", error);
-      alert("Something went wrong. Please check your form and try again.");
+      setRegistrationStatus('otp');
+    } catch (err: any) {
+      console.error("Error in handleRegister:", err);
+      setError("Failed to process request. Please try again.");
       setRegistrationStatus('idle');
     }
   };
@@ -410,6 +564,96 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
     }
   };
 
+  const handleMatchInterest = async (targetProfile: MarriageProfile) => {
+    if (!myProfile || !user) {
+      alert("Please join the Marriage Bureau first to express interest!");
+      return;
+    }
+
+    if (isMaleUser) {
+      if (!hasActiveSubscription) {
+        setShowSubscriptionModal(true);
+        return;
+      }
+
+      // Check weekly likes limit (max 2 for paid grooms)
+      const now = new Date();
+      const lastReset = new Date(myProfile.subscription?.lastLikeResetDate || 0);
+      const diffInDays = (now.getTime() - lastReset.getTime()) / (1000 * 3600 * 24);
+      
+      let currentLikes = myProfile.subscription?.weeklyLikesCount || 0;
+      let updateData: any = {};
+
+      if (diffInDays >= 7) {
+        // Reset weekly count
+        currentLikes = 0;
+        updateData['subscription.lastLikeResetDate'] = now.toISOString();
+      }
+
+      if (currentLikes >= 2) {
+        alert("Weekly Limit Reached: You can express interest in up to 2 bride profiles per week. Please try again next week! More information, contact our support team.");
+        return;
+      }
+
+      // Increment like count
+      try {
+        updateData['subscription.weeklyLikesCount'] = currentLikes + 1;
+        await updateDoc(doc(db, 'marriageProfiles', myProfile.id), updateData);
+        
+        // Persist the interest
+        const interestId = `${user.uid}_${targetProfile.id}_${Date.now()}`;
+        await setDoc(doc(db, 'marriageInterests', interestId), {
+          id: interestId,
+          fromUserId: user.uid,
+          fromProfileId: myProfile.id,
+          toUserId: targetProfile.userId,
+          toProfileId: targetProfile.id,
+          status: 'Pending',
+          createdAt: serverTimestamp()
+        });
+
+        // Notify via SMS
+        if (targetProfile.phone) {
+          const { integrationService } = await import('../services/integrationService');
+          integrationService.sendSMS(
+            targetProfile.phone, 
+            `Local Bandi Multi Services Marriage: Someone is interested in your profile! Log in to view details.`
+          ).catch(err => console.error("Interest SMS failed:", err));
+        }
+
+        alert(`Interest Expressed! The family will be notified. (Weekly uses: ${currentLikes + 1}/2)`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `marriageProfiles/${myProfile.id}`);
+      }
+    } else {
+      // Females or others
+      try {
+        const interestId = `${user.uid}_${targetProfile.id}_${Date.now()}`;
+        await setDoc(doc(db, 'marriageInterests', interestId), {
+          id: interestId,
+          fromUserId: user.uid,
+          fromProfileId: myProfile?.id || 'guest',
+          toUserId: targetProfile.userId,
+          toProfileId: targetProfile.id,
+          status: 'Pending',
+          createdAt: serverTimestamp()
+        });
+
+        if (targetProfile.phone) {
+          const { integrationService } = await import('../services/integrationService');
+          integrationService.sendSMS(
+            targetProfile.phone, 
+            `Local Bandi Multi Services Marriage: You have a new interest request! Check your dashboard.`
+          ).catch(err => console.error("Interest SMS failed:", err));
+        }
+
+        alert(`Interest Expressed! The family will be notified and facilitate the connection.`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'marriageInterests');
+      }
+    }
+  };
+
   const calculateAge = (dob: string) => {
     if (!dob) return '25';
     const birthDate = new Date(dob);
@@ -422,17 +666,33 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
     return age.toString();
   };
 
+
   return (
     <div className="h-full bg-slate-50 flex flex-col">
       <div className="flex-1 overflow-y-auto px-6 py-6 pb-24">
-        <div className="bg-indigo-50 border border-indigo-100 rounded-[2rem] p-6 mb-8 flex items-center gap-4 group">
-          <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm shrink-0 group-hover:scale-110 transition-transform">
-            <HeartHandshake className="w-7 h-7" />
+        <div className="flex items-center gap-4 mb-8">
+          <button 
+            onClick={onBack}
+            className="p-3 bg-white border border-slate-100 rounded-2xl text-slate-500 shadow-sm hover:bg-slate-50 transition-colors shrink-0"
+          >
+            <ArrowRight className="w-6 h-6 rotate-180" />
+          </button>
+          <div className="bg-rose-50 border border-rose-100 rounded-[2rem] p-6 flex-1 flex items-center gap-4 group">
+            <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-rose-600 shadow-sm shrink-0 group-hover:scale-110 transition-transform">
+              <HeartHandshake className="w-7 h-7" />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-rose-900 uppercase tracking-widest leading-none mb-1.5">Lokal Marriage Bureau</p>
+              <p className="text-[11px] font-bold text-rose-700/70 leading-relaxed italic">Find your perfect life partner from genuine verified profiles.</p>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] font-black text-indigo-900 uppercase tracking-widest leading-none mb-1.5">Lokal Marriage Bureau</p>
-            <p className="text-[11px] font-bold text-indigo-700/70 leading-relaxed italic">Find your perfect life partner from genuine verified profiles.</p>
-          </div>
+          <button 
+            onClick={() => window.dispatchEvent(new CustomEvent('open_customer_care', { detail: { type: 'marriage' } }))}
+           className="w-14 h-14 bg-white border border-slate-100 rounded-[1.5rem] flex items-center justify-center text-rose-600 shadow-sm hover:bg-rose-50 transition-colors shrink-0"
+            title="Customer Support"
+          >
+            <MessageCircle className="w-6 h-6" />
+          </button>
         </div>
 
         {/* Modern Verification Layer */}
@@ -456,11 +716,16 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
                 </div>
 
                 <div className="space-y-8">
-                  <div className="flex justify-center gap-3">
+                  {error && (
+                    <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-500 text-[10px] font-bold italic">
+                      {error}
+                    </div>
+                  )}
+                  <div className="flex justify-center gap-2">
                     {[0, 1, 2, 3].map((_, i) => (
                       <div 
                         key={i} 
-                        className={`w-14 h-16 rounded-2xl flex items-center justify-center transition-all border-2 ${otpFlow.userInput[i] ? 'bg-white border-indigo-500 shadow-lg shadow-indigo-50' : 'bg-slate-50 border-slate-100'}`}
+                        className={`w-12 h-16 rounded-2xl flex items-center justify-center transition-all border-2 ${otpFlow.userInput[i] ? 'bg-white border-indigo-500 shadow-lg shadow-indigo-50' : 'bg-slate-50 border-slate-100'}`}
                       >
                         <span className="text-2xl font-black text-slate-900">
                           {otpFlow.userInput[i] || ""}
@@ -486,8 +751,8 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
                   </div>
 
                   <div className="bg-indigo-50 p-5 rounded-[2rem] border border-indigo-100/50">
-                    <p className="text-[12px] font-bold text-indigo-700 italic">
-                      Lokal Bot: Code is <span className="font-black text-[15px] not-italic text-indigo-900 mx-1">{otpFlow.generatedOtp}</span>
+                    <p className="text-[10px] font-bold text-indigo-700 italic">
+                      Local Bandi Bot: Please enter the 4-digit code sent to your mobile via MSG91.
                     </p>
                   </div>
 
@@ -578,19 +843,30 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
                   />
                 )}
 
-                <div className="flex gap-3">
+                <div className="flex flex-col gap-3">
+                  <div className="flex gap-3">
+                    <button 
+                      onClick={() => setShowReasonModal(null)}
+                      className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px] tracking-widest"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      disabled={!selectedRejectionReason || (selectedRejectionReason === 'Other' && !customRejectionReason)}
+                      onClick={() => handleStatusChange(showReasonModal.id, false)}
+                      className="flex-[2] py-4 bg-amber-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-amber-100 disabled:opacity-50"
+                    >
+                      Suspend Profile
+                    </button>
+                  </div>
                   <button 
-                    onClick={() => setShowReasonModal(null)}
-                    className="flex-1 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-[10px] tracking-widest"
+                    onClick={() => {
+                      handleDeleteProfile(showReasonModal.id);
+                      setShowReasonModal(null);
+                    }}
+                    className="w-full py-4 bg-rose-50 text-rose-500 rounded-2xl font-black uppercase text-[10px] tracking-widest hover:bg-rose-500 hover:text-white transition-all shadow-sm"
                   >
-                    Cancel
-                  </button>
-                  <button 
-                    disabled={!selectedRejectionReason || (selectedRejectionReason === 'Other' && !customRejectionReason)}
-                    onClick={() => handleStatusChange(showReasonModal.id, false)}
-                    className="flex-[2] py-4 bg-rose-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-xl shadow-rose-100 disabled:opacity-50"
-                  >
-                    Confirm Suspension
+                    Delete Permanently
                   </button>
                 </div>
               </motion.div>
@@ -629,6 +905,15 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
                     <p className="text-[10px] font-bold text-rose-500 mt-1 italic">
                       Reason: {myProfile.rejectionReason}
                     </p>
+                  )}
+                  {myProfile.gender === 'Male' && (
+                    <div className="flex items-center gap-2 mt-2">
+                       <div className={`w-2 h-2 rounded-full ${hasActiveSubscription ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+                       <span className={`text-[10px] font-black uppercase tracking-tighter ${hasActiveSubscription ? 'text-emerald-700' : 'text-rose-700 underline underline-offset-2 cursor-pointer'}`}
+                             onClick={() => !hasActiveSubscription && setShowSubscriptionModal(true)}>
+                          {hasActiveSubscription ? 'Maintenance Active' : 'Maintenance Required to View Brides'}
+                       </span>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1069,18 +1354,59 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
           </div>
         </div>
 
-        <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 rounded-[2.5rem] p-8 text-white mb-8 shadow-xl shadow-indigo-100 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
-          <h2 className="text-3xl font-black mb-2 italic relative z-10">Marriage Bureau</h2>
-          <p className="text-indigo-100 font-bold text-sm leading-relaxed mb-6">
-            Find your soulmate within our community. Free registration for all.
-          </p>
-          <button 
-            onClick={() => setShowRegForm(true)}
-            className="bg-white text-indigo-600 px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all"
-          >
-            Register Profile Free
-          </button>
+        <div className="bg-gradient-to-br from-rose-500 via-rose-600 to-rose-700 rounded-[3rem] p-10 text-white mb-10 shadow-2xl shadow-rose-200 relative overflow-hidden group">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-white/20 rounded-full -mr-32 -mt-32 blur-[80px] group-hover:scale-110 transition-transform duration-700"></div>
+          <div className="absolute bottom-0 left-0 w-48 h-48 bg-black/10 rounded-full -ml-24 -mb-24 blur-[60px]"></div>
+          
+          <div className="relative z-10 max-w-lg">
+            <motion.div 
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-md px-4 py-1.5 rounded-full mb-6"
+            >
+              <Heart className="w-4 h-4 text-rose-100 fill-current" />
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-rose-50">Local Exclusive</span>
+            </motion.div>
+            
+            <h2 className="text-4xl sm:text-5xl font-black mb-4 italic tracking-tighter leading-[0.95]">
+              Marriages are made in heaven <br/>
+              <span className="text-rose-200">let us push for link that connectivity.</span>
+            </h2>
+            <p className="text-rose-100 font-bold text-base leading-relaxed mb-10 opacity-90">
+              We have more profiles waiting for you. Start your journey towards a lifetime of happiness today.
+            </p>
+            
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <button 
+                onClick={() => document.getElementById('profiles-list')?.scrollIntoView({ behavior: 'smooth' })}
+                className="bg-white text-rose-600 px-4 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all flex flex-col items-center gap-2"
+              >
+                <Search className="w-5 h-5" />
+                Find Your Half
+              </button>
+              <button 
+                onClick={() => setShowRegForm(true)}
+                className="bg-rose-900/40 backdrop-blur-xl text-white border border-rose-300/30 px-4 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all flex flex-col items-center gap-2"
+              >
+                <Users className="w-5 h-5" />
+                Get Partner
+              </button>
+              <button 
+                onClick={() => setShowRegForm(true)}
+                className="bg-rose-900/40 backdrop-blur-xl text-white border border-rose-300/30 px-4 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all flex flex-col items-center gap-2"
+              >
+                <Plus className="w-5 h-5" />
+                Join Now
+              </button>
+              <button 
+                onClick={() => setShowRegForm(true)}
+                className="bg-rose-900/40 backdrop-blur-xl text-white border border-rose-300/30 px-4 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all flex flex-col items-center gap-2"
+              >
+                <FileText className="w-5 h-5" />
+                Generate Profile
+              </button>
+            </div>
+          </div>
         </div>
 
         <div id="profiles-list" className="space-y-6">
@@ -1092,17 +1418,44 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
           </div>
 
           <div className="grid grid-cols-1 gap-6">
-            {displayProfiles.map(profile => (
+            {myProfile && !myProfile.isApproved && !isAdmin ? (
+               <div className="py-20 text-center bg-amber-500/5 rounded-[3rem] border border-amber-500/15 p-10 max-w-xl mx-auto space-y-6">
+                 <div className="w-20 h-20 bg-amber-500/10 rounded-[2.5rem] flex items-center justify-center mx-auto text-amber-500 border border-amber-500/20 shadow-lg animate-pulse">
+                   <Lock className="w-10 h-10" />
+                 </div>
+                 <h3 className="text-xl font-black text-slate-900 tracking-tight">Console Access Locked</h3>
+                 <p className="text-xs font-black text-amber-600 uppercase tracking-widest leading-none">Pending Admin Security Approval</p>
+                 <p className="text-xs text-slate-500 leading-relaxed">
+                   Your marriage bureau profile <strong className="text-slate-800 italic">{myProfile.name} {myProfile.surname}</strong> is under active verification by our regional administration. To ensure community safety, all matches and profiles are hidden until your profile is approved.
+                 </p>
+                 <div className="p-4 bg-white rounded-2xl border border-slate-100 text-left text-xs text-slate-400">
+                    <p className="font-semibold text-slate-600">Timeline Profile Verification:</p>
+                    <p className="mt-1">Verification is completed within 2 to 3 hours of profile generation. You will receive a direct WhatsApp notification when your profile is live!</p>
+                 </div>
+               </div>
+            ) : (
+              displayProfiles.map(profile => (
               <motion.div
                 key={profile.id}
-                onClick={() => setSelectedProfile(profile)}
+                onClick={() => handleProfileClick(profile)}
                 className="bg-white rounded-[2rem] overflow-hidden shadow-sm border border-slate-100 flex p-4 gap-4 active:scale-[0.98] transition-all cursor-pointer relative"
               >
                 {!profile.isApproved && (
                   <div className="absolute top-2 right-2 bg-yellow-400 text-[8px] font-black uppercase px-2 py-1 rounded-lg">Pending</div>
                 )}
-                <div className="w-24 h-24 rounded-2xl overflow-hidden shrink-0 border border-slate-50">
-                  {profile.image && <img src={profile.image} className="w-full h-full object-cover" alt={profile.name} />}
+                <div className="w-24 h-24 rounded-2xl overflow-hidden shrink-0 border border-slate-50 relative">
+                  {profile.image && (
+                    <img 
+                      src={profile.image} 
+                      className={`w-full h-full object-cover ${!canSeeFullProfile(profile) ? 'blur-md grayscale' : ''}`} 
+                      alt={profile.name} 
+                    />
+                  )}
+                  {!canSeeFullProfile(profile) && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/10 backdrop-blur-[2px]">
+                      <Lock className="w-5 h-5 text-white/80" />
+                    </div>
+                  )}
                 </div>
                 <div className="flex-1 flex flex-col py-1">
                   <div className="flex items-center justify-between gap-2 mb-1">
@@ -1174,7 +1527,25 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
                   </div>
                 )}
               </motion.div>
-            ))}
+            )))}
+
+            {displayProfiles.length === 0 && !loading && (
+              <div className="py-20 text-center bg-white rounded-[3rem] border-2 border-dashed border-slate-100 p-10">
+                <div className="w-20 h-20 bg-rose-50 rounded-[2.5rem] flex items-center justify-center mx-auto mb-6">
+                  <Heart className="w-10 h-10 text-rose-200" />
+                </div>
+                <h3 className="text-xl font-black text-slate-900 italic tracking-tight mb-2">No Profiles Found</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest max-w-[200px] mx-auto mb-8 leading-relaxed">
+                  Be the first one to join our marriage bureau community!
+                </p>
+                <button 
+                  onClick={() => setShowRegForm(true)}
+                  className="px-10 py-5 bg-rose-600 text-white rounded-[2rem] text-xs font-black uppercase tracking-widest shadow-2xl shadow-rose-100 active:scale-95 transition-all"
+                >
+                  Register Your Profile
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1220,6 +1591,32 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
                   </motion.div>
                   <h4 className="text-3xl font-black text-slate-900 mb-3 italic font-display">Registration Received</h4>
                   <p className="text-slate-400 font-bold mb-10 leading-relaxed uppercase text-[10px] tracking-[0.2em] px-10">Your life partner journey starts here. Our founder will review your profile shortly.</p>
+                  
+                  {/* Local Policies */}
+                  <div className="mb-10 text-left bg-rose-50/50 p-6 rounded-[2rem] border border-rose-100">
+                    <p className="text-xs font-black text-rose-600 uppercase tracking-widest mb-4">Bureau Policies</p>
+                    <div className="space-y-3">
+                      {MB_POLICY.map((p, i) => (
+                        <div key={i} className="flex gap-2">
+                          <div className="w-1.5 h-1.5 bg-rose-400 rounded-full mt-1 shrink-0" />
+                          <p className="text-[10px] font-bold text-slate-600 italic">"{p}"</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {userProfile?.gender?.toLowerCase() === 'male' && !hasActiveSubscription && (
+                    <div className="mt-8 pt-8 border-t border-slate-100">
+                      <p className="text-[10px] font-black text-rose-600 uppercase tracking-widest mb-4">Speed Up Verification (Grooms)</p>
+                      <button 
+                         onClick={() => setShowSubscription(true)}
+                         className="w-full py-5 bg-rose-600 text-white rounded-[2rem] font-black uppercase tracking-widest shadow-xl shadow-rose-100 text-xs mb-4"
+                      >
+                        Select Connectivity Plan
+                      </button>
+                    </div>
+                  )}
+
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => {
@@ -1232,8 +1629,55 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
                     Return to Bureau
                   </motion.button>
                 </div>
+              ) : showSubscription ? (
+                <div className="py-6">
+                  <div className="bg-rose-50/50 p-6 rounded-[2.5rem] mb-8 border border-rose-100">
+                    <h4 className="text-xl font-black text-slate-900 italic tracking-tighter mb-2">Premium Connectivity</h4>
+                    <p className="text-[11px] font-bold text-slate-500 leading-tight">To protect the community and sustain our mediators, we request a nominal fee from grooms.</p>
+                  </div>
+
+                  <div className="space-y-4 mb-8">
+                    {MB_PLANS.map(plan => (
+                      <button 
+                        key={plan.id}
+                        onClick={() => setSelectedPlan(plan)}
+                        className={`w-full p-6 rounded-[2.5rem] border-2 transition-all text-left relative overflow-hidden ${selectedPlan?.id === plan.id ? 'bg-white border-rose-500 shadow-xl shadow-rose-100' : 'bg-slate-50 border-transparent hover:bg-slate-100'}`}
+                      >
+                        <div className="flex justify-between items-center relative z-10">
+                          <div>
+                            <h4 className="text-lg font-black text-slate-900 italic">{plan.name}</h4>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{plan.validity} • {plan.limit === 9999 ? 'UNLIMITED' : `${plan.limit} PROFILES`}</p>
+                          </div>
+                          <div className="bg-rose-600 text-white px-4 py-2 rounded-2xl shadow-lg shadow-rose-100">
+                            <span className="text-lg font-black">₹{plan.price}</span>
+                          </div>
+                        </div>
+                        {selectedPlan?.id === plan.id && (
+                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-4 pt-4 border-t border-rose-100 relative z-10">
+                            <p className="text-[10px] font-bold text-rose-600 italic">Included: {plan.desc}</p>
+                          </motion.div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button 
+                    onClick={() => selectedPlan && handleSubscribe(selectedPlan)}
+                    disabled={!selectedPlan || registrationStatus === 'submitting'}
+                    className="w-full py-5 bg-slate-900 text-white rounded-[2rem] font-black uppercase tracking-widest shadow-2xl shadow-slate-200 text-xs disabled:opacity-50 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    {registrationStatus === 'submitting' ? (
+                      <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <>Pay & Activate Profile <ArrowRight className="w-4 h-4" /></>
+                    )}
+                  </button>
+
+                  <p className="text-[9px] font-bold text-slate-400 mt-6 text-center uppercase tracking-[0.2em] opacity-60">Verified Security • No Hidden Changes</p>
+                </div>
               ) : (
                 <form onSubmit={handleRegister} className="space-y-8 pb-10">
+                  <div id="marriage-recaptcha"></div>
                   <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-3">Identity Photo</label>
                     <div className="flex items-center gap-6 p-6 bg-slate-50/50 rounded-[2.5rem] border-2 border-dashed border-slate-200 group hover:border-indigo-300 transition-all">
@@ -1521,8 +1965,19 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
 
             <div className="px-6 pb-12">
               <div className="relative mb-8 pt-4">
-                <div className="aspect-square rounded-[3rem] overflow-hidden shadow-2xl shadow-slate-200">
-                  {selectedProfile.image && <img src={selectedProfile.image} className="w-full h-full object-cover" alt={selectedProfile.name} />}
+                <div className="aspect-square rounded-[3rem] overflow-hidden shadow-2xl shadow-slate-200 relative">
+                  {selectedProfile.image && (
+                    <img 
+                      src={selectedProfile.image} 
+                      className={`w-full h-full object-cover ${!canSeeFullProfile(selectedProfile) ? 'blur-2xl grayscale' : ''}`} 
+                      alt={selectedProfile.name} 
+                    />
+                  )}
+                  {!canSeeFullProfile(selectedProfile) && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/10 backdrop-blur-sm">
+                      <Lock className="w-12 h-12 text-white/90 drop-shadow-xl" />
+                    </div>
+                  )}
                 </div>
                 <div className="absolute -bottom-6 left-8 right-8 bg-white p-6 rounded-3xl shadow-xl border border-slate-50">
                   <div className="flex items-center gap-2 mb-1">
@@ -1629,7 +2084,7 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
 
               <div className="mt-8 space-y-6">
                 <button 
-                  onClick={() => alert("Interest Expressed! The founder will notify the family and facilitate the connection if they match.")}
+                  onClick={() => handleMatchInterest(selectedProfile)}
                   className="w-full py-5 bg-rose-500 text-white rounded-[2rem] font-black uppercase tracking-widest shadow-2xl shadow-rose-100 flex items-center justify-center gap-3 active:scale-95 transition-all"
                 >
                   <Heart className="w-5 h-5 fill-white" />
@@ -1681,6 +2136,133 @@ export default function MarriageBureau({ onBack, language = 'en-IN' }: MarriageB
           </div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {deleteConfirm?.isOpen && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl relative text-center border border-gray-100"
+            >
+              <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 className="w-8 h-8" />
+              </div>
+              
+              <h3 className="text-xl font-black text-gray-900 mb-2 italic tracking-tight">{deleteConfirm.title}</h3>
+              <p className="text-xs font-bold text-gray-400 mb-8 leading-relaxed px-2">{deleteConfirm.message}</p>
+              
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setDeleteConfirm(null)}
+                  className="flex-1 py-4 bg-gray-100 text-gray-500 rounded-2xl font-black uppercase tracking-widest text-[10px]"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={async () => {
+                    await deleteConfirm.onConfirm();
+                    setDeleteConfirm(null);
+                  }}
+                  className="flex-1 py-4 bg-rose-500 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-rose-200"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <SubscriptionModal 
+        isOpen={showSubscriptionModal} 
+        onClose={() => setShowSubscriptionModal(false)}
+        userProfile={myProfile}
+        onSubscribe={handleSubscribe}
+      />
     </div>
   );
 }
+
+// Subscription Modal Component
+const SubscriptionModal = ({ isOpen, onClose, userProfile, onSubscribe }: any) => {
+  if (!isOpen) return null;
+  
+  return (
+    <div className="fixed inset-0 z-[300] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9, y: 30 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="w-full max-w-[440px] bg-white rounded-[3rem] p-4 shadow-3xl border border-white/20 relative overflow-hidden"
+      >
+        <button onClick={onClose} className="absolute top-6 right-6 p-2 bg-slate-100 rounded-2xl text-slate-400 z-10 transition-transform active:scale-90">
+          <X className="w-6 h-6" />
+        </button>
+
+        {/* Header Section */}
+        <div className="bg-indigo-600 rounded-[2.5rem] p-8 text-center text-white mb-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12 blur-2xl"></div>
+          <div className="w-16 h-16 bg-white/20 backdrop-blur-xl rounded-2xl flex items-center justify-center mx-auto mb-4 border border-white/30">
+            <Lock className="w-8 h-8 text-white" />
+          </div>
+          <h3 className="text-2xl font-black italic tracking-tighter">Unlock Bride Profiles</h3>
+          <p className="text-[10px] font-bold text-indigo-100 uppercase tracking-[0.2em] mt-2 opacity-80">Groom Maintenance Subscription</p>
+        </div>
+
+        <div className="px-4 space-y-4">
+          {/* Plan 1 */}
+          <button 
+            onClick={() => onSubscribe('maintenance_59')}
+            className="w-full p-6 bg-slate-50 rounded-[2.5rem] border-2 border-transparent hover:border-indigo-400 transition-all flex items-center justify-between group active:scale-95"
+          >
+            <div className="text-left">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xl font-black text-slate-900 italic">₹59</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">/ 2 Months</span>
+              </div>
+              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">20 Profile VISITS • Weekly 2 Verifications</p>
+            </div>
+            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition-transform">
+              <Zap className="w-5 h-5" />
+            </div>
+          </button>
+
+          {/* Plan 2 */}
+          <button 
+             onClick={() => onSubscribe('maintenance_99')}
+             className="w-full p-6 bg-indigo-50 border-2 border-indigo-400 rounded-[2.5rem] flex items-center justify-between relative group active:scale-95"
+          >
+            <div className="absolute top-0 right-10 -translate-y-1/2 bg-indigo-600 text-white text-[8px] font-black uppercase px-4 py-1.5 rounded-full shadow-lg">Most Popular</div>
+            <div className="text-left">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xl font-black text-indigo-900 italic">₹99</span>
+                <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">/ 6 Months</span>
+              </div>
+              <p className="text-[11px] font-black text-indigo-600 uppercase tracking-tight">UNLIMITED VISITS • Weekly 2 Verifications</p>
+            </div>
+            <div className="w-10 h-10 bg-white rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm border border-indigo-100 group-hover:scale-110 transition-transform">
+              <Star className="w-5 h-5 fill-indigo-600" />
+            </div>
+          </button>
+
+          {/* Conditions */}
+          <div className="p-6 bg-amber-50 rounded-[2rem] border border-amber-100 space-y-3">
+             <h4 className="text-[10px] font-black text-amber-800 uppercase tracking-widest flex items-center gap-2">
+                <Check className="w-3 h-3" /> Conditions Apply
+             </h4>
+             <ul className="space-y-2">
+                <li className="text-[9px] font-bold text-amber-700 leading-relaxed">• Profiles are blurred for grooms without maintenance payment.</li>
+                <li className="text-[9px] font-bold text-amber-700 leading-relaxed">• Enquiries/Verification process limited to 2 brides per week. (Groom can see & like many, but we enquire only 2 per week).</li>
+                <li className="text-[9px] font-bold text-amber-700 leading-relaxed">• Non-refundable. After validity, you can pay once again to continue.</li>
+                <li className="text-[9px] font-bold text-amber-700 leading-relaxed">• Unused visits expire after validity period (2 or 6 months).</li>
+                <li className="text-[9px] font-black text-rose-600 leading-relaxed italic uppercase">• NOTE: Both parties must pay a consultation fee to Local Bandi Multi Services Marriage Bureau if the marriage is fixed.</li>
+             </ul>
+          </div>
+
+          <p className="text-[9px] text-slate-400 text-center font-bold pb-2">For more information, contact our support team.</p>
+        </div>
+      </motion.div>
+    </div>
+  );
+};

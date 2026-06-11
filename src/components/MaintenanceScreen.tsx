@@ -26,7 +26,7 @@ export default function MaintenanceScreen() {
         </h1>
         
         <p className="text-gray-500 font-bold text-sm mb-10 leading-relaxed">
-          Lokal Bharath is currently undergoing scheduled maintenance to bring you a better neighborhood experience.
+          Local Bandi Multi Services is currently undergoing scheduled maintenance to bring you a better neighborhood experience.
         </p>
 
         <div className="space-y-6 w-full">
@@ -53,7 +53,7 @@ export default function MaintenanceScreen() {
         </div>
 
         <p className="mt-12 text-[9px] font-black text-gray-300 uppercase tracking-[0.3em]">
-          Powered by Lokal Bharath
+          Powered by Local Bandi Multi Services
         </p>
       </motion.div>
     </div>

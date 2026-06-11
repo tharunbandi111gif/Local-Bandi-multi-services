@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Trash2, Minus, Plus, ShoppingBag, Truck, Receipt, Tag, Ticket, Check, X, Zap, Sparkles } from 'lucide-react';
+import { ArrowLeft, Trash2, Minus, Plus, ShoppingBag, Truck, Receipt, Tag, Ticket, Check, X, Zap, Sparkles, Plane, Car, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CartItem, LanguageCode } from '../types';
 import { translations } from '../translations';
@@ -11,16 +11,20 @@ interface CartProps {
   onUpdateQty: (id: string, delta: number) => void;
   onRemove: (id: string) => void;
   onCheckout: () => void;
+  selectedRewardId: string | null;
+  onSelectReward: (rewardId: string | null) => void;
+  promoCodes?: any[];
+  isAdmin?: boolean;
+  onUpdateCartItem?: (id: string, updatedFields: Partial<CartItem>) => void;
 }
 
-const VALID_PROMOS = [
+const DEFAULT_PROMOS = [
   { id: 'LOKAL10', type: 'percent' as const, value: 10, label: '10% LOCAL DISCOUNT', minSubtotal: 0 },
   { id: 'WELCOME50', type: 'flat' as const, value: 50, label: '₹50 WELCOME OFFER', minSubtotal: 300 },
-  { id: 'FREESHIP', type: 'shipping' as const, value: 0, label: 'FREE DELIVERY CODE', minSubtotal: 200 },
-  { id: 'BHARATH', type: 'percent' as const, value: 15, label: '15% MISSION DISCOUNT', minSubtotal: 500 }
+  { id: 'FREESHIP', type: 'shipping' as const, value: 0, label: 'FREE DELIVERY CODE', minSubtotal: 200 }
 ];
 
-export default function Cart({ items, language, onBack, onUpdateQty, onRemove, onCheckout }: CartProps) {
+export default function Cart({ items, language, onBack, onUpdateQty, onRemove, onCheckout, selectedRewardId, onSelectReward, promoCodes, isAdmin, onUpdateCartItem }: CartProps) {
   const t = translations[language].cart || translations['en-IN'].cart;
   const common = translations[language].common || translations['en-IN'].common;
   const [promoCode, setPromoCode] = useState('');
@@ -28,7 +32,62 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
   const [promoError, setPromoError] = useState<string | null>(null);
 
   const subtotal = items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
-  
+
+  const promosToUse = promoCodes && promoCodes.length > 0 ? promoCodes : DEFAULT_PROMOS;
+
+  // Sorting items by price (Lowest First)
+  const sortedItems = [...items].sort((a, b) => a.price - b.price);
+
+  // Rewards logic
+  const [rewardsUnder15, setRewardsUnder15] = useState(() => [
+    { id: 'icecream_cup', name: 'Ice Cream Cup', originalPrice: 15, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=100&h=100&fit=crop' },
+    { id: 'fivestar', name: '5-Star Chocolate', originalPrice: 10, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1549007994-cb92caebd54b?w=100&h=100&fit=crop' },
+    { id: 'munch', name: 'Munch Large', originalPrice: 15, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1621939514649-280e2ee25f60?w=100&h=100&fit=crop' }
+  ]);
+
+  const [rewardsUnder40, setRewardsUnder40] = useState(() => [
+    { id: 'sugar_500g', name: 'Sugar 1/2 KG', originalPrice: 28, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1581441363689-1f3c3c414635?w=100&h=100&fit=crop' },
+    { id: 'oil_250ml', name: 'Cooking Oil 250ml', originalPrice: 40, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1474979266404-7eaacbad88c5?w=100&h=100&fit=crop' },
+    { id: 'pooja_samagri', name: 'Pooja Samagri Kit', originalPrice: 35, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1582236371565-491d40a59719?w=100&h=100&fit=crop' },
+    { id: 'sprite_500ml', name: 'Cool Drink 500ml', originalPrice: 40, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=100&h=100&fit=crop' }
+  ]);
+
+  const [editingRewardId, setEditingRewardId] = useState<string | null>(null);
+  const [editRewardName, setEditRewardName] = useState('');
+  const [editRewardOriginal, setEditRewardOriginal] = useState(0);
+  const [editRewardPromo, setEditRewardPromo] = useState(0);
+
+  const handleDeleteReward = (rewardId: string) => {
+    setRewardsUnder15(prev => prev.filter(r => r.id !== rewardId));
+    setRewardsUnder40(prev => prev.filter(r => r.id !== rewardId));
+    if (selectedRewardId === rewardId) {
+      onSelectReward(null);
+    }
+  };
+
+  const handleStartEditReward = (reward: any) => {
+    setEditingRewardId(reward.id);
+    setEditRewardName(reward.name);
+    setEditRewardOriginal(reward.originalPrice);
+    setEditRewardPromo(reward.rewardPrice);
+  };
+
+  const handleSaveReward = () => {
+    setRewardsUnder15(prev => prev.map(r => r.id === editingRewardId ? { ...r, name: editRewardName, originalPrice: Number(editRewardOriginal || 0), rewardPrice: Number(editRewardPromo || 0) } : r));
+    setRewardsUnder40(prev => prev.map(r => r.id === editingRewardId ? { ...r, name: editRewardName, originalPrice: Number(editRewardOriginal || 0), rewardPrice: Number(editRewardPromo || 0) } : r));
+    setEditingRewardId(null);
+  };
+
+  let applicableRewards = [];
+  if (subtotal >= 899) {
+    applicableRewards = [...rewardsUnder40, ...rewardsUnder15];
+  } else if (subtotal >= 299) {
+    applicableRewards = rewardsUnder15;
+  }
+
+  const selectedReward = selectedRewardId ? [...rewardsUnder15, ...rewardsUnder40].find(r => r.id === selectedRewardId) : null;
+  const rewardCost = selectedReward ? selectedReward.rewardPrice : 0;
+
   // Calculate discount
   let discount = 0;
   if (appliedPromo) {
@@ -44,7 +103,10 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
   // Dynamic delivery charge logic
   const getDeliveryFee = () => {
     if (items.length === 0) return 0;
-    if (appliedPromo?.type === 'shipping') return 0;
+    if (appliedPromo?.id === 'FREESHIP' || appliedPromo?.type === 'shipping') return 0;
+    
+    // FREE DELIVERY for bills above 469
+    if (subtotal >= 469) return 0;
     
     let maxFee = 0;
     items.forEach(item => {
@@ -73,29 +135,33 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
   };
 
   const delivery = getDeliveryFee();
-  const total = Math.max(0, subtotal - discount + taxes + delivery);
+  const total = Math.max(0, subtotal - discount + taxes + delivery + rewardCost);
 
   const handleApplyPromo = () => {
-    const code = promoCode.toUpperCase().trim();
+    const userInput = promoCode.toUpperCase().trim();
     setPromoError(null);
 
-    const foundPromo = VALID_PROMOS.find(p => p.id === code);
+    const foundPromo = promosToUse.find(p => (p.code || p.id) === userInput && p.status !== 'Inactive');
 
     if (!foundPromo) {
-      setPromoError('Invalid promo code');
-    } else if (subtotal < foundPromo.minSubtotal) {
-      setPromoError(`Min. order of ₹${foundPromo.minSubtotal} required`);
+      setPromoError('Invalid or expired promo code');
+    } else if (foundPromo.minOrderAmount && subtotal < foundPromo.minOrderAmount) {
+      setPromoError(`Min. order of ₹${foundPromo.minOrderAmount} required`);
+    } else if (new Date(foundPromo.expiryDate) < new Date()) {
+      setPromoError('Promo code has expired');
+    } else if (foundPromo.usageLimit && foundPromo.usageCount >= foundPromo.usageLimit) {
+      setPromoError('Promo code usage limit reached');
     } else {
       setAppliedPromo({
         id: foundPromo.id,
-        type: foundPromo.type,
+        type: foundPromo.type === 'percentage' ? 'percent' : (foundPromo.type === 'fixed' ? 'flat' : foundPromo.type),
         value: foundPromo.value,
-        label: foundPromo.label
+        label: `${foundPromo.code} Applied`
       });
       setPromoError(null);
     }
 
-    if (!foundPromo || (foundPromo && subtotal < foundPromo.minSubtotal)) {
+    if (promoError) {
       setTimeout(() => setPromoError(null), 3000);
     }
   };
@@ -159,11 +225,25 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
           <ArrowLeft className="w-6 h-6 text-gray-900" />
         </button>
         <h2 className="text-xl font-black text-gray-900 flex-1">{t.title} ({items.length})</h2>
+        <div className="flex gap-3">
+          <div className="flex flex-col items-center">
+             <Plane className="w-5 h-5 text-gray-400" />
+             <span className="text-[7px] font-black text-gray-300 uppercase tracking-tighter">Flights</span>
+          </div>
+          <div className="flex flex-col items-center">
+             <Car className="w-5 h-5 text-gray-400" />
+             <span className="text-[7px] font-black text-gray-300 uppercase tracking-tighter">Cabs</span>
+          </div>
+          <div className="flex flex-col items-center">
+             <MapPin className="w-5 h-5 text-indigo-400" />
+             <span className="text-[7px] font-black text-indigo-400 uppercase tracking-tighter">Travel</span>
+          </div>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6 pb-40">
         <AnimatePresence>
-          {items.map((item) => (
+          {sortedItems.map((item) => (
             <motion.div 
               key={item.id} 
               layout
@@ -176,16 +256,38 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
               <div className="flex-1 flex flex-col justify-between">
                 <div>
                   <div className="flex justify-between items-start">
-                    <h3 className="font-extrabold text-gray-900 leading-tight pr-6">{item.name}</h3>
+                    {isAdmin ? (
+                      <input 
+                        type="text" 
+                        value={item.name}
+                        onChange={(e) => onUpdateCartItem?.(item.id, { name: e.target.value })}
+                        className="font-extrabold text-gray-900 leading-tight pr-6 bg-slate-50 border border-indigo-200 rounded-lg p-1 w-full text-xs focus:ring-1 focus:ring-indigo-500 mr-2"
+                        placeholder="Item Name"
+                      />
+                    ) : (
+                      <h3 className="font-extrabold text-gray-900 leading-tight pr-6">{item.name}</h3>
+                    )}
                     <button 
                       onClick={() => onRemove(item.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                      className="p-1.5 text-gray-400 hover:text-red-500 transition-colors shrink-0"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    <p className="text-yellow-600 font-extrabold">₹{item.price}</p>
+                    {isAdmin ? (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-indigo-500 font-black">Price: ₹</span>
+                        <input 
+                          type="number"
+                          value={item.price}
+                          onChange={(e) => onUpdateCartItem?.(item.id, { price: Number(e.target.value || 0) })}
+                          className="w-16 font-extrabold text-yellow-600 bg-slate-50 border border-indigo-200 rounded-lg p-1 text-xs text-center focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-yellow-600 font-extrabold">₹{item.price}</p>
+                    )}
                     <span className="text-[10px] font-black text-gray-300 uppercase">× {item.quantity}</span>
                   </div>
                 </div>
@@ -251,6 +353,139 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
             </button>
           </div>
         </section>
+
+        {/* Low Price Challenge / Rewards Section */}
+        {applicableRewards.length > 0 && (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-black uppercase tracking-widest text-emerald-600 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" /> Low Price Challenge
+              </h3>
+              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-lg text-[8px] font-black uppercase tracking-widest">
+                {subtotal >= 899 ? 'Win 2 Items' : 'Win 1 Item'}
+              </span>
+            </div>
+            
+            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide -mx-2 px-2">
+              {applicableRewards.map((reward) => (
+                <div key={reward.id} className="relative group flex-shrink-0">
+                  <motion.div
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => onSelectReward(selectedRewardId === reward.id ? null : reward.id)}
+                    className={`w-32 p-3 rounded-3xl border-2 transition-all relative overflow-hidden ${
+                      selectedRewardId === reward.id 
+                      ? 'border-emerald-500 bg-emerald-50 shadow-lg shadow-emerald-100' 
+                      : 'border-gray-100 bg-white opacity-80'
+                    }`}
+                  >
+                    <img src={reward.img} alt={reward.name} className="w-full h-16 rounded-xl object-cover mb-2" />
+                    <p className="text-[9px] font-black leading-tight text-gray-900 h-6 line-clamp-2">{reward.name}</p>
+                    <div className="flex justify-between items-center mt-2">
+                      <span className="text-[8px] font-bold text-gray-400 line-through">₹{reward.originalPrice}</span>
+                      <span className="text-xs font-black text-emerald-600">₹{reward.rewardPrice}</span>
+                    </div>
+                    {selectedRewardId === reward.id && (
+                      <div className="absolute top-2 right-2 p-1 bg-emerald-500 rounded-full text-white">
+                        <Check className="w-3 h-3" />
+                      </div>
+                    )}
+                  </motion.div>
+
+                  {/* Admin Control Badges */}
+                  {isAdmin && (
+                    <div className="absolute top-2 left-2 flex gap-1 z-10 bg-white/95 p-1 rounded-xl shadow-lg border border-gray-100">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStartEditReward(reward);
+                        }}
+                        className="p-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg flex items-center justify-center"
+                        title="Edit Reward"
+                      >
+                        <Sparkles className="w-2.5 h-2.5" />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteReward(reward.id);
+                        }}
+                        className="p-1 bg-red-500 hover:bg-red-400 text-white rounded-lg flex items-center justify-center"
+                        title="Delete Reward"
+                      >
+                        <Trash2 className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Admin Active Editing Panel */}
+            {isAdmin && editingRewardId && (
+              <div className="p-4 bg-indigo-50/80 border border-indigo-200/50 rounded-2xl space-y-3 shadow-inner">
+                <div className="flex justify-between items-center">
+                  <h4 className="text-[10px] font-black text-indigo-700 uppercase tracking-widest flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5" /> Overwrite Challenge Reward
+                  </h4>
+                  <button 
+                    onClick={() => setEditingRewardId(null)} 
+                    className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div className="col-span-3">
+                    <label className="text-[8px] font-black uppercase text-indigo-500 tracking-wider">Reward Name / Title</label>
+                    <input 
+                      type="text" 
+                      value={editRewardName} 
+                      onChange={(e) => setEditRewardName(e.target.value)} 
+                      className="w-full bg-white text-xs font-bold p-2.5 rounded-xl border border-indigo-100 text-slate-800 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[8px] font-black uppercase text-indigo-500 tracking-wider">Original ₹</label>
+                    <input 
+                      type="number" 
+                      value={editRewardOriginal} 
+                      onChange={(e) => setEditRewardOriginal(Number(e.target.value || 0))} 
+                      className="w-full bg-white text-xs font-bold p-2.5 rounded-xl border border-indigo-100 text-slate-800 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[8px] font-black uppercase text-indigo-500 tracking-wider">Challenge ₹</label>
+                    <input 
+                      type="number" 
+                      value={editRewardPromo} 
+                      onChange={(e) => setEditRewardPromo(Number(e.target.value || 0))} 
+                      className="w-full bg-white text-xs font-bold p-2.5 rounded-xl border border-indigo-100 text-slate-800 outline-none"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button 
+                      onClick={handleSaveReward}
+                      className="w-full py-2.5 bg-indigo-600 font-black hover:bg-indigo-500 text-white rounded-xl text-[9px] uppercase tracking-widest text-center shadow-md active:scale-95 transition-all"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-start gap-3">
+              <div className="p-2 bg-emerald-100 rounded-full">
+                <Zap className="w-4 h-4 text-emerald-600" />
+              </div>
+              <p className="text-[10px] font-bold text-emerald-800 leading-relaxed italic">
+                {subtotal >= 899 
+                  ? "Exclusive Level: You unlocked the ₹40 segment items for just ₹1! Challenge mandatory." 
+                  : "Level Unlocked: Add any item above for just ₹1 with your current bill!"}
+              </p>
+            </div>
+          </section>
+        )}
 
         <section className="space-y-4">
           <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">{t.promoCode}</h3>
@@ -341,7 +576,7 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
           
           {/* Detailed Item List in Summary */}
           <div className="space-y-3 pb-4 border-b border-gray-200">
-            {items.map(item => (
+            {sortedItems.map(item => (
               <div key={item.id} className="flex justify-between items-center">
                 <div className="flex flex-col">
                   <span className="text-xs font-bold text-gray-700">{item.name}</span>
@@ -350,6 +585,17 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
                 <span className="text-sm font-black text-gray-900">₹{item.price * item.quantity}</span>
               </div>
             ))}
+            {selectedReward && (
+              <div className="flex justify-between items-center bg-emerald-50 p-2 rounded-xl border border-emerald-100">
+                <div className="flex flex-col">
+                  <span className="text-xs font-black text-emerald-700 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3" /> {selectedReward.name} (Reward)
+                  </span>
+                  <span className="text-[9px] font-bold text-emerald-600/40 uppercase tracking-tighter line-through">₹{selectedReward.originalPrice}</span>
+                </div>
+                <span className="text-sm font-black text-emerald-600">₹{selectedReward.rewardPrice}</span>
+              </div>
+            )}
           </div>
 
           <div className="space-y-3">
@@ -392,12 +638,52 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
       </div>
 
       <div className="p-6 bg-white border-t border-gray-100 sticky bottom-0 z-10">
-        <button 
+        <motion.button 
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
           onClick={onCheckout}
-          className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black shadow-xl shadow-gray-200 flex items-center justify-center gap-3 active:scale-95 transition-all"
+          className="w-full relative overflow-hidden group py-5 bg-gray-900 text-white rounded-[2.5rem] font-black shadow-2xl shadow-gray-300 flex items-center justify-between px-8 active:scale-95 transition-all"
         >
-          {t.checkout} - ₹{total}
-        </button>
+          {/* Subtle animated gradient overlay */}
+          <motion.div 
+            animate={{ 
+              x: ['-100%', '200%'],
+            }}
+            transition={{ 
+              duration: 3, 
+              repeat: Infinity, 
+              ease: "linear",
+              repeatDelay: 1
+            }}
+            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-12 pointer-events-none"
+          />
+          
+          <div className="flex flex-col items-start relative z-10">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-gray-400 group-hover:text-yellow-400 transition-colors">
+              {items.length} {items.length === 1 ? 'Item' : 'Items'}
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm uppercase tracking-widest">{t.checkout}</span>
+            </div>
+          </div>
+
+          <div className="h-8 w-px bg-white/10 mx-4 hidden sm:block" />
+
+          <div className="flex items-center gap-4 relative z-10">
+            <motion.div 
+              key={total}
+              initial={{ y: 10, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="text-xl font-black text-yellow-400 flex items-center gap-1"
+            >
+              <span className="text-xs text-yellow-400/60 font-bold">₹</span>
+              {total}
+            </motion.div>
+            <div className="bg-white/10 p-2 rounded-full group-hover:bg-yellow-400 group-hover:text-gray-900 transition-all duration-300">
+              <ArrowLeft className="w-5 h-5 rotate-180" />
+            </div>
+          </div>
+        </motion.button>
       </div>
     </div>
   );
