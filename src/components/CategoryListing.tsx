@@ -147,9 +147,10 @@ export default function CategoryListing({
     recognition.start();
   };
 
-  const itemsInCategory = React.useMemo(() => 
-    localInventory.filter(p => p.category === category.id && (!p.branchId || p.branchId === currentBranchId)),
-  [localInventory, category.id, currentBranchId]);
+  const itemsInCategory = React.useMemo(() => {
+    if (!category) return [];
+    return localInventory.filter(p => p.category === category.id && (!p.branchId || p.branchId === currentBranchId));
+  }, [localInventory, category?.id, currentBranchId]);
   
   const subCategories = React.useMemo(() => 
     Array.from(new Set(itemsInCategory.map(item => (item as Product).subCategory).filter(Boolean))) as string[],
@@ -179,7 +180,7 @@ export default function CategoryListing({
     }),
   [filteredItems, sortBy]);
 
-  const isServiceCategory = ['services', 'travel', 'marriage', 'events', 'maids', 'mechanics', 'construction', 'care', 'jobs', 'driving_school', 'beauty_parlour'].includes(category.id);
+  const isServiceCategory = category ? ['services', 'travel', 'marriage', 'events', 'maids', 'mechanics', 'construction', 'care', 'jobs', 'driving_school', 'beauty_parlour'].includes(category.id) : false;
 
   const isChitFund = category && (
     category.id === 'sri_krishna_chitfund' || 
@@ -188,6 +189,17 @@ export default function CategoryListing({
     category.name.toLowerCase().includes('chitfund') || 
     category.name.toLowerCase().includes('sri krishna chit')
   );
+
+  if (!category) {
+    return (
+      <div className="h-full w-full bg-white flex flex-col items-center justify-center p-6 text-center">
+        <p className="text-sm font-black text-gray-500 uppercase tracking-wider mb-4">Category not selected</p>
+        <button onClick={onBack} className="px-6 py-2.5 bg-gray-900 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-gray-100">
+          Go Back
+        </button>
+      </div>
+    );
+  }
 
   if (category.id === 'marriage') {
     return (

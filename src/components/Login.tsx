@@ -24,12 +24,13 @@ export default function Login({ onLogin }: LoginProps) {
   const [generatedCode, setGeneratedCode] = useState<string>('');
   const [isSending, setIsSending] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isGoogleLoggingIn, setIsGoogleLoggingIn] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [detectingLocation, setDetectingLocation] = useState(false);
   
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: any;
     if (resendTimer > 0) {
       timer = setInterval(() => {
         setResendTimer(prev => prev - 1);
@@ -80,9 +81,28 @@ export default function Login({ onLogin }: LoginProps) {
         createdAt: serverTimestamp()
       });
 
+      // Dispatch real SMS via backend MSG91 API gateway
+      try {
+        const smsRes = await fetch('/api/send-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phoneNumber, code })
+        });
+        const smsData = await smsRes.json();
+        if (!smsRes.ok || smsData.error) {
+          console.warn("Direct SMS delivery bypass active:", smsData.error || smsRes.statusText);
+          setError('SMS transmitter offline. Active local verification fallback initiated.');
+        } else {
+          console.log("Direct SMS OTP dispatched successfully:", smsData);
+          setError(null);
+        }
+      } catch (smsErr) {
+        console.warn("Non-blocking SMS API error:", smsErr);
+        setError('SMS transmitter offline. Active local verification fallback initiated.');
+      }
+
       setShowOtp(true);
       setResendTimer(30); 
-      setError(null);
     } catch (err: any) {
       console.error(err);
       setError('SMS transmitter error. Fallback verification active.');
@@ -369,14 +389,37 @@ export default function Login({ onLogin }: LoginProps) {
         </div>
 
         <button 
+          disabled={isGoogleLoggingIn}
           onClick={async () => {
-            await login();
-            onLogin();
+            if (isGoogleLoggingIn) return;
+            setIsGoogleLoggingIn(true);
+            setError(null);
+            try {
+              await login();
+              onLogin();
+            } catch (err: any) {
+              console.error("Google login failed:", err);
+              if (err && (err.code === 'auth/popup-blocked' || (err.message && err.message.includes('popup-blocked')))) {
+                setError('Popup was blocked by your browser. Please allow popups for this site, or open the application in a new tab by clicking the external link icon above.');
+              } else if (err && (err.code === 'auth/cancelled-popup-request' || (err.message && err.message.includes('cancelled-popup-request')))) {
+                setError('Sign-in cancelled. Please try again or use the secure OTP / Password options.');
+              } else {
+                setError(`Google Sign-In failed: ${err.message || 'Verification cancelled or timed out.'}`);
+              }
+            } finally {
+              setIsGoogleLoggingIn(false);
+            }
           }}
-          className="w-full py-4 border-2 border-gray-100 rounded-2xl flex items-center justify-center gap-3 font-bold text-gray-700 hover:bg-gray-50 active:scale-95 transition-all"
+          className="w-full py-4 border-2 border-gray-100 rounded-2xl flex items-center justify-center gap-3 font-bold text-gray-700 hover:bg-gray-50 active:scale-95 transition-all disabled:opacity-50"
         >
-          <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
-          Continue with Google
+          {isGoogleLoggingIn ? (
+            <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+          ) : (
+            <>
+              <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
+              Continue with Google
+            </>
+          )}
         </button>
 
         <button 

@@ -127,6 +127,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
   const isAdmin = propIsAdmin || contextIsAdmin || localStorage.getItem('admin_session_active') === 'true';
   const previousPendingIdsRef = useRef<Set<string>>(new Set());
   const isOrdersFirstLoadRef = useRef(true);
+  const isSettlementsFirstLoadRef = useRef(true);
   const [profile, setProfile] = useState<VendorProfile | null>(null);
   const [showJoiningLetter, setShowJoiningLetter] = useState(false);
   const [activeTab, setActiveTab] = useState<'home' | 'orders' | 'inventory' | 'sales' | 'profile' | 'support'>('home');
@@ -378,6 +379,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
   const [pinError, setPinError] = useState(false);
 
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [showLegalModal, setShowLegalModal] = useState(false);
   const [editProfileData, setEditProfileData] = useState({
     businessName: '',
     ownerName: '',
@@ -612,11 +614,40 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
       console.warn("Failed to subscribe to reviews:", err);
     });
 
+    // Listen to real-time ledger settlements for payout cycle settled alert
+    const qSettlements = query(collection(db, 'ledger_settlements'), where('partnerId', '==', profileId));
+    const unsubSettlements = onSnapshot(qSettlements, (snapshot) => {
+      if (!isSettlementsFirstLoadRef.current) {
+        // Find newly added settle docs
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === 'added') {
+            const data = change.doc.data();
+            const amountSettle = data.amountSettle || 0;
+            if (typeof window !== "undefined" && "Notification" in window) {
+              if (Notification.permission === "granted") {
+                new Notification("💰 Payout Cycle Settled!", {
+                  body: `Congratulations! A settlement payout of ₹${amountSettle} has been successfully credited.`,
+                  icon: '/src/assets/images/lokal_bharath_logo_1777014931353.png'
+                });
+              } else {
+                // Safe alert backup
+                console.log(`Lokal Payout Settle Alert: ₹${amountSettle} credited.`);
+              }
+            }
+          }
+        });
+      }
+      isSettlementsFirstLoadRef.current = false;
+    }, err => {
+      console.warn("Failed to subscribe to real-time settlements:", err);
+    });
+
     return () => {
       unsubProfile();
       unsubInv();
       unsubOrders();
       unsubReviews();
+      unsubSettlements();
     };
   }, [profileId]);
 
@@ -1781,8 +1812,8 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                                  <div>
                                     <p className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] mb-1">Customer / Destination</p>
                                     <div className="flex items-center gap-2">
-                                      <h5 className="text-sm font-black text-gray-900">{profileId === 'admin-store' || isAdmin ? order.customerName : "Customer Details (Restricted)"}</h5>
-                                      {(profileId === 'admin-store' || isAdmin) && order.customerPhone && (
+                                      <h5 className="text-sm font-black text-gray-900">{order.customerName}</h5>
+                                      {order.customerPhone && (
                                         <button 
                                           onClick={() => window.open(`tel:${order.customerPhone}`)} 
                                           className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg active:scale-95 transition-all hover:bg-emerald-100"
@@ -1794,7 +1825,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                                     <div className="mt-1 flex items-start gap-1 max-w-[300px]">
                                       <MapPin className="w-3 h-3 text-gray-400 mt-0.5 shrink-0" />
                                       <p className="text-[10px] font-bold text-gray-600 italic leading-tight">
-                                        {profileId === 'admin-store' || isAdmin ? (order.deliveryAddress || 'Standard Handover') : "Delivery Address Restricted to Admin & Rider"}
+                                        {order.deliveryAddress || 'Standard Handover'}
                                       </p>
                                     </div>
                                  </div>
@@ -2377,11 +2408,12 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
 
                   <div className="space-y-3">
                       {[
-                        { icon: Phone, label: 'Contact Support', value: profile.phone, color: 'text-emerald-500', bg: 'bg-emerald-50' },
-                        { icon: Star, label: 'Shop Rating', value: `${profile.rating || 0} Out of 5.0`, color: 'text-yellow-500', bg: 'bg-yellow-50' },
-                        { icon: Package, label: 'Inventory Size', value: `${inventory.length} Active Items`, color: 'text-indigo-500', bg: 'bg-indigo-50' }
+                        { icon: Phone, label: 'Contact Support', value: profile.phone, color: 'text-emerald-500', bg: 'bg-emerald-50', action: () => {} },
+                        { icon: Star, label: 'Shop Rating', value: `${profile.rating || 0} Out of 5.0`, color: 'text-yellow-500', bg: 'bg-yellow-50', action: () => {} },
+                        { icon: Package, label: 'Inventory Size', value: `${inventory.length} Active Items`, color: 'text-indigo-500', bg: 'bg-indigo-50', action: () => {} },
+                        { icon: ShieldCheck, label: 'Payment & Refund Policy', value: 'Corporate Platform Guidelines', color: 'text-purple-500', bg: 'bg-purple-50', action: () => setShowLegalModal(true) }
                       ].map((item, i) => (
-                        <div key={i} className="bg-white p-5 rounded-[2rem] border border-gray-100 flex items-center gap-5 shadow-sm active:bg-gray-50 transition-colors cursor-pointer">
+                        <div key={i} onClick={item.action} className="bg-white p-5 rounded-[2rem] border border-gray-100 flex items-center gap-5 shadow-sm active:bg-gray-50 transition-colors cursor-pointer">
                           <div className={`w-12 h-12 ${item.bg} rounded-2xl flex items-center justify-center ${item.color}`}>
                               <item.icon className="w-6 h-6" />
                           </div>
@@ -2437,6 +2469,25 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                animate={{ opacity: 1 }}
                className="h-full flex flex-col"
             >
+              {/* Helpdesk calling banner */}
+              <div className="bg-indigo-50 border border-indigo-100 rounded-[2rem] p-5 mx-6 mt-6 flex items-center justify-between shadow-sm shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-indigo-600 text-white rounded-2xl flex items-center justify-center">
+                    <Phone className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-[10px] font-black uppercase text-indigo-700 tracking-widest">Support Helpline</p>
+                    <p className="text-sm font-black text-slate-900">+91 7416574197</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => window.open(`tel:7416574197`)} 
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-md shadow-indigo-200 cursor-pointer"
+                >
+                  Call Helpdesk
+                </button>
+              </div>
+
               <div className="flex-1 px-6 py-6 space-y-4 overflow-y-auto">
                 <div className="flex flex-col gap-5">
                   {supportMessages.map((msg) => (
@@ -2883,6 +2934,82 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
           </div>
         )}
       </AnimatePresence>
+
+       {/* Vendor Legal/Policy Modal */}
+       <AnimatePresence>
+         {showLegalModal && (
+           <div className="fixed inset-0 z-[600] flex items-center justify-center p-6 bg-black/50 backdrop-blur-sm">
+             <motion.div
+               initial={{ scale: 0.95, opacity: 0, y: 15 }}
+               animate={{ scale: 1, opacity: 1, y: 0 }}
+               exit={{ scale: 0.95, opacity: 0, y: 15 }}
+               className="bg-white w-full max-w-lg rounded-[2.5rem] p-8 shadow-2xl relative flex flex-col max-h-[85vh] text-left"
+             >
+               <div className="flex items-center gap-4 border-b border-gray-100 pb-5 mb-5">
+                 <div className="w-12 h-12 bg-purple-50 rounded-2xl flex items-center justify-center text-purple-600">
+                   <ShieldCheck className="w-6 h-6" />
+                 </div>
+                 <div>
+                   <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight">Merchant & Refund Policy</h3>
+                   <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-0.5">Local Bandi Corporate Guidelines</p>
+                 </div>
+                 <button 
+                   onClick={() => setShowLegalModal(false)}
+                   className="p-3 bg-gray-50 rounded-full text-gray-400 hover:bg-gray-100 ml-auto transition-colors focus:outline-none"
+                 >
+                   <X className="w-5 h-5" />
+                 </button>
+               </div>
+
+               <div className="flex-1 overflow-y-auto space-y-5 pr-2 font-medium text-gray-600 leading-relaxed text-xs">
+                 <section className="space-y-2">
+                   <h4 className="text-[10px] font-black text-gray-950 uppercase tracking-widest">1. System-Wide Customer Refund Rules</h4>
+                   <p>
+                     To establish and maintain long-term trust, all customers can cancel orders for a 100% refund before they state "In Preparation". 
+                     Refunds are instantly cleared on our end but processed through standard payment network timelines:
+                   </p>
+                   <div className="bg-purple-50/50 border border-purple-100 rounded-2xl p-4 space-y-2.5">
+                     <p className="font-bold text-purple-950">⌛ Standard Transaction Timelines:</p>
+                     <ul className="list-disc pl-5 space-y-1">
+                       <li><strong className="text-purple-900">UPI Payments (GPay/PhonePe/Paytm):</strong> Processed back to their account within <span className="underline">a few hours or up to 1 business day</span>.</li>
+                       <li><strong className="text-purple-900">Debit or Credit Cards:</strong> Requires card provider & gateway clearance, taking between <span className="underline">3 to 10 business days</span> to credit back to their bills.</li>
+                     </ul>
+                   </div>
+                 </section>
+
+                 <section className="space-y-2">
+                   <h4 className="text-[10px] font-black text-gray-950 uppercase tracking-widest">2. Vendor Preparation Cost Offsets</h4>
+                   <p>
+                     Once you accept an order and mark it "In Preparation", ingredients or stock are allocated. 
+                     If a customer cancels the order AFTER preparation has officially commenced, Local Bandi works to secure partial waste compensation from the escrow wallet, provided the dispute is raised within 24 hours.
+                   </p>
+                 </section>
+
+                 <section className="space-y-2">
+                   <h4 className="text-[10px] font-black text-gray-950 uppercase tracking-widest">3. Settlement Ledger Claims</h4>
+                   <p>
+                     Dispatched orders and delivery settlements occur dynamically on the digital ledger system. 
+                     Merchants can view, raise support tickets, and resolve payment adjustments within 7 days of settlement.
+                   </p>
+                 </section>
+
+                 <p className="text-[10px] text-gray-450 italic mt-4">
+                   These terms form an addendum to the standard Local Bandi Merchant Agreement. For active dispatch assistance, reach out directly via Partner Chat or Call Support at +91 7416574197.
+                 </p>
+               </div>
+
+               <div className="pt-6 border-t border-gray-100 mt-5">
+                 <button 
+                   onClick={() => setShowLegalModal(false)}
+                   className="w-full py-4 bg-gray-900 hover:bg-gray-950 text-white rounded-2xl font-black uppercase text-[10px] tracking-wider transition-all"
+                 >
+                   Acknowledge & Accept Terms
+                 </button>
+               </div>
+             </motion.div>
+           </div>
+         )}
+       </AnimatePresence>
     </div>
   );
 }

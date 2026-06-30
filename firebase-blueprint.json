@@ -214,9 +214,33 @@
         "accountHolder": { "type": "string" }
       },
       "required": ["id"]
+    },
+    "SupportComplaint": {
+      "title": "SupportComplaint",
+      "description": "A customer complaint or support request.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "orderId": { "type": "string" },
+        "category": { "type": "string", "enum": ["Payment Issue", "Delivery Boy Behavior", "Order Issue", "Other"] },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "In Progress", "Resolved", "Closed"] },
+        "adminAnswer": { "type": "string" },
+        "branchId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "customerName", "category", "description", "status", "createdAt"]
     }
   },
   "firestore": {
+    "/support_complaints/{complaintId}": {
+      "schema": "SupportComplaint",
+      "description": "Customer support complaints."
+    },
     "/settings/{settingsId}": {
       "schema": "PlatformSettings",
       "description": "Global platform settings."

@@ -151,6 +151,27 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
     }
   };
 
+  const handleSimulateDelivery = async (orderId: string, currentCompletedDates: string[] = [], currentRemainingVal: number = 30) => {
+    const todayStr = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    const updatedDates = [...(currentCompletedDates || [])];
+    if (updatedDates.includes(todayStr)) {
+      alert("Today's service delivery has already been logged!");
+      return;
+    }
+    updatedDates.push(todayStr);
+    const newRemaining = Math.max(0, 30 - updatedDates.length);
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        completedDates: updatedDates,
+        remainingDays: newRemaining,
+        updatedAt: serverTimestamp()
+      });
+      setSelectedOrderDetail(prev => prev ? { ...prev, completedDates: updatedDates, remainingDays: newRemaining } : null);
+    } catch (err) {
+      console.error("Failed to update subscription details:", err);
+    }
+  };
+
   const openCancelModal = (orderId: string) => {
     setOrderToCancel(orderId);
     setCancellationStep('confirm');
@@ -593,6 +614,53 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
                     )}
                   </div>
                 </section>
+
+                {selectedOrderDetail.isMonthlySubscription && (
+                  <section className="bg-indigo-50/50 p-5 rounded-[2rem] border border-indigo-100 space-y-4 font-sans">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800 uppercase tracking-tight">Subscription Calendar</h4>
+                        <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">30-Day Automated Direct Deliveries</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-xl block border border-indigo-100">
+                          {selectedOrderDetail.remainingDays ?? 30} Days Left
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-6 gap-1.5 pt-1.5">
+                      {Array.from({ length: 30 }).map((_, index) => {
+                        const dayNum = index + 1;
+                        const isCompleted = (selectedOrderDetail.completedDates ?? []).length >= dayNum;
+                        return (
+                          <div 
+                            key={dayNum} 
+                            className={`aspect-square rounded-2xl flex flex-col items-center justify-center border text-[8px] font-black transition-all ${
+                              isCompleted 
+                                ? 'bg-emerald-500 border-emerald-600 text-white shadow-md shadow-emerald-50/50' 
+                                : 'bg-white border-indigo-50 text-slate-400'
+                            }`}
+                          >
+                            <span className="opacity-60 text-[7px] uppercase font-bold">D</span>
+                            <span className="text-xs font-extrabold">{dayNum}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <button 
+                      onClick={() => handleSimulateDelivery(selectedOrderDetail.id, selectedOrderDetail.completedDates, selectedOrderDetail.remainingDays ?? 30)}
+                      className="w-full py-4.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all shadow-md active:scale-95 cursor-pointer text-center"
+                    >
+                      Log Simulated Delivery
+                    </button>
+                    
+                    <p className="text-[9px] font-bold text-slate-400 text-center uppercase tracking-wide">
+                      Deliveries are completed daily. Track status updates here.
+                    </p>
+                  </section>
+                )}
 
                 <section className="p-6 bg-gray-900 rounded-[2rem] text-white space-y-4 shadow-xl">
                   <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/50">

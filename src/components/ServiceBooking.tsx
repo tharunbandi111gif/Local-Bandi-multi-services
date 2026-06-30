@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Calendar, Clock, MapPin, Star, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Service, Review } from '../types';
@@ -7,13 +7,21 @@ import ReviewsSection from './ReviewsSection';
 interface ServiceBookingProps {
   service: Service;
   onBack: () => void;
-  onBook: () => void;
+  onBook: (selectedDateText: string, selectedTimeSlotText: string) => void;
   isAdmin?: boolean;
+  location: string;
+  onUpdateLocation: (newLoc: string) => void;
 }
 
-export default function ServiceBooking({ service, onBack, onBook, isAdmin = false }: ServiceBookingProps) {
+export default function ServiceBooking({ service, onBack, onBook, isAdmin = false, location, onUpdateLocation }: ServiceBookingProps) {
   const [selectedDate, setSelectedDate] = useState(0);
   const [selectedTime, setSelectedTime] = useState(-1);
+  const [isEditingAddress, setIsEditingAddress] = useState(false);
+  const [editedAddress, setEditedAddress] = useState(location || '');
+
+  useEffect(() => {
+    setEditedAddress(location || '');
+  }, [location]);
   const [localReviews, setLocalReviews] = useState<Review[]>(service.reviews || [
     { id: 'r1', userName: 'Kiran T.', rating: 5, comment: 'Very professional service. Highly recommended!', date: '3 days ago' },
     { id: 'r2', userName: 'Sneha L.', rating: 4, comment: 'Arrived on time and fixed the issue quickly. Good behavior.', date: '2 weeks ago' },
@@ -44,7 +52,8 @@ export default function ServiceBooking({ service, onBack, onBook, isAdmin = fals
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     
-    for (let i = 0; i < 7; i++) {
+    // Show dates from today until 1 month (30 days) on calendar
+    for (let i = 0; i < 30; i++) {
       const d = new Date();
       d.setDate(d.getDate() + i);
       dates.push({
@@ -59,44 +68,62 @@ export default function ServiceBooking({ service, onBack, onBook, isAdmin = fals
   const dates = generateDates();
 
   const getDayStatus = (dayIndex: number) => {
-    // Generate semi-random but stable availability based on day index
-    if (dayIndex === 0) return 'limited'; // Today is busy
+    if (dayIndex === 0) return 'limited';
     if (dayIndex % 2 === 0) return 'available';
     return 'crowded';
   };
 
   const getTimesForDate = (dateIndex: number) => {
+    // 3-hour slots from 9:00 AM to 9:00 PM
     const baseTimes = [
-      { time: '09:00 AM', label: 'Morning Slot' },
-      { time: '10:30 AM', label: 'Mid Morning' },
-      { time: '12:00 PM', label: 'Noon Slot' },
-      { time: '02:00 PM', label: 'Early Afternoon' },
-      { time: '04:00 PM', label: 'Late Afternoon' },
-      { time: '06:00 PM', label: 'Evening Slot' },
-      { time: '07:30 PM', label: 'Late Evening' },
+      { time: '09:00 AM - 12:00 PM', startHour: 9, label: 'Morning Slot' },
+      { time: '12:00 PM - 03:00 PM', startHour: 12, label: 'Noon Slot' },
+      { time: '03:00 PM - 06:00 PM', startHour: 15, label: 'Afternoon Slot' },
+      { time: '06:00 PM - 09:00 PM', startHour: 18, label: 'Evening Slot' },
     ];
 
+    const now = new Date();
+    // Use decimal hours for precise comparison (e.g. 2:30 PM is 14.5 hours)
+    const currentTotalHours = now.getHours() + (now.getMinutes() / 60);
+
     return baseTimes.map((t, i) => {
-      // Deterministic randomness
-      const seed = dateIndex * 7 + i;
-      const rand = (seed * 9301 + 49297) % 233280 / 233280;
-      
+      let isAvailable = true;
       let status: 'Available' | 'Full' | 'Limited' = 'Available';
-      if (rand > 0.8) status = 'Full';
-      else if (rand > 0.5) status = 'Limited';
+
+      // Today (dateIndex === 0): Show slots after 2 hours at order time.
+      if (dateIndex === 0) {
+        if (t.startHour < currentTotalHours + 2) {
+          isAvailable = false;
+          status = 'Full';
+        }
+      }
+
+      // Add default deterministic availability variation for other days
+      if (isAvailable && dateIndex > 0) {
+        const seed = dateIndex * 5 + i;
+        const rand = (seed * 9301 + 49297) % 233280 / 233280;
+        if (rand > 0.85) {
+          status = 'Full';
+          isAvailable = false;
+        } else if (rand > 0.6) {
+          status = 'Limited';
+        }
+      }
 
       return {
-        ...t,
+        time: t.time,
+        label: t.label,
         status,
-        available: status !== 'Full'
+        available: isAvailable,
+        startHour: t.startHour,
       };
     });
   };
 
   const currentTimes = getTimesForDate(selectedDate);
-  const morningSlots = currentTimes.filter(t => t.time.includes('AM') || t.time === '12:00 PM');
-  const afternoonSlots = currentTimes.filter(t => t.time.includes('PM') && !morningSlots.includes(t) && parseInt(t.time) < 6);
-  const eveningSlots = currentTimes.filter(t => t.time.includes('PM') && parseInt(t.time) >= 6 && t.time !== '12:00 PM');
+  const morningSlots = currentTimes.filter(t => t.time.includes('09:00 AM'));
+  const afternoonSlots = currentTimes.filter(t => t.time.includes('12:00 PM') || t.time.includes('03:00 PM'));
+  const eveningSlots = currentTimes.filter(t => t.time.includes('06:00 PM'));
 
   const SlotList = ({ slots, title }: { slots: typeof currentTimes, title: string }) => (
     <div className="mb-8">
@@ -203,6 +230,16 @@ export default function ServiceBooking({ service, onBack, onBook, isAdmin = fals
           </div>
         </section>
 
+        <div className="bg-amber-50/70 border border-amber-200 p-5 rounded-[2rem] flex items-start gap-3.5 shadow-sm">
+          <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <h4 className="text-[10px] font-black uppercase text-amber-800 tracking-widest leading-none">Booking Policy & Assurance</h4>
+            <p className="text-xs text-amber-800/80 font-bold leading-relaxed">
+              If our service partner is not available today, your booking will be prioritized and automatically confirmed for <span className="font-extrabold text-amber-900 border-b border-amber-300">tomorrow morning (9:00 AM)</span>. They will complete your requests directly. Thank you for your patience!
+            </p>
+          </div>
+        </div>
+
         <section>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-black text-gray-900">Available Slots</h3>
@@ -214,14 +251,56 @@ export default function ServiceBooking({ service, onBack, onBook, isAdmin = fals
         </section>
 
         <section className="bg-gray-50 border-2 border-gray-100 p-6 rounded-[2.5rem] relative overflow-hidden">
-          <div className="flex justify-between items-start mb-4">
-            <div>
+          <div className="relative z-10">
+            <div className="flex justify-between items-start mb-2">
               <h3 className="text-sm font-black text-gray-900 mb-1">Service Location</h3>
-              <p className="text-xs text-gray-500 font-bold max-w-[180px]">B-402, Sunshine Apartments, Noida Sector 62</p>
+              {!isEditingAddress && (
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setEditedAddress(location || '');
+                    setIsEditingAddress(true);
+                  }}
+                  className="text-yellow-650 text-[10px] font-black uppercase tracking-widest bg-yellow-100 px-3 py-1.5 rounded-xl cursor-pointer hover:bg-yellow-200 transition-colors"
+                >
+                  Change
+                </button>
+              )}
             </div>
-            <button className="text-yellow-600 text-xs font-black uppercase tracking-widest bg-yellow-100 px-3 py-1.5 rounded-xl">Change</button>
+            {isEditingAddress ? (
+              <div className="space-y-3">
+                <textarea
+                  value={editedAddress}
+                  onChange={(e) => setEditedAddress(e.target.value)}
+                  className="w-full p-3 bg-white border border-gray-200 rounded-2xl text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-yellow-400 font-sans min-h-[60px]"
+                  placeholder="Enter complete building name, plot, sector or street..."
+                />
+                <div className="flex gap-2">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      if (editedAddress.trim() === '') return;
+                      onUpdateLocation?.(editedAddress);
+                      setIsEditingAddress(false);
+                    }}
+                    className="py-2 px-4 bg-yellow-400 text-gray-900 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer hover:bg-yellow-500"
+                  >
+                    Save
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setIsEditingAddress(false)}
+                    className="py-2 px-4 bg-gray-200 text-gray-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all cursor-pointer hover:bg-gray-305"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 font-bold leading-relaxed">{location || 'No address specified. Click Change to set address.'}</p>
+            )}
           </div>
-          <div className="flex items-center gap-4 pt-4 border-t border-gray-200/50">
+          <div className="flex items-center gap-4 pt-4 mt-4 border-t border-gray-200/50 relative z-10">
             <div className="bg-green-100 p-2 rounded-xl">
               <ShieldCheck className="w-5 h-5 text-green-600" />
             </div>
@@ -230,7 +309,7 @@ export default function ServiceBooking({ service, onBack, onBook, isAdmin = fals
               <p className="text-[10px] text-gray-500 font-bold">100% Satisfaction Guarantee</p>
             </div>
           </div>
-          <MapPin className="absolute -right-4 -bottom-4 w-24 h-24 text-gray-100 rotate-12" />
+          <MapPin className="absolute -right-4 -bottom-4 w-24 h-24 text-gray-100/30 rotate-12" />
         </section>
 
         <ReviewsSection 
@@ -253,7 +332,13 @@ export default function ServiceBooking({ service, onBack, onBook, isAdmin = fals
           </div>
         </div>
         <button 
-          onClick={onBook}
+          onClick={() => {
+            if (selectedTime !== -1) {
+              const dObj = dates[selectedDate];
+              const tObj = currentTimes[selectedTime];
+              onBook(`${dObj.day}, ${dObj.date}`, tObj.time);
+            }
+          }}
           disabled={selectedTime === -1}
           className={`w-full py-5 rounded-[2rem] font-black shadow-xl transition-all ${
             selectedTime === -1 

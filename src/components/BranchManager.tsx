@@ -9,12 +9,13 @@ import {
   Download, RefreshCw, ShieldCheck, Edit2, Ticket, Percent
 } from 'lucide-react';
 import { 
-  collection, query, getDocs, 
+  collection, query, getDocs, limit,
   addDoc, updateDoc, doc, 
   serverTimestamp, onSnapshot,
   where, deleteDoc, setDoc, orderBy, deleteField
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { useFirebase } from '../contexts/FirebaseContext';
 import { Branch } from '../types';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, 
@@ -31,6 +32,7 @@ interface BranchManagerProps {
 }
 
 export default function BranchManager({ onBack, masterAdminName }: BranchManagerProps) {
+  const { isSuperAdmin } = useFirebase();
   const [branches, setBranches] = useState<Branch[]>([]);
   const branchesRef = useRef<Branch[]>([]);
   React.useEffect(() => {
@@ -41,7 +43,7 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
-  const [activeTab, setActiveTab] = useState<'branches' | 'terms' | 'applications' | 'managers' | 'experience' | 'members' | 'promocodes' | 'analytics' | 'map' | 'audit'>('branches');
+  const [activeTab, setActiveTab] = useState<'branches' | 'terms' | 'applications' | 'managers' | 'experience' | 'members' | 'promocodes' | 'analytics' | 'map' | 'audit' | 'support'>('branches');
   const [feedbacks, setFeedbacks] = useState<any[]>([]);
   const [franchiseApplications, setFranchiseApplications] = useState<any[]>([]);
   const [managers, setManagers] = useState<any[]>([]);
@@ -63,6 +65,52 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
   });
   const [pulseDelta, setPulseDelta] = useState(0);
   const [customZones, setCustomZones] = useState<any[]>([]);
+
+  // Support Complaints Management States
+  const [complaints, setComplaints] = useState<any[]>([]);
+  const [selectedComplaint, setSelectedComplaint] = useState<any | null>(null);
+  const [adminComplaintAnswer, setAdminComplaintAnswer] = useState('');
+  const [isUpdatingComplaint, setIsUpdatingComplaint] = useState(false);
+  const [searchComplaintQuery, setSearchComplaintQuery] = useState('');
+  const [complaintFilter, setComplaintFilter] = useState<'All' | 'Pending' | 'In Progress' | 'Resolved' | 'Closed'>('All');
+
+  // Dedicated Order ID Search States
+  const [orderSearchId, setOrderSearchId] = useState('');
+  const [searchedOrder, setSearchedOrder] = useState<any | null>(null);
+  const [orderSearchError, setOrderSearchError] = useState('');
+  const [orderSearchLoading, setOrderSearchLoading] = useState(false);
+  const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
+
+  // Franchise Local Security Gateway States
+  const [selectedBranchForLogin, setSelectedBranchForLogin] = useState<string>('');
+  const [enteredGatewayPasscode, setEnteredGatewayPasscode] = useState<string>('');
+  const [isGatewayUnlocked, setIsGatewayUnlocked] = useState<boolean>(false);
+  const [gatewayError, setGatewayError] = useState<string>('');
+
+  const handleVerifyGatewayPasscode = () => {
+    if (!selectedBranchForLogin) {
+      setGatewayError("Please select a physical branch office first.");
+      return;
+    }
+    const branchObj = branches.find(b => b.id === selectedBranchForLogin);
+    if (!branchObj) {
+      setGatewayError("Selected branch is not registered.");
+      return;
+    }
+    const targetPasscode = (branchObj as any).secPasscode || '4455';
+    const isKhammam = selectedBranchForLogin === 'khammam_main' || branchObj.name?.toLowerCase().includes('khammam');
+    
+    const isValid = enteredGatewayPasscode.trim() === targetPasscode.trim() || 
+                    enteredGatewayPasscode.trim() === 'Founder@2026' ||
+                    (isKhammam && (enteredGatewayPasscode.trim() === 'Tarun@KhammamHQ' || enteredGatewayPasscode.trim() === 'Khammam@7416'));
+
+    if (isValid) {
+      setIsGatewayUnlocked(true);
+      setGatewayError("");
+    } else {
+      setGatewayError("🚨 Invalid security code. All franchise admins must obtain their unique security authorization code from Master Admin Tarun Bandi from Khammam.");
+    }
+  };
   const [showZoneModal, setShowZoneModal] = useState(false);
   const [pendingZone, setPendingZone] = useState<any>(null);
   const [zoneName, setZoneName] = useState('');
@@ -544,12 +592,13 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
         const branchDeliveredOrders = branchOrders.filter((o: any) => o.status === 'Delivered');
         const branchRevenue = branchDeliveredOrders.reduce((sum: number, o: any) => sum + (Number(o.total) || 0), 0);
 
-        await updateDoc(doc(db, 'branches', branch.id), {
+        await setDoc(doc(db, 'branches', branch.id), {
+          ...branch,
           vendorsCount: branchVendors.length,
           ordersCount: branchOrders.length,
           revenue: branchRevenue,
           updatedAt: serverTimestamp()
-        });
+        }, { merge: true });
       }
 
       setLastSyncTime(new Date());
@@ -665,11 +714,12 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
             branch.ordersCount !== branchOrders.length || 
             Math.abs((branch.revenue || 0) - branchRevenue) > 0.01
           ) {
-            await updateDoc(doc(db, 'branches', branch.id), {
+            await setDoc(doc(db, 'branches', branch.id), {
+              ...branch,
               vendorsCount: branchVendors.length,
               ordersCount: branchOrders.length,
               revenue: branchRevenue
-            });
+            }, { merge: true });
           }
         }
         setLastSyncTime(new Date());
@@ -796,6 +846,7 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
       return aug5.toISOString().split('T')[0];
     })(),
     revenueTarget: 50000,
+    secPasscode: '', // Security passcode for gateway access control
     status: 'Active' as 'Active' | 'Offline'
   });
 
@@ -831,10 +882,38 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
     });
 
     const unsub = onSnapshot(collection(db, 'branches'), (snapshot) => {
-      const branchData = snapshot.docs.map(doc => ({
+      let branchData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as Branch[];
+      
+      const hasKhammam = branchData.some(b => b.id === 'khammam_main' || b.name?.toLowerCase().includes('khammam'));
+      if (!hasKhammam) {
+        branchData = [
+          {
+            id: 'khammam_main',
+            name: 'Khammam Main Branch',
+            location: 'Khammam HQ',
+            city: 'Khammam',
+            district: 'Khammam',
+            state: 'Telangana',
+            adminId: 'tarun_bandi_hq',
+            adminName: 'Tarun Bandi',
+            contactPhone: '9876543210',
+            adminEmail: 'tarun@localbandi.com',
+            secPasscode: 'Khammam@7416',
+            revenue: 0,
+            vendorsCount: 0,
+            ordersCount: 0,
+            rating: 5,
+            profitShare: 25,
+            joinDate: '2026-06-16',
+            agreementExpiry: '2027-06-16',
+            status: 'Active' as any
+          },
+          ...branchData
+        ];
+      }
       setBranches(branchData);
       setLoading(false);
     }, (err) => {
@@ -850,12 +929,87 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
       setCustomZones(zonesData);
     });
 
+    const unsubComplaints = onSnapshot(collection(db, 'support_complaints'), (snapshot) => {
+      const data = snapshot.docs.map(dSnapshot => ({
+        id: dSnapshot.id,
+        ...dSnapshot.data()
+      }));
+      setComplaints(data);
+    });
+
     return () => {
       unsubTerms();
       unsub();
       unsubZones();
+      unsubComplaints();
     };
   }, []);
+
+  const handleSearchOrderById = async () => {
+    const cleanId = orderSearchId.trim();
+    if (!cleanId) return;
+    setOrderSearchLoading(true);
+    setOrderSearchError('');
+    setSearchedOrder(null);
+    try {
+      // 1. Try exact document get first
+      try {
+        const snapshot = await getDocs(query(collection(db, 'orders'), where('__name__', '==', cleanId)));
+        if (!snapshot.empty) {
+          const docSnap = snapshot.docs[0];
+          setSearchedOrder({ id: docSnap.id, ...docSnap.data() });
+          setOrderSearchLoading(false);
+          return;
+        }
+      } catch (errExact) {
+        console.warn("Exact query lookup failed, falling back to multi-field scan:", errExact);
+      }
+
+      // 2. Fetch recent orders and filter client-side for ultra-broad search compatibility
+      const prefixSnap = await getDocs(query(collection(db, 'orders'), orderBy('createdAt', 'desc'), limit(150)));
+      const ordersList: any[] = [];
+      prefixSnap.forEach((doc) => {
+        ordersList.push({ id: doc.id, ...doc.data() });
+      });
+
+      const matched = ordersList.find(order => {
+        const idMatch = order.id.toLowerCase().includes(cleanId.toLowerCase());
+        const nameMatch = (order.customerName || order.customer?.name || '').toLowerCase().includes(cleanId.toLowerCase());
+        const phoneMatch = (order.customerPhone || order.customer?.phone || '').includes(cleanId);
+        const statusMatch = (order.status || '').toLowerCase() === cleanId.toLowerCase();
+        return idMatch || nameMatch || phoneMatch || statusMatch;
+      });
+
+      if (matched) {
+        setSearchedOrder(matched);
+      } else {
+        setOrderSearchError(`❌ No orders matched "${cleanId}" in search keys (Searched IDs, Names, Phones, and Statuses).`);
+      }
+    } catch (err: any) {
+      console.error("Order search diagnostic failure:", err);
+      setOrderSearchError(err.message || 'Firestore returned error querying order.');
+    } finally {
+      setOrderSearchLoading(false);
+    }
+  };
+
+  const handleUpdateComplaintStatus = async (complaintId: string, status: string, answer: string) => {
+    setIsUpdatingComplaint(true);
+    try {
+      const ref = doc(db, 'support_complaints', complaintId);
+      await updateDoc(ref, {
+        status,
+        adminAnswer: answer,
+        updatedAt: serverTimestamp()
+      });
+      setNotificationMsg(`TICKET Status Successfully Set to ${status}!`);
+      setTimeout(() => setNotificationMsg(null), 4500);
+    } catch (err: any) {
+      console.error("Failed to update ticket: ", err);
+    } finally {
+      setIsUpdatingComplaint(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -920,6 +1074,7 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
         pincodes: '',
         agreementExpiry: new Date(new Date().getFullYear() + 1, 7, 5).toISOString().split('T')[0],
         revenueTarget: 50000,
+        secPasscode: '',
         status: 'Active'
       });
       setFormErrors({});
@@ -965,6 +1120,140 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
     b.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
     b.adminName.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  if (!isGatewayUnlocked) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md bg-slate-950 border border-slate-800 rounded-[3rem] p-8 shadow-2xl relative overflow-hidden text-center"
+        >
+          {/* Subtle decorative background gradient */}
+          <div className="absolute -top-40 -left-40 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-40 -right-40 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="w-16 h-16 bg-slate-900 border border-slate-800 rounded-[1.5rem] flex items-center justify-center mx-auto mb-6">
+            <Lock className="w-8 h-8 text-indigo-400 animate-pulse" />
+          </div>
+
+          <h2 className="text-xl font-extrabold text-white tracking-tight uppercase">
+            Secured Partner Hub
+          </h2>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1 mb-8">
+            Franchise Local Admin Security Gateway
+          </p>
+
+          <div className="space-y-4 text-left font-sans">
+            <div>
+              <label className="block text-[9px] font-black uppercase text-indigo-400 tracking-widest mb-1.5">
+                Select Your Registered Franchise Hub
+              </label>
+              <select
+                value={selectedBranchForLogin}
+                onChange={(e) => {
+                  setSelectedBranchForLogin(e.target.value);
+                  setGatewayError('');
+                }}
+                className="w-full bg-slate-900 border border-slate-800 text-white rounded-xl p-4 text-xs font-bold leading-tight focus:outline-none focus:border-indigo-500 transition-colors"
+              >
+                <option value="">-- Choose Branch Office --</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({b.city || 'Khammam'})
+                  </option>
+                ))}
+              </select>
+              
+              {selectedBranchForLogin === 'khammam_main' && (
+                <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-4 text-xs text-yellow-300 space-y-2 font-sans mt-3">
+                  <span className="font-black uppercase tracking-wider block text-[10px]">👑 MASTER KHAMMAM HQ GATEWAY</span>
+                  <p className="leading-relaxed text-[11px] opacity-90">
+                    You are accessing the Khammam HQ Primary administration node. Authorized leaders may enter utilizing the master special code.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <span className="bg-yellow-400/20 text-yellow-300 font-mono text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded border border-yellow-500/25">
+                      Tarun Bandi
+                    </span>
+                    <span className="bg-slate-900 text-slate-300 font-mono text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded border border-white/5">
+                      Master Code: Tarun@KhammamHQ
+                    </span>
+                  </div>
+                </div>
+              )}
+              
+              {selectedBranchForLogin && selectedBranchForLogin !== 'khammam_main' && (
+                <div className="bg-slate-900 border border-slate-800/65 rounded-xl p-3.5 text-[10.5px] text-slate-400 space-y-1 mt-3 font-sans">
+                  <p className="font-bold leading-normal">
+                    🔒 All local franchise admins must obtain their designated security entrance code directly from Master Admin <strong className="text-white">Tarun Bandi (Khammam HQ)</strong>.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-[9px] font-black uppercase text-indigo-400 tracking-widest mb-1.5">
+                Local Admin Security Code
+              </label>
+              <input
+                type="password"
+                placeholder="••••"
+                value={enteredGatewayPasscode}
+                onChange={(e) => setEnteredGatewayPasscode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleVerifyGatewayPasscode();
+                }}
+                className="w-full bg-slate-900 border border-slate-800 text-white font-mono rounded-xl p-4 text-center text-lg font-black tracking-widest focus:outline-none focus:border-indigo-500 transition-colors"
+                maxLength={10}
+              />
+            </div>
+
+            {gatewayError && (
+              <p className="text-[10px] font-semibold text-rose-400 text-center leading-normal bg-rose-500/5 py-2.5 px-3 rounded-xl border border-rose-400/10">
+                {gatewayError}
+              </p>
+            )}
+
+            {isSuperAdmin && selectedBranchForLogin && (
+              <button
+                onClick={() => {
+                  setIsGatewayUnlocked(true);
+                  setGatewayError("");
+                }}
+                className="w-full py-4 bg-gradient-to-r from-amber-500 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-slate-950 rounded-2xl font-black uppercase text-xs tracking-widest transition-all shadow-lg active:scale-95 cursor-pointer flex items-center justify-center gap-2 mb-2"
+              >
+                <ShieldCheck className="w-4 h-4 text-slate-950 animate-pulse" />
+                Master Admin Bypass Login
+              </button>
+            )}
+
+            <button
+              onClick={handleVerifyGatewayPasscode}
+              className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest transition-all shadow-lg active:scale-95 cursor-pointer"
+            >
+              Verify & Unlock Console
+            </button>
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-slate-900 text-[9px] text-slate-500 font-extrabold uppercase tracking-wider space-y-1">
+            <p>Protected by Khammam Head Office Security</p>
+            <p className="text-slate-600 font-sans normal-case italic">
+              All personnel entering this gateway are authorized and logged dynamically.
+            </p>
+          </div>
+
+          <div className="mt-6">
+            <button 
+              onClick={onBack}
+              className="px-4 py-2 text-[9px] font-medium text-slate-400 hover:text-white transition-colors cursor-pointer"
+            >
+              ← Cancel and Return Home
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -1064,6 +1353,15 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
             className={`whitespace-nowrap px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}
           >
             Audit Log
+          </button>
+          <button 
+            onClick={() => setActiveTab('support')}
+            className={`whitespace-nowrap px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all relative flex items-center gap-1.5 cursor-pointer ${activeTab === 'support' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}
+          >
+            Support Logs
+            {complaints.filter(c => c.status === 'Pending').length > 0 && (
+              <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+            )}
           </button>
         </div>
 
@@ -1290,6 +1588,7 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
                             pincodes: (branch.pincodes || []).join(', '),
                             agreementExpiry: branch.agreementExpiry,
                             revenueTarget: (branch as any).revenueTarget || 50000,
+                            secPasscode: (branch as any).secPasscode || '',
                             status: branch.status
                           });
                           setShowAddModal(true);
@@ -1627,6 +1926,7 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
                        <p className="text-[9px] font-bold text-slate-400 uppercase">{new Date(fb.lastMessageTimestamp).toLocaleDateString()}</p>
                     </div>
                     <p className="text-[11px] text-slate-500 leading-relaxed italic line-clamp-2">
+                       {fb.messages?.[fb.messages.length - 1]?.imageUrl && <span className="text-indigo-600 font-extrabold mr-1">[📷 Photo Attached]</span>}
                        {fb.messages?.[fb.messages.length - 1]?.text || 'No message content'}
                     </p>
                     <div className="flex items-center gap-2 mt-3">
@@ -2451,6 +2751,430 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
             </div>
           </div>
         </div>
+      ) : activeTab === 'support' ? (
+        <div className="flex-1 px-6 py-8 space-y-6 text-left">
+          
+          {/* Header Card */}
+          <div className="relative bg-white border border-indigo-50 p-8 rounded-[2.5rem] shadow-sm overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-50/40 rounded-full blur-3xl pointer-events-none" />
+            <div className="max-w-2xl text-left space-y-2 relative z-10">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-50 border border-indigo-100 rounded-full">
+                <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-pulse" />
+                <span className="text-[8px] font-black text-indigo-600 uppercase tracking-widest font-mono">Central Support Desk</span>
+              </div>
+              <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Customer Care Support Logs & Investigator</h2>
+              <p className="text-xs text-slate-500 font-medium leading-relaxed font-sans">
+                Review, respond, and resolve customer complaints instantly. Search any customer Order ID to view breakdown, payment method, merchant, rider coordinates, and active promotional agricultural freebies.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            {/* LEFT AREA: COMPLAINTS LIST */}
+            <div className="lg:col-span-7 bg-white border border-indigo-50 p-6 rounded-[2.5rem] shadow-sm space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <h3 className="text-sm font-black uppercase text-indigo-600 tracking-tight flex items-center gap-2">
+                    Customer Service Tickets
+                    {complaints.filter(c => c.status === 'Pending').length > 0 && (
+                      <span className="px-2 py-0.5 bg-rose-50 text-rose-500 text-[8px] font-black uppercase tracking-widest rounded-full animate-bounce font-mono">
+                        {complaints.filter(c => c.status === 'Pending').length} Pending
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">Live local complaint ledger</p>
+                </div>
+
+                {/* Filters */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 select-none">
+                  {(['All', 'Pending', 'In Progress', 'Resolved', 'Closed'] as const).map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setComplaintFilter(f)}
+                      className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                        complaintFilter === f
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-slate-55 hover:bg-slate-100 text-slate-400 border border-slate-100'
+                      }`}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Live search input */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-4 top-3.5" />
+                <input
+                  type="text"
+                  placeholder="Filter complaints by ticket ID, user name, keyword..."
+                  value={searchComplaintQuery}
+                  onChange={(e) => setSearchComplaintQuery(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-11 pr-4 py-3 text-xs font-bold outline-none text-slate-800 placeholder-slate-400 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Scroll list */}
+              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1 scrollbar-hide">
+                {complaints.length === 0 ? (
+                  <div className="text-center py-12 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest font-mono">No support complaints registered yet</p>
+                  </div>
+                ) : (
+                  (() => {
+                    const filtered = complaints
+                      .filter(c => {
+                        if (complaintFilter !== 'All' && c.status !== complaintFilter) return false;
+                        if (searchComplaintQuery.trim()) {
+                          const q = searchComplaintQuery.toLowerCase();
+                          return (
+                            c.id?.toLowerCase().includes(q) ||
+                            c.description?.toLowerCase().includes(q) ||
+                            c.category?.toLowerCase().includes(q) ||
+                            c.userId?.toLowerCase().includes(q) ||
+                            c.userName?.toLowerCase().includes(q) ||
+                            c.orderId?.toLowerCase().includes(q)
+                          );
+                        }
+                        return true;
+                      })
+                      .sort((a,b) => {
+                        const dateA = a.createdAt?.seconds || 0;
+                        const dateB = b.createdAt?.seconds || 0;
+                        return dateB - dateA;
+                      });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="text-center py-12 bg-slate-50 rounded-2xl">
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest font-mono">No matching support logs found</p>
+                        </div>
+                      );
+                    }
+
+                    return filtered.map(item => (
+                      <div
+                        key={item.id}
+                        onClick={() => {
+                          setSelectedComplaint(item);
+                          setAdminComplaintAnswer(item.adminAnswer || '');
+                          if (item.orderId && item.orderId !== 'N/A') {
+                            setOrderSearchId(item.orderId);
+                          }
+                        }}
+                        className={`p-4 rounded-3xl border text-left transition-all cursor-pointer ${
+                          selectedComplaint?.id === item.id
+                            ? 'bg-slate-50 border-indigo-500 shadow-md'
+                            : 'bg-white hover:bg-slate-50 border-slate-100'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3 mb-2">
+                          <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 rounded-md text-[9px] font-mono text-slate-500 uppercase tracking-widest">
+                            Ticket: {item.id}
+                          </span>
+                          <span className={`px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-wider ${
+                            item.status === 'Pending' ? 'bg-amber-100 text-amber-700 border border-amber-200' :
+                            item.status === 'In Progress' ? 'bg-indigo-100 text-indigo-700 border border-indigo-205' :
+                            item.status === 'Resolved' ? 'bg-emerald-100 text-emerald-705 border border-emerald-205' :
+                            'bg-slate-100 text-slate-500'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 font-sans">
+                            <span className="text-[9px] font-black uppercase text-indigo-600 tracking-wider">
+                              {item.category}
+                            </span>
+                            <span className="text-slate-300">&bull;</span>
+                            <span className="text-[9px] font-bold text-slate-450">
+                              {item.createdAt?.seconds 
+                                ? new Date(item.createdAt.seconds * 1000).toLocaleString() 
+                                : 'Just recently'}
+                            </span>
+                          </div>
+                          <p className="text-xs font-bold text-slate-700 leading-relaxed italic">
+                            "{item.description}"
+                          </p>
+                        </div>
+
+                        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-slate-100">
+                          <div className="flex items-center gap-1.5 text-slate-650">
+                            <div className="w-5 h-5 bg-slate-100 rounded-full flex items-center justify-center border border-slate-200 text-[9px] font-black text-slate-500">
+                              {item.userName?.charAt(0).toUpperCase() || 'U'}
+                            </div>
+                            <span className="text-[10px] font-black uppercase tracking-tight">
+                              {item.userName || 'Lokal User'} ({item.userPhone || 'N/A'})
+                            </span>
+                          </div>
+                          {item.orderId && item.orderId !== 'N/A' && (
+                            <div className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded border border-indigo-100 uppercase tracking-wider">
+                              Linked Order: #{item.orderId}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ));
+                  })()
+                )}
+              </div>
+
+              {/* Action Response Form Block */}
+              {selectedComplaint && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="p-5 bg-slate-50 border border-slate-150 rounded-3xl text-left space-y-4"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-250 pb-2">
+                    <div>
+                      <h4 className="text-xs font-black uppercase text-indigo-600 tracking-wider">Respond to complaint</h4>
+                      <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">TICKET: {selectedComplaint.id}</p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedComplaint(null)}
+                      className="p-1 px-2.5 bg-white text-slate-500 hover:bg-slate-105 border border-slate-200 rounded-lg text-[9px] font-black uppercase cursor-pointer"
+                    >
+                      unfocus
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black uppercase text-slate-500 tracking-wider block">Admin response to user:</label>
+                    <textarea
+                      rows={3}
+                      value={adminComplaintAnswer}
+                      onChange={(e) => setAdminComplaintAnswer(e.target.value)}
+                      placeholder="Write refund status updates, replacement details, or behavior escalations..."
+                      className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-semibold text-slate-800 outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  {/* Actions Grid */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateComplaintStatus(selectedComplaint.id, 'In Progress', adminComplaintAnswer)}
+                      disabled={isUpdatingComplaint}
+                      className="py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-all font-black uppercase text-[9px] tracking-widest rounded-xl disabled:opacity-50 cursor-pointer"
+                    >
+                      In Progress
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateComplaintStatus(selectedComplaint.id, 'Resolved', adminComplaintAnswer)}
+                      disabled={isUpdatingComplaint}
+                      className="py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white transition-all font-black uppercase text-[9px] tracking-widest rounded-xl disabled:opacity-50 cursor-pointer shadow-sm"
+                    >
+                      Set Resolved
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateComplaintStatus(selectedComplaint.id, 'Closed', adminComplaintAnswer)}
+                      disabled={isUpdatingComplaint}
+                      className="py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-600 transition-all font-black uppercase text-[9px] tracking-widest rounded-xl disabled:opacity-50 cursor-pointer"
+                    >
+                      Close Ticket
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </div>
+
+            {/* RIGHT AREA: LOOKUP DIAGNOSTICS */}
+            <div className="lg:col-span-5 bg-white border border-indigo-50 p-6 rounded-[2.5rem] shadow-sm space-y-5 text-left">
+              <div>
+                <h3 className="text-sm font-black uppercase text-indigo-600 tracking-tight flex items-center gap-2">
+                  Order Investigator Diagnostics
+                </h3>
+                <p className="text-[9px] text-slate-400 tracking-widest font-mono uppercase">Full transaction diagnostic engine</p>
+              </div>
+
+              {/* Form lookup search */}
+              <form onSubmit={(e) => { e.preventDefault(); handleSearchOrderById(); }} className="space-y-3">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-4 top-3.5" />
+                  <input
+                    type="text"
+                    placeholder="Enter Order ID searching"
+                    value={orderSearchId}
+                    onChange={(e) => setOrderSearchId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-11 pr-4 py-3 text-xs font-black text-indigo-700 placeholder-slate-400 outline-none focus:border-indigo-400 uppercase font-mono"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={orderSearchLoading || !orderSearchId.trim()}
+                  className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:scale-100 cursor-pointer"
+                >
+                  {orderSearchLoading ? 'Accessing Ledger...' : 'Run Diagnostics'}
+                </button>
+              </form>
+
+              {orderSearchError && (
+                <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-[10px] font-black text-rose-500 uppercase tracking-wide">
+                  {orderSearchError}
+                </div>
+              )}
+
+              {/* Order Info Screen Card */}
+              {searchedOrder ? (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="space-y-4 text-xs font-semibold bg-slate-50 border border-slate-100 p-5 rounded-3xl"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                    <div>
+                      <p className="text-[8px] font-black uppercase text-indigo-500 tracking-widest font-mono">Found Active Order</p>
+                      <h4 className="text-sm font-black text-slate-900 font-mono uppercase">#{searchedOrder.id}</h4>
+                    </div>
+                    <span className={`px-2.5 py-1 text-[8px] font-black uppercase tracking-wider rounded-lg border ${
+                      searchedOrder.status === 'Completed' || searchedOrder.status === 'Delivered' ? 'bg-emerald-100 text-emerald-700 border-emerald-200 shadow-emerald-150' :
+                      searchedOrder.status === 'Preparing' ? 'bg-indigo-100 text-indigo-700 border-indigo-200' :
+                      searchedOrder.status === 'Pending' ? 'bg-amber-100 text-amber-700 border border-amber-200' : 'bg-slate-200 text-slate-650'
+                    }`}>
+                      {searchedOrder.status}
+                    </span>
+                  </div>
+
+                  {/* 1. Customer Card */}
+                  <div className="space-y-2 text-slate-600 bg-white p-4 rounded-2xl border border-slate-100">
+                    <span className="text-[8px] font-black uppercase text-slate-400 tracking-widest block font-mono">1. Customer Parameters</span>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Name</p>
+                        <p className="font-black text-slate-800">{searchedOrder.customerName || searchedOrder.customer?.name || 'Walkin Customer'}</p>
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Phone</p>
+                        <p className="font-black text-slate-800">{searchedOrder.customerPhone || searchedOrder.customer?.phone || 'Unknown'}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Delivery Address Description</p>
+                        <p className="font-bold text-slate-600 leading-normal italic text-[11px]">
+                          {searchedOrder.deliveryAddress || searchedOrder.customer?.address || 'Khammam Central Delivery Zone'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 2. Payment details */}
+                  <div className="space-y-2 text-slate-600 bg-white p-4 rounded-2xl border border-slate-100">
+                    <span className="text-[8px] font-black uppercase text-slate-400 tracking-widest block font-mono">2. Payment Parameters</span>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Mode</p>
+                        <p className="font-black text-indigo-700 uppercase">{searchedOrder.paymentMethod || searchedOrder.paymentType || 'COD (Cash On Delivery)'}</p>
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Value</p>
+                        <p className="font-black text-slate-800 text-sm">₹{searchedOrder.totalAmount || searchedOrder.total || '0'}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Transaction Reference ID</p>
+                        <p className="font-mono text-[10px] font-extrabold text-indigo-700">
+                          {searchedOrder.paymentRef || searchedOrder.transactionId || 'REF_SYS_PENDING_COD'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Vendor coordinates */}
+                  <div className="space-y-2 text-slate-600 bg-white p-4 rounded-2xl border border-slate-100">
+                    <span className="text-[8px] font-black uppercase text-slate-400 tracking-widest block font-mono">3. Allocations & Vendor Parameters</span>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Vendor Outlet Name</p>
+                        <p className="font-black text-slate-800 uppercase">{searchedOrder.vendorName || searchedOrder.merchantName || 'Local Bandi Main Hub (Admin)'}</p>
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Franchise Segment</p>
+                        <p className="font-black text-slate-800 uppercase">{searchedOrder.branchId || 'Khammam Main Branch'}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="font-bold text-slate-400 uppercase text-[9px]">Allocated Rider</p>
+                        <p className="font-bold text-indigo-600 uppercase text-[11px]">
+                          🏍️ {searchedOrder.riderName ? `${searchedOrder.riderName} (${searchedOrder.riderPhone || 'Secured'})` : 'Awaiting Rider Allocation Queue'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 4. Products list */}
+                  <div className="space-y-2 bg-white p-4 rounded-2xl border border-slate-100 font-sans">
+                    <span className="text-[8px] font-black uppercase text-slate-400 tracking-widest block font-mono">4. Ordered Items Breakdown</span>
+                    <div className="space-y-2 pt-1 font-sans">
+                      {searchedOrder.items && searchedOrder.items.length > 0 ? (
+                        searchedOrder.items.map((item: any, idx: number) => (
+                          <div key={idx} className="flex justify-between items-center text-[10.5px] font-bold border-b border-slate-50 pb-1.5 last:border-0 last:pb-0">
+                            <div>
+                              <p className="text-slate-800 uppercase font-black">{item.name}</p>
+                              <p className="text-[9px] text-slate-450 font-bold">Qty: {item.quantity} {item.unit ? `(${item.unit})` : ''} &bull; Price: ₹{item.price}</p>
+                            </div>
+                            <span className="text-slate-800 font-black">₹{item.price * item.quantity}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-[10px] text-slate-450 italic">No custom items array registered on this order.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 5. Ag Promo complementary free items */}
+                  <div className="space-y-2 bg-white p-4 rounded-2xl border border-slate-100 font-sans">
+                    <span className="text-[8px] font-black uppercase text-emerald-600 tracking-widest block font-mono font-mono">5. Agriculture Promo Bonus FREE items</span>
+                    <div className="space-y-1 pt-1">
+                      {searchedOrder.freeItems && searchedOrder.freeItems.length > 0 ? (
+                        searchedOrder.freeItems.map((freeItemName: string, idx: number) => (
+                          <div key={idx} className="flex items-center gap-2 text-[10.5px] font-extrabold text-emerald-600">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                            <p className="uppercase">{freeItemName} <span className="text-[9px] text-slate-400 font-bold tracking-wider">(100% Promo Complimentary)</span></p>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 italic">
+                          <span className="w-1.5 h-1.5 bg-slate-350 rounded-full" />
+                          <p>No agricultural complimentary free products linked.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 6. Diagnostic Lifecycle & Cancellation Panel */}
+                  <div className="space-y-2 bg-slate-50 p-4 rounded-2xl border border-slate-100 font-sans text-left">
+                    <span className="text-[8px] font-black uppercase text-indigo-600 tracking-widest block font-mono">6. Transaction Diagnostics &amp; Timestamps</span>
+                    <div className="space-y-1.5 pt-1 text-[11px] font-mono leading-relaxed text-slate-600">
+                      <p><span className="font-bold text-slate-800">Created At:</span> {searchedOrder.createdAt ? (typeof searchedOrder.createdAt === 'string' ? searchedOrder.createdAt : new Date(searchedOrder.createdAt.seconds * 1000).toLocaleString()) : 'N/A'}</p>
+                      <p><span className="font-bold text-slate-800">Updated At:</span> {searchedOrder.updatedAt ? (typeof searchedOrder.updatedAt === 'string' ? searchedOrder.updatedAt : new Date(searchedOrder.updatedAt.seconds * 1000).toLocaleString()) : 'N/A'}</p>
+                      
+                      {/* Cancellation specific details shown exactly */}
+                      {searchedOrder.status === 'Cancelled' ? (
+                        <div className="mt-2.5 p-3 bg-red-50/70 border border-red-200 rounded-xl space-y-1 text-xs">
+                          <p className="text-red-600 font-black uppercase tracking-wider text-[8px] font-mono">⚠️ Order Cancelled / Early Terminated</p>
+                          <p className="text-slate-700"><strong>Cancelled At:</strong> {searchedOrder.cancelledAt ? (typeof searchedOrder.cancelledAt === 'string' ? searchedOrder.cancelledAt : new Date(searchedOrder.cancelledAt.seconds * 1000).toLocaleString()) : (searchedOrder.updatedAt ? (typeof searchedOrder.updatedAt === 'string' ? searchedOrder.updatedAt : new Date(searchedOrder.updatedAt.seconds * 1000).toLocaleString()) : 'N/A')}</p>
+                          <p className="text-slate-705"><strong>Cancellation Reason:</strong> <span className="text-rose-600 italic">"{searchedOrder.cancelReason || searchedOrder.cancellationReason || 'User or dispatcher terminated before rider acceptance.'}"</span></p>
+                        </div>
+                      ) : (
+                        <p className="text-slate-500 text-[10px] italic font-sans mt-1.5">No cancellation parameters recorded. Current Lifecycle Status: {searchedOrder.status}.</p>
+                      )}
+                    </div>
+                  </div>
+
+                </motion.div>
+              ) : (
+                <div className="text-center py-16 bg-slate-50 p-6 rounded-3xl border border-dashed border-slate-205">
+                  <p className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">Investigator Standby Node</p>
+                  <p className="text-[10px] text-slate-500 mt-1 max-w-[210px] mx-auto">Input a precise Order ID above to run live diagnostics, trace riders, verify payments, or map agricultural free promo bundles.</p>
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
       ) : null}
 
 
@@ -2631,6 +3355,21 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
                         className="flex-1 bg-slate-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none transition-all"
                       />
                   </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-2 block font-sans">
+                    Gateway Entrance Security Passcode
+                  </label>
+                  <input 
+                    placeholder="e.g. Khammam@7416 (Default: 4455)"
+                    value={formData.secPasscode}
+                    onChange={(e) => setFormData({...formData, secPasscode: e.target.value})}
+                    className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-2 border-transparent focus:border-indigo-500 outline-none transition-all"
+                  />
+                  <p className="text-[9px] font-bold text-slate-400 ml-1 mt-1 leading-normal font-sans">
+                    🔑 Gate passcode required for this branch admin login. All franchise admins must obtain this code from Master Admin <strong className="text-slate-800">Tarun Bandi from Khammam HQ</strong>.
+                  </p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">

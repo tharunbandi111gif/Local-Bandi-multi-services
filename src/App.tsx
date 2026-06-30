@@ -292,9 +292,13 @@ function AppContent() {
         }
       }
     }
+    if (screen !== 'confirmation') {
+      setIsOrderSubmitLocked(false);
+    }
     setCurrentScreen(screen);
   }, [isAdmin]);
 
+  const [isOrderSubmitLocked, setIsOrderSubmitLocked] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [selectedItem, setSelectedItem] = useState<Product | Service | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -505,6 +509,9 @@ function AppContent() {
           ...prev,
           ...vendorPrices
         }));
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'vendors');
       }
     );
 
@@ -523,7 +530,7 @@ function AppContent() {
     return saved ? JSON.parse(saved) : { 
       phone: '7416574197', 
       secondaryPhone: '8790729816',
-      email: 'localbharathkhammam@gmail.com' 
+      email: 'Localbandimultiservices@gmail.com' 
     };
   });
 
@@ -790,27 +797,83 @@ function AppContent() {
   };
 
   const completeOrder = async (paymentMethod: string = 'upi', tipAmount: number = 0) => {
+    if (isOrderSubmitLocked) {
+      alert("⚠️ Request Blocked: This order has already been finalized! To place a subsequent order, please return to any other screen (e.g. Products/Services) and populate your cart again.");
+      return;
+    }
+
     if (!user) {
       alert("Please login to place an order");
       navigateTo('login');
       return;
     }
 
-    const subtotal = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+    const subtotal = cart.reduce((acc, i) => {
+      const itemCost = i.price * i.quantity;
+      return acc + (i.isMonthlySubscription ? itemCost * 30 : itemCost);
+    }, 0);
     const rewardCost = selectedReward ? selectedReward.rewardPrice : 0;
-    const tax = Math.round((subtotal + rewardCost) * 0.05);
-    const deliveryFee = subtotal > 500 ? 0 : 40;
+    const tax = 0;
+    
+    const getAppDeliveryFee = (itemsList: any[], subtotalVal: number) => {
+      if (itemsList.length === 0) return 0;
+      const isMilkOrWaterItem = (item: any) => {
+        const name = (item.name || '').toLowerCase();
+        const category = (item.category || '').toLowerCase();
+        return name.includes('milk') || name.includes('water') || category === 'water' || category === 'dairy' || category === 'milk';
+      };
+      const milkWaterItems = itemsList.filter(isMilkOrWaterItem);
+      const otherItems = itemsList.filter(item => !isMilkOrWaterItem(item));
+      
+      let baseFee = 0;
+      if (otherItems.length > 0) {
+        if (subtotalVal >= 469) {
+          baseFee = 0;
+        } else {
+          let maxFee = 0;
+          otherItems.forEach(item => {
+            let itemFee = 15;
+            const category = (item.category || '').toLowerCase();
+            const name = (item.name || '').toLowerCase();
+            if (category === 'groceries' || category === 'veg') {
+              itemFee = 10;
+            } else if (category === 'meat') {
+              itemFee = 15;
+            } else if (category === 'food') {
+              const isTiffin = name.includes('idly') || name.includes('dosa') || name.includes('wada') || name.includes('chapati') || name.includes('tiffin');
+              itemFee = isTiffin ? 15 : 20;
+            } else if (['services', 'travel', 'marriage', 'events', 'construction', 'mechanics', 'maids'].includes(category)) {
+              itemFee = 0;
+            }
+            if (itemFee > maxFee) maxFee = itemFee;
+          });
+          baseFee = maxFee;
+        }
+      }
+      let milkWaterFee = 0;
+      if (milkWaterItems.length > 0) {
+        const hasSingleMilkWater = milkWaterItems.some(item => !item.isMonthlySubscription);
+        if (hasSingleMilkWater) {
+          milkWaterFee = 5;
+        }
+      }
+      return baseFee + milkWaterFee;
+    };
+
+    const deliveryFee = getAppDeliveryFee(cart, subtotal);
     const finalTotal = subtotal + tax + deliveryFee + rewardCost + tipAmount;
 
-    const orderId = editingOrderId || ('ORD-' + Math.floor(1000 + Math.random() * 9000));
+    const isMonthlyOrder = cart.some(i => i.isMonthlySubscription);
+    const orderId = editingOrderId || ((isMonthlyOrder ? 'SUB-' : 'ORD-') + Math.floor(1000 + Math.random() * 9000));
     
     // Prepare order items including reward if any
-    const orderItems = cart.map(item => ({
+    const orderItems: any[] = cart.map(item => ({
       id: item.id,
       name: item.name,
       price: item.price,
       quantity: item.quantity,
-      image: item.image
+      image: item.image,
+      isMonthlySubscription: item.isMonthlySubscription || false
     }));
 
     if (selectedReward) {
@@ -869,6 +932,9 @@ function AppContent() {
       branchId: currentBranchId, // Essential for data isolation
       paymentMethod: paymentMethod,
       paymentStatus: paymentMethod === 'cod' ? 'Pending (COD)' : 'Paid (UPI)',
+      isMonthlySubscription: isMonthlyOrder,
+      remainingDays: isMonthlyOrder ? 30 : 0,
+      completedDates: [],
       updatedAt: serverTimestamp(),
       adminAccepted: false
     };
@@ -907,6 +973,7 @@ function AppContent() {
       setEditingOrderId(null);
       setCart([]);
       setSelectedReward(null);
+      setIsOrderSubmitLocked(true); // Engages the foolproof double-submit lock!
       navigateTo('confirmation');
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `orders/${orderId}`);
@@ -1170,7 +1237,91 @@ function AppContent() {
         return <SafeZone name="Service Booking"><ServiceBooking 
           service={selectedItem as Service}
           onBack={() => navigateTo('category')}
-          onBook={() => navigateTo('cart')}
+          location={location}
+          onUpdateLocation={(newLoc) => {
+            setLocation(newLoc);
+            localStorage.setItem('lokal_user_location', newLoc);
+          }}
+          onBook={async (dateText, timeText) => {
+            if (!user) {
+              alert("Please login to confirm booking!");
+              navigateTo('login');
+              return;
+            }
+            const svc = selectedItem as Service;
+            if (!svc) return;
+
+            const orderId = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
+            const directItem: CartItem = {
+              id: svc.id,
+              name: svc.name + ` (${dateText} @ ${timeText})`,
+              price: svc.price,
+              image: svc.image || '',
+              category: svc.category,
+              description: svc.description,
+              quantity: 1
+            };
+
+            const orderRecord: any = {
+              id: orderId,
+              userId: user.uid,
+              customerName: userProfile?.name || user.displayName || 'Guest User',
+              customerPhone: userProfile?.phone || user.phoneNumber || '',
+              deliveryAddress: location,
+              deliveryLocation: { lat: 17.2550, lng: 80.1600 },
+              items: 1,
+              orderItems: [
+                {
+                  id: directItem.id,
+                  name: directItem.name,
+                  price: directItem.price,
+                  quantity: 1,
+                  image: directItem.image
+                }
+              ],
+              rewardItem: null,
+              total: svc.price,
+              tipAmount: 0,
+              vendorId: 'global',
+              vendorName: 'Local Bandi Service Partner',
+              vendorPhone: '',
+              pickupAddress: 'Service Hub Office',
+              pickupLocation: { lat: 17.2473, lng: 80.1514 },
+              branchId: currentBranchId,
+              paymentMethod: 'cod',
+              paymentStatus: 'Pending (COD)',
+              updatedAt: serverTimestamp(),
+              adminAccepted: false,
+              status: 'Pending',
+              deliveryPartnerId: null,
+              createdAt: serverTimestamp(),
+              timestamp: new Date().toISOString()
+            };
+
+            try {
+              await setDoc(doc(db, 'orders', orderId), orderRecord);
+
+              try {
+                const { integrationService } = await import('./services/integrationService');
+                const phone = userProfile?.phone || user.phoneNumber;
+                if (phone) {
+                  integrationService.sendSMS(
+                    phone, 
+                    `Lokal SOS: Your service for ${svc.name} is booked on ${dateText} at ${timeText}! Order ID: ${orderId}. Total: ₹${svc.price}`
+                  ).catch(err => console.error("Service Booking SMS error:", err));
+                }
+              } catch (smsErr) {
+                console.warn("SMS gateway import or execution failed", smsErr);
+              }
+
+              setCart([directItem]);
+              setSelectedOrderId(orderId);
+              navigateTo('confirmation');
+            } catch (err) {
+              console.error("Direct Service Booking save error:", err);
+              alert("Failed to confirm booking. Please try again!");
+            }
+          }}
           isAdmin={isAdmin}
         /></SafeZone>;
       case 'cart':
@@ -1236,11 +1387,59 @@ function AppContent() {
       case 'terms':
         return <SafeZone name="Terms"><TermsOfService onBack={() => navigateTo('settings')} language={selectedLanguage} /></SafeZone>;
       case 'payment':
-        const subtotal = cart.reduce((acc, i) => acc + (i.price * i.quantity), 0);
+        const subtotal = cart.reduce((acc, i) => {
+          const itemCost = i.price * i.quantity;
+          return acc + (i.isMonthlySubscription ? itemCost * 30 : itemCost);
+        }, 0);
         const rewardCost = selectedReward ? selectedReward.rewardPrice : 0;
-        const tax = Math.round((subtotal + rewardCost) * 0.05);
-        const deliveryFee = subtotal > 500 ? 0 : 40;
+        const tax = 0;
         
+        const getPaymentDeliveryFee = (itemsList: any[], subtotalVal: number) => {
+          if (itemsList.length === 0) return 0;
+          const isMilkOrWaterItem = (item: any) => {
+            const name = (item.name || '').toLowerCase();
+            const category = (item.category || '').toLowerCase();
+            return name.includes('milk') || name.includes('water') || category === 'water' || category === 'dairy' || category === 'milk';
+          };
+          const milkWaterItems = itemsList.filter(isMilkOrWaterItem);
+          const otherItems = itemsList.filter(item => !isMilkOrWaterItem(item));
+          
+          let baseFee = 0;
+          if (otherItems.length > 0) {
+            if (subtotalVal >= 469) {
+              baseFee = 0;
+            } else {
+              let maxFee = 0;
+              otherItems.forEach(item => {
+                let itemFee = 15;
+                const category = (item.category || '').toLowerCase();
+                const name = (item.name || '').toLowerCase();
+                if (category === 'groceries' || category === 'veg') {
+                  itemFee = 10;
+                } else if (category === 'meat') {
+                  itemFee = 10;
+                } else if (category === 'food') {
+                  const isTiffin = name.includes('idly') || name.includes('dosa') || name.includes('wada') || name.includes('chapati') || name.includes('tiffin');
+                  itemFee = isTiffin ? 15 : 20;
+                } else if (['services', 'travel', 'marriage', 'events', 'construction', 'mechanics', 'maids'].includes(category)) {
+                  itemFee = 0;
+                }
+                if (itemFee > maxFee) maxFee = itemFee;
+              });
+              baseFee = maxFee;
+            }
+          }
+          let milkWaterFee = 0;
+          if (milkWaterItems.length > 0) {
+            const hasSingleMilkWater = milkWaterItems.some(item => !item.isMonthlySubscription);
+            if (hasSingleMilkWater) {
+              milkWaterFee = 5;
+            }
+          }
+          return baseFee + milkWaterFee;
+        };
+
+        const deliveryFee = getPaymentDeliveryFee(cart, subtotal);
         let displayTotal = subtotal + tax + deliveryFee + rewardCost;
         let onCompleteCallback: (method?: string, tip?: number) => void | Promise<void> = (method, tip) => completeOrder(method || 'upi', tip || 0);
         let onBackCallback: () => void | Promise<void> = () => navigateTo('cart');
@@ -1404,7 +1603,7 @@ function AppContent() {
             </button>
             <button 
               onClick={() => {
-                window.location.href = `mailto:localbharathkhammam@gmail.com?subject=Admin%20Enrollment%20Request&body=Please%20grant%20admin%20access%20to%20UID%20${user.uid}`;
+                window.location.href = `mailto:Localbandimultiservices@gmail.com?subject=Admin%20Enrollment%20Request&body=Please%20grant%20admin%20access%20to%20UID%20${user.uid}`;
               }}
               className="flex-1 py-4 bg-indigo-500/20 text-indigo-300 rounded-xl font-black uppercase text-[10px] tracking-widest transition-colors"
             >

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithPhoneNumber, ConfirmationResult, signInWithCustomToken } from 'firebase/auth';
+import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithPhoneNumber, ConfirmationResult, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
 import { doc, onSnapshot, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 
@@ -37,6 +37,7 @@ interface FirebaseContextType {
   login: () => Promise<void>;
   phoneLogin: (phoneNumber: string, appVerifier: any) => Promise<ConfirmationResult>;
   signInWithToken: (token: string) => Promise<void>;
+  signInAnon: () => Promise<void>;
   logout: () => Promise<void>;
   isLoggingOut: boolean;
 }
@@ -105,6 +106,8 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             setBranchId(null);
             setDoc(doc(db, 'users', currentUser.uid), newProfile).catch(console.error);
           }
+        }, (error) => {
+          console.warn("User profile sync error:", error);
         });
       } else {
         setIsAdmin(false);
@@ -128,6 +131,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await signInWithPopup(auth, provider);
     } catch (error) {
       console.error("Login failed", error);
+      throw error;
     }
   };
 
@@ -149,6 +153,15 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  const signInAnon = async () => {
+    try {
+      await signInAnonymously(auth);
+    } catch (error) {
+      console.error("Anonymous login failed", error);
+      throw error;
+    }
+  };
+
   const logout = async () => {
     setIsLoggingOut(true);
     try {
@@ -164,7 +177,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   return (
-    <FirebaseContext.Provider value={{ user, userProfile, isAdmin, isSuperAdmin, isBranchAdmin, branchId, loading, login, phoneLogin, signInWithToken, logout, isLoggingOut }}>
+    <FirebaseContext.Provider value={{ user, userProfile, isAdmin, isSuperAdmin, isBranchAdmin, branchId, loading, login, phoneLogin, signInWithToken, signInAnon, logout, isLoggingOut }}>
       {children}
     </FirebaseContext.Provider>
   );

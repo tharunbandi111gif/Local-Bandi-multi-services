@@ -254,6 +254,7 @@ export default function Home({
   const [loading, setLoading] = useState(false);
   const [showLocationSelector, setShowLocationSelector] = useState(false);
   const [timeLeft, setTimeLeft] = useState(3600); // 1 hour for deals
+  const [deals, setDeals] = useState<any[]>([]);
 
   const loadFromStorage = (key: string, defaultValue: any) => {
     const saved = localStorage.getItem(key);
@@ -284,8 +285,15 @@ export default function Home({
       }
     });
 
+    const unsubDeals = onSnapshot(collection(db, 'deals_of_the_day'), (snap) => {
+      setDeals(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => {
+      console.warn("Home screen failed syncing deals of the day:", err);
+    });
+
     return () => {
       unsubSupport();
+      unsubDeals();
     };
   }, []);
 
@@ -415,7 +423,7 @@ export default function Home({
     return saved ? JSON.parse(saved) : { 
       phone: '7416574197', 
       secondaryPhone: '8790729816',
-      email: 'localbharathkhammam@gmail.com',
+      email: 'Localbandimultiservices@gmail.com',
       address: 'First Head Office, Khammam City, Telangana, India'
     };
   });
@@ -658,6 +666,8 @@ export default function Home({
         if (snapshot.exists()) {
           setPaymentConfig(snapshot.data() as any);
         }
+      }, (error) => {
+        console.warn("Payment config sync error:", error);
       });
     }
   }, [isAdmin]);
@@ -1741,6 +1751,8 @@ export default function Home({
       if (snap.exists()) {
         setPlatformSettings({ ...snap.data() as PlatformSettings, id: snap.id });
       }
+    }, (error) => {
+      console.warn("Global settings sync error:", error);
     });
   }, []);
 
@@ -2486,6 +2498,8 @@ export default function Home({
           props.push({ id: doc.id, ...doc.data() });
         });
         setProperties(props);
+      }, (error) => {
+        console.warn("Properties fetch failed:", error);
       });
       return () => unsub();
     }
@@ -2497,6 +2511,8 @@ export default function Home({
         if (snapshot.exists()) {
           setAdminPassword(snapshot.data().adminPasscode || 'Founder@2026');
         }
+      }, (error) => {
+        console.warn("Security config fetch failed:", error);
       });
       return () => unsub();
     }
@@ -10014,33 +10030,83 @@ export default function Home({
                 <button className="text-[10px] font-black text-yellow-600 uppercase tracking-widest bg-yellow-50 px-4 py-2 rounded-xl active:scale-95 transition-all">View All</button>
               </div>
               
-              <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide relative z-10">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="flex-shrink-0 w-48 space-y-3 p-2 bg-gray-50 rounded-[2rem] border border-transparent hover:border-yellow-200 transition-all">
-                    <div className="relative aspect-square rounded-[1.5rem] bg-white overflow-hidden shadow-sm">
-                      <img 
-                        src={`https://images.unsplash.com/photo-${i === 1 ? '1542838132-92c53300491e' : i === 2 ? '1533900298318-6b8da08a523e' : '1550989460-0adf9ea622e2'}?w=300&h=300&fit=crop`}
-                        className="w-full h-full object-cover"
-                        alt="Product"
-                      />
-                      <div className="absolute top-2 left-2 bg-rose-500 text-white text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-lg">
-                        50% OFF
-                      </div>
-                    </div>
-                    <div className="px-2 pb-2">
-                      <h4 className="text-xs font-black text-gray-900 truncate mb-1">Premium {i === 1 ? 'Grocery' : i === 2 ? 'Vegetables' : 'Fruits'} Bag</h4>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-sm font-black text-gray-900">₹{i * 199}</span>
-                          <span className="text-[10px] font-bold text-gray-400 line-through">₹{i * 399}</span>
+              <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide relative z-10 animate-fade-in">
+                {(() => {
+                  const activeDeals = deals.filter(d => 
+                    d.status === 'active' && 
+                    (!d.branchId || d.branchId === 'global' || d.branchId === currentBranchId)
+                  );
+                  // fallback to static dummy data if no db deals configured
+                  const itemsToRender = activeDeals.length > 0 ? activeDeals : [
+                    { id: 'd1', title: 'Premium Grocery Bag', discount: '50% OFF', price: 199, originalPrice: 399, img: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&h=300&fit=crop' },
+                    { id: 'd2', title: 'Mixed Vegetables Bag', discount: '40% OFF', price: 99, originalPrice: 199, img: 'https://images.unsplash.com/photo-1533900298318-6b8da08a523e?w=300&h=300&fit=crop' },
+                    { id: 'd3', title: 'Fruits & Berries Box', discount: '30% OFF', price: 149, originalPrice: 249, img: 'https://images.unsplash.com/photo-1550989460-0adf9ea622e2?w=300&h=300&fit=crop' },
+                  ];
+                  return itemsToRender.map((deal) => {
+                    const handleDealClick = () => {
+                      // Attempt to find existing product in localInventory
+                      const match = localInventory.find(item => 
+                        item.name.toLowerCase() === deal.title.toLowerCase() ||
+                        deal.title.toLowerCase().includes(item.name.toLowerCase()) ||
+                        item.name.toLowerCase().includes(deal.title.toLowerCase())
+                      );
+                      if (match) {
+                        onProductClick(match);
+                      } else {
+                        // Construct robust fallback virtual product
+                        const virtualProduct: Product = {
+                          id: deal.id,
+                          name: deal.title,
+                          price: Number(deal.price) || 0,
+                          originalPrice: Number(deal.originalPrice) || 0,
+                          image: deal.img || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500',
+                          category: 'groceries',
+                          subCategory: 'Deals',
+                          description: `Special promotional offer: "${deal.title}". Act fast before this limited-time handpicked daily deal expires!`,
+                          stock: 99,
+                          unit: 'Pack',
+                          isAvailable: true,
+                          branchId: currentBranchId || 'global'
+                        };
+                        onProductClick(virtualProduct);
+                      }
+                    };
+
+                    return (
+                      <div 
+                        key={deal.id} 
+                        onClick={handleDealClick}
+                        className="flex-shrink-0 w-48 space-y-3 p-3 bg-gray-50 rounded-[2rem] border border-transparent hover:border-yellow-250 hover:bg-yellow-50/10 transition-all duration-300 cursor-pointer group"
+                      >
+                        <div className="relative aspect-square rounded-[1.5rem] bg-white overflow-hidden shadow-sm">
+                          <img 
+                            src={deal.img || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&h=300&fit=crop'}
+                            className="w-full h-full object-cover select-none group-hover:scale-105 transition-transform duration-500"
+                            referrerPolicy="no-referrer"
+                            alt={deal.title}
+                          />
+                          <div className="absolute top-2.5 left-2.5 bg-rose-500 text-white text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-lg shadow-md">
+                            {deal.discount}
+                          </div>
                         </div>
-                        <div className="w-8 h-8 bg-gray-900 text-white rounded-lg flex items-center justify-center">
-                          <TrendingUp className="w-4 h-4" />
+                        <div className="px-1 pb-1">
+                          <h4 className="text-xs font-black text-gray-900 truncate mb-1 group-hover:text-yellow-600 transition-colors">{deal.title}</h4>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-baseline gap-1">
+                              <span className="text-sm font-black text-gray-900">₹{deal.price}</span>
+                              {deal.originalPrice > 0 && (
+                                <span className="text-[10px] font-bold text-gray-400 line-through">₹{deal.originalPrice}</span>
+                              )}
+                            </div>
+                            <div className="w-8 h-8 bg-gray-900 text-white rounded-lg flex items-center justify-center shadow-md group-hover:bg-yellow-500 group-hover:text-gray-900 active:scale-95 transition-all duration-300">
+                              <TrendingUp className="w-4 h-4" />
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </div>
-                ))}
+                    );
+                  });
+                })()}
               </div>
             </section>
 

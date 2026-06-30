@@ -394,6 +394,12 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // --- Deals of the Day ---
+    match /deals_of_the_day/{dealId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // --- Settings ---
     match /settings/{settingId} {
       allow read: if true;
@@ -434,7 +440,9 @@ service cloud.firestore {
 
     // --- Audit Logs ---
     match /audit_logs/{logId} {
-      allow read, write: if isSignedIn();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() || request.resource.data.type in ['sms_otp', 'onboarding_otp'];
+      allow update, delete: if isSignedIn();
     }
 
     // --- Payout Requests ---
@@ -445,6 +453,21 @@ service cloud.firestore {
     // --- Ledger Settlements ---
     match /ledger_settlements/{settlementId} {
       allow read, write: if isSignedIn();
+    }
+
+    // --- Reviews ---
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // --- Support Complaints ---
+    match /support_complaints/{complaintId} {
+      allow list: if isSignedIn();
+      allow get: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isAdmin();
     }
   }
 }

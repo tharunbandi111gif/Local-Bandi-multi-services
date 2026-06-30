@@ -14,6 +14,7 @@ export default defineConfig(({mode}) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        '@msg91comm/sendotp-react-native': path.resolve(__dirname, './src/lib/sendotp-react-native-stub.tsx'),
       },
     },
     build: {
@@ -22,6 +23,7 @@ export default defineConfig(({mode}) => {
           main: path.resolve(__dirname, 'index.html'),
           partner: path.resolve(__dirname, 'partner.html'),
           admin: path.resolve(__dirname, 'admin.html'),
+          franchise: path.resolve(__dirname, 'franchise.html'),
         }
       }
     },

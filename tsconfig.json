@@ -18,6 +18,9 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@msg91comm/sendotp-react-native": [
+        "./src/lib/sendotp-react-native-stub.tsx"
       ]
     },
     "allowImportingTsExtensions": true,

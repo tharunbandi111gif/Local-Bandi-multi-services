@@ -99,7 +99,8 @@ const MB_PLANS = [
 
 export default function MarriageBureau({ onBack, isAdmin: propIsAdmin, language = 'en-IN' }: MarriageBureauProps) {
   const { user, isAdmin: firebaseIsAdmin, phoneLogin, userProfile } = useFirebase();
-  const isAdmin = propIsAdmin || firebaseIsAdmin;
+  const isLocalFranchiseAdmin = localStorage.getItem('is_franchise_admin_active') === 'true';
+  const isAdmin = (propIsAdmin || firebaseIsAdmin) && !isLocalFranchiseAdmin;
   const [profiles, setProfiles] = useState<MarriageProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSubscription, setShowSubscription] = useState(false);
@@ -273,7 +274,7 @@ export default function MarriageBureau({ onBack, isAdmin: propIsAdmin, language 
   } | null>(null);
 
   useEffect(() => {
-    let timeout: NodeJS.Timeout;
+    let timeout: any;
     if (showRegForm && !otpFlow?.isOpen) {
       // Delay slightly to ensure DOM element is rendered
       timeout = setTimeout(() => {

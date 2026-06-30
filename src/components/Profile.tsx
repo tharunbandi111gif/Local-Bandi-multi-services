@@ -150,7 +150,7 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
     return saved ? JSON.parse(saved) : { 
       phone: '7416574197', 
       secondaryPhone: '8790729816',
-      email: 'localbharathkhammam@gmail.com' 
+      email: 'Localbandimultiservices@gmail.com' 
     };
   });
 

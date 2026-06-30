@@ -53,11 +53,36 @@ export default function TermsOfService({ onBack, language }: TermsOfServiceProps
             </p>
           </section>
 
-          <section>
-            <h4 className="font-black text-gray-900 uppercase text-xs tracking-widest mb-2">Payment Terms</h4>
-            <p className="text-sm leading-relaxed">
-              Payments are processed securely through our partners. Refunds and cancellations are subject to vendor-specific policies.
-            </p>
+          <section className="bg-slate-50 p-6 rounded-[2rem] border border-gray-150 space-y-4">
+            <h4 className="font-black text-gray-900 uppercase text-xs tracking-widest flex items-center gap-2">
+              <span>💳 Payment & Refund Policy</span>
+              <span className="text-[9px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-sans tracking-normal font-extrabold normal-case">Updated En-IN</span>
+            </h4>
+            <div className="text-sm leading-relaxed space-y-3 font-medium text-gray-700">
+              <p>
+                Kindly review the following platform guidelines regarding digital payments, cancellation fees, and refund settlements on the Local Bandi platform:
+              </p>
+              <ul className="list-disc pl-5 space-y-2 mt-2">
+                <li>
+                  <strong className="text-gray-900">Payment Authorization:</strong> We support secure payments with 256-bit transactional encryption using authorized UPI networks, netbanking, and credit/debit card issuers.
+                </li>
+                <li>
+                  <strong className="text-gray-900">Order Cancellation:</strong> You are fully eligible for a 100% refund if the order is cancelled prior to being accepted and marked in preparation by the merchant store. If cancelled after preparation has commenced, a processing/waste compensation fee may be applied.
+                </li>
+                <li>
+                  <strong className="text-gray-900">UPI Refunds (Instant - 1 Day):</strong> For all successfully processed cancellations made on UPI payments (GPay, PhonePe, Paytm, etc.), refunds will be processed and credited back to your original source account within <strong className="text-gray-900 underline">a few hours or up to 1 business day</strong>.
+                </li>
+                <li>
+                  <strong className="text-gray-900">Credit & Debit Card Refunds (3 - 10 Days):</strong> For payments settled via Credit Cards, Debit Cards, or standard Netbanking gateways, the gateway partners and bank networks require a clear settlement window. These refunds are released instantly on our end but can take <strong className="text-gray-900 underline">3 to 10 business days</strong> to be credited to your card statement.
+                </li>
+                <li>
+                  <strong className="text-gray-900">Merchants & Riders Terms:</strong> Settlement balances, escrow holds, cash collection matching, ride offsets, and cancellation compensations are governed directly by our digital ledgers. Arbitrage or ledger adjustments can be contested within 7 calendar days of occurrence.
+                </li>
+              </ul>
+              <p className="text-xs text-gray-400 italic">
+                Thank you for cooperating with Local Bandi Multi Services. We guarantee complete transparency in handling your funds. Should you encounter any discrepancies, please reach support at 7416574197.
+              </p>
+            </div>
           </section>
 
           <section className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100">

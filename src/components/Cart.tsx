@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Trash2, Minus, Plus, ShoppingBag, Truck, Receipt, Tag, Ticket, Check, X, Zap, Sparkles, Plane, Car, MapPin } from 'lucide-react';
+import { ArrowLeft, Trash2, Minus, Plus, ShoppingBag, Truck, Receipt, Tag, Ticket, Check, X, Zap, Sparkles, Plane, Car, MapPin, Camera } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CartItem, LanguageCode } from '../types';
 import { translations } from '../translations';
+import { db } from '../lib/firebase';
+import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 interface CartProps {
   items: CartItem[];
@@ -16,6 +18,7 @@ interface CartProps {
   promoCodes?: any[];
   isAdmin?: boolean;
   onUpdateCartItem?: (id: string, updatedFields: Partial<CartItem>) => void;
+  rewardsList?: any[];
 }
 
 const DEFAULT_PROMOS = [
@@ -24,14 +27,43 @@ const DEFAULT_PROMOS = [
   { id: 'FREESHIP', type: 'shipping' as const, value: 0, label: 'FREE DELIVERY CODE', minSubtotal: 200 }
 ];
 
-export default function Cart({ items, language, onBack, onUpdateQty, onRemove, onCheckout, selectedRewardId, onSelectReward, promoCodes, isAdmin, onUpdateCartItem }: CartProps) {
+export default function Cart({ items, language, onBack, onUpdateQty, onRemove, onCheckout, selectedRewardId, onSelectReward, promoCodes, isAdmin, onUpdateCartItem, rewardsList }: CartProps) {
   const t = translations[language].cart || translations['en-IN'].cart;
   const common = translations[language].common || translations['en-IN'].common;
   const [promoCode, setPromoCode] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<{ id: string, type: 'percent' | 'flat' | 'shipping', value: number, label: string } | null>(null);
   const [promoError, setPromoError] = useState<string | null>(null);
+  const [showMonthlyConfirm, setShowMonthlyConfirm] = useState(false);
 
-  const subtotal = items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const isMonthlyPlanEligible = (item: CartItem) => {
+    const category = (item.category || '').toLowerCase();
+    const name = (item.name || '').toLowerCase();
+    return (
+      name.includes('milk') || 
+      name.includes('water') || 
+      name.includes('driver') || 
+      name.includes('maid') || 
+      name.includes('beauty') || 
+      name.includes('parlor') || 
+      name.includes('mechanic') || 
+      category === 'water' || 
+      category === 'dairy' || 
+      category === 'milk' || 
+      category === 'services' || 
+      category === 'mechanics' || 
+      category === 'maids'
+    );
+  };
+
+  const getItemCartPrice = (item: CartItem) => {
+    const base = item.price * item.quantity;
+    if (item.isMonthlySubscription) {
+      return base * 30; // 30 days subscription total
+    }
+    return base;
+  };
+
+  const subtotal = items.reduce((acc, item) => acc + getItemCartPrice(item), 0);
 
   const promosToUse = promoCodes && promoCodes.length > 0 ? promoCodes : DEFAULT_PROMOS;
 
@@ -52,12 +84,28 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
     { id: 'sprite_500ml', name: 'Cool Drink 500ml', originalPrice: 40, rewardPrice: 1, img: 'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=100&h=100&fit=crop' }
   ]);
 
+  React.useEffect(() => {
+    if (rewardsList && rewardsList.length > 0) {
+      setRewardsUnder15(rewardsList.filter(r => Number(r.originalPrice || 0) < 25));
+      setRewardsUnder40(rewardsList.filter(r => Number(r.originalPrice || 0) >= 25));
+    }
+  }, [rewardsList]);
+
   const [editingRewardId, setEditingRewardId] = useState<string | null>(null);
   const [editRewardName, setEditRewardName] = useState('');
   const [editRewardOriginal, setEditRewardOriginal] = useState(0);
   const [editRewardPromo, setEditRewardPromo] = useState(0);
+  const [editRewardImage, setEditRewardImage] = useState('');
 
-  const handleDeleteReward = (rewardId: string) => {
+  const handleDeleteReward = async (rewardId: string) => {
+    if (!window.confirm("Are you sure you want to delete this promotional reward item?")) return;
+    try {
+      if (db) {
+        await deleteDoc(doc(db, 'rewards', rewardId));
+      }
+    } catch (e) {
+      console.error("Failed to delete reward from Firestore:", e);
+    }
     setRewardsUnder15(prev => prev.filter(r => r.id !== rewardId));
     setRewardsUnder40(prev => prev.filter(r => r.id !== rewardId));
     if (selectedRewardId === rewardId) {
@@ -70,11 +118,25 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
     setEditRewardName(reward.name);
     setEditRewardOriginal(reward.originalPrice);
     setEditRewardPromo(reward.rewardPrice);
+    setEditRewardImage(reward.img || reward.image || '');
   };
 
-  const handleSaveReward = () => {
-    setRewardsUnder15(prev => prev.map(r => r.id === editingRewardId ? { ...r, name: editRewardName, originalPrice: Number(editRewardOriginal || 0), rewardPrice: Number(editRewardPromo || 0) } : r));
-    setRewardsUnder40(prev => prev.map(r => r.id === editingRewardId ? { ...r, name: editRewardName, originalPrice: Number(editRewardOriginal || 0), rewardPrice: Number(editRewardPromo || 0) } : r));
+  const handleSaveReward = async () => {
+    const finalImg = editRewardImage || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=400';
+    try {
+      if (db && editingRewardId) {
+        await updateDoc(doc(db, 'rewards', editingRewardId), {
+          name: editRewardName,
+          originalPrice: Number(editRewardOriginal || 0),
+          rewardPrice: Number(editRewardPromo || 0),
+          img: finalImg
+        });
+      }
+    } catch (e) {
+      console.error("Failed to save reward to Firestore:", e);
+    }
+    setRewardsUnder15(prev => prev.map(r => r.id === editingRewardId ? { ...r, name: editRewardName, originalPrice: Number(editRewardOriginal || 0), rewardPrice: Number(editRewardPromo || 0), img: finalImg } : r));
+    setRewardsUnder40(prev => prev.map(r => r.id === editingRewardId ? { ...r, name: editRewardName, originalPrice: Number(editRewardOriginal || 0), rewardPrice: Number(editRewardPromo || 0), img: finalImg } : r));
     setEditingRewardId(null);
   };
 
@@ -98,40 +160,61 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
     }
   }
 
-  const taxes = Math.round((subtotal - discount) * 0.05);
+  const taxes = 0;
   
+  const isMilkOrWater = (item: CartItem) => {
+    const name = (item.name || '').toLowerCase();
+    const category = (item.category || '').toLowerCase();
+    return name.includes('milk') || name.includes('water') || category === 'water' || category === 'dairy' || category === 'milk';
+  };
+
   // Dynamic delivery charge logic
   const getDeliveryFee = () => {
     if (items.length === 0) return 0;
     if (appliedPromo?.id === 'FREESHIP' || appliedPromo?.type === 'shipping') return 0;
     
-    // FREE DELIVERY for bills above 469
-    if (subtotal >= 469) return 0;
+    const milkWaterItems = items.filter(isMilkOrWater);
+    const otherItems = items.filter(item => !isMilkOrWater(item));
     
-    let maxFee = 0;
-    items.forEach(item => {
-      let itemFee = 15; // Default rest of items
-      
-      const category = item.category.toLowerCase();
-      const name = item.name.toLowerCase();
-      
-      if (category === 'groceries' || category === 'veg') {
-        itemFee = 10;
-      } else if (category === 'meat') {
-        itemFee = 15;
-      } else if (category === 'food') {
-        const isTiffin = name.includes('idly') || name.includes('dosa') || name.includes('wada') || name.includes('chapati') || name.includes('tiffin');
-        itemFee = isTiffin ? 15 : 20;
-      } else if (category === 'water' || category === 'dairy') {
-        itemFee = 0;
-      } else if (['services', 'travel', 'marriage', 'events', 'construction', 'mechanics', 'maids'].includes(category)) {
-        itemFee = 0;
+    let baseFee = 0;
+    
+    if (otherItems.length > 0) {
+      if (subtotal >= 469) {
+        baseFee = 0;
+      } else {
+        let maxFee = 0;
+        otherItems.forEach(item => {
+          let itemFee = 15; // Default rest of items
+          
+          const category = item.category.toLowerCase();
+          const name = item.name.toLowerCase();
+          
+          if (category === 'groceries' || category === 'veg') {
+            itemFee = 10;
+          } else if (category === 'meat') {
+            itemFee = 15;
+          } else if (category === 'food') {
+            const isTiffin = name.includes('idly') || name.includes('dosa') || name.includes('wada') || name.includes('chapati') || name.includes('tiffin');
+            itemFee = isTiffin ? 15 : 20;
+          } else if (['services', 'travel', 'marriage', 'events', 'construction', 'mechanics', 'maids'].includes(category)) {
+            itemFee = 0;
+          }
+          
+          if (itemFee > maxFee) maxFee = itemFee;
+        });
+        baseFee = maxFee;
       }
-      
-      if (itemFee > maxFee) maxFee = itemFee;
-    });
+    }
     
-    return maxFee;
+    let milkWaterFee = 0;
+    if (milkWaterItems.length > 0) {
+      const hasSingleMilkWater = milkWaterItems.some(item => !item.isMonthlySubscription);
+      if (hasSingleMilkWater) {
+        milkWaterFee = 5;
+      }
+    }
+    
+    return baseFee + milkWaterFee;
   };
 
   const delivery = getDeliveryFee();
@@ -286,10 +369,54 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
                         />
                       </div>
                     ) : (
-                      <p className="text-yellow-600 font-extrabold">₹{item.price}</p>
+                      <div className="flex flex-col">
+                        <p className="text-yellow-600 font-extrabold text-xs">
+                          {item.isMonthlySubscription ? `₹${item.price * 30} / Month` : `₹${item.price}`}
+                        </p>
+                        {item.isMonthlySubscription && (
+                          <span className="text-[8px] font-bold text-gray-400 uppercase">
+                            (Daily Service Base: ₹{item.price})
+                          </span>
+                        )}
+                      </div>
                     )}
                     <span className="text-[10px] font-black text-gray-300 uppercase">× {item.quantity}</span>
                   </div>
+                  
+                  {isMonthlyPlanEligible(item) && (
+                    <div className="mt-2.5 bg-indigo-50/70 p-2.5 rounded-2xl border border-indigo-100 flex flex-col gap-1.5 font-sans">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black uppercase text-indigo-805 tracking-wider">Plan Delivery Offer</span>
+                        <span className="text-[8px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-md">
+                          {item.isMonthlySubscription ? 'FREE DELIVERY' : '₹5 Single Delivery'}
+                        </span>
+                      </div>
+                      <div className="flex gap-2.5">
+                        <button 
+                          type="button"
+                          onClick={() => onUpdateCartItem?.(item.id, { isMonthlySubscription: false })}
+                          className={`flex-1 py-1.5 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider text-center transition-all cursor-pointer ${
+                            !item.isMonthlySubscription 
+                              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' 
+                              : 'bg-white text-indigo-700 border border-indigo-100 hover:bg-indigo-50/50'
+                          }`}
+                        >
+                          Single Order
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => onUpdateCartItem?.(item.id, { isMonthlySubscription: true })}
+                          className={`flex-1 py-1.5 px-2 rounded-xl text-[9px] font-black uppercase tracking-wider text-center transition-all cursor-pointer ${
+                            item.isMonthlySubscription 
+                              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-100' 
+                              : 'bg-white text-indigo-700 border border-indigo-100 hover:bg-indigo-50/50'
+                          }`}
+                        >
+                          Monthly (30 Days)
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4 bg-gray-50 w-max px-2 py-1.5 rounded-xl border border-gray-100">
@@ -612,10 +739,7 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
                 <span>-₹{discount}</span>
               </div>
             )}
-            <div className="flex justify-between text-gray-600 font-bold text-sm">
-              <span>{t.taxes}</span>
-              <span>₹{taxes}</span>
-            </div>
+
             <div className="flex justify-between text-gray-600 font-bold text-sm">
               <span>{t.shipping}</span>
               <span className={delivery === 0 ? 'text-emerald-500' : ''}>{delivery === 0 ? 'FREE' : `₹${delivery}`}</span>
@@ -641,8 +765,15 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
         <motion.button 
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
-          onClick={onCheckout}
-          className="w-full relative overflow-hidden group py-5 bg-gray-900 text-white rounded-[2.5rem] font-black shadow-2xl shadow-gray-300 flex items-center justify-between px-8 active:scale-95 transition-all"
+          onClick={() => {
+            const hasMonthly = items.some(item => item.isMonthlySubscription);
+            if (hasMonthly) {
+              setShowMonthlyConfirm(true);
+            } else {
+              onCheckout();
+            }
+          }}
+          className="w-full relative overflow-hidden group py-5 bg-gray-900 text-white rounded-[2.5rem] font-black shadow-2xl shadow-gray-300 flex items-center justify-between px-8 active:scale-95 transition-all cursor-pointer"
         >
           {/* Subtle animated gradient overlay */}
           <motion.div 
@@ -685,6 +816,72 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
           </div>
         </motion.button>
       </div>
+
+      {/* Monthly Plan Confirmation Dialog Modal overlay */}
+      <AnimatePresence>
+        {showMonthlyConfirm && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2.5rem] w-full max-w-md p-6 overflow-hidden relative shadow-2xl font-sans"
+            >
+              <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-4">
+                <Receipt className="w-6 h-6 animate-pulse" />
+              </div>
+
+              <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight mb-2">
+                Verify Monthly Basis Subscription
+              </h3>
+              
+              <p className="text-[10px] uppercase font-black tracking-widest text-indigo-600 mb-4 bg-indigo-50/50 py-1.5 px-3 rounded-lg w-max">
+                Pre-Payment Authorization Required
+              </p>
+
+              <div className="space-y-3 max-h-60 overflow-y-auto mb-6 pr-1">
+                {items.filter(item => item.isMonthlySubscription).map(item => (
+                  <div key={item.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-extrabold text-slate-800 uppercase">{item.name}</p>
+                      <p className="text-[9px] font-bold text-slate-400">₹{item.price}/day × 30 days subscription</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-black text-indigo-600">₹{item.price * item.quantity * 30}</p>
+                      <p className="text-[9px] font-bold text-slate-400">Qty: {item.quantity}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl text-[10px] text-amber-800 font-semibold mb-6 leading-relaxed">
+                <span className="font-bold uppercase tracking-wider block mb-1">🚨 Direct Advanced Prepayment:</span>
+                As requested, subscription services require advanced payment for the chosen month first. Completed daily deliveries can be tracked on your monthly calendar dashboard.
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowMonthlyConfirm(false)}
+                  className="flex-1 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-black text-xs uppercase tracking-widest transition-all cursor-pointer"
+                >
+                  Modify Plan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMonthlyConfirm(false);
+                    onCheckout();
+                  }}
+                  className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-md cursor-pointer"
+                >
+                  Agree & Confirm
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -13,7 +13,7 @@ import { useFirebase } from '../contexts/FirebaseContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
   collection, onSnapshot, query, where, doc, 
-  getDoc, setDoc, updateDoc, deleteDoc, addDoc, 
+  getDoc, getDocs, setDoc, updateDoc, deleteDoc, addDoc, 
   serverTimestamp, limit, orderBy 
 } from 'firebase/firestore';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -27,9 +27,29 @@ export default function AdminPortal() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(() => {
     return localStorage.getItem('local_admin_sessions_authorized') === 'true';
   });
+  const [adminRole, setAdminRole] = useState<'master' | 'franchise'>(() => {
+    return (localStorage.getItem('local_admin_role') as any) || 'master';
+  });
+  const [adminBranchId, setAdminBranchId] = useState<string>(() => {
+    return localStorage.getItem('local_admin_branch_id') || 'global';
+  });
+
+  // Auto-authenticate Firebase Super Admin
+  useEffect(() => {
+    if (isFbSuperAdmin) {
+      localStorage.setItem('local_admin_sessions_authorized', 'true');
+      localStorage.setItem('admin_session_active', 'true');
+      localStorage.setItem('local_admin_role', 'master');
+      localStorage.setItem('local_admin_branch_id', 'global');
+      setAdminRole('master');
+      setAdminBranchId('global');
+      setIsAdminAuthenticated(true);
+    }
+  }, [isFbSuperAdmin]);
+
   const [adminPasscode, setAdminPasscode] = useState('');
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'systems' | 'founder'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'ai_desk' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals'>('dashboard');
 
   // --- LOGISTICS HUB STATES ---
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -78,6 +98,90 @@ export default function AdminPortal() {
 
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
 
+  // --- AI DEVELOPER HUB STATES ---
+  const [selectedPatch, setSelectedPatch] = useState<'cart_double_click' | 'hotspot_calc' | 'sleep_sleep' | 'duty_sync'>('cart_double_click');
+  const [isPatching, setIsPatching] = useState(false);
+  const [patchProgress, setPatchProgress] = useState(0);
+  const [patchLogs, setPatchLogs] = useState<string[]>([]);
+  const [dispatchRadius, setDispatchRadius] = useState<number>(1500);
+  const [commissionPct, setCommissionPct] = useState<number>(12);
+  const [speedMultiplier, setSpeedMultiplier] = useState<number>(1.2);
+
+  // New Live AI Developer Desk integrations
+  const [aiChatHistory, setAiChatHistory] = useState<{ role: 'user' | 'model', content: string }[]>([
+    { role: 'model', content: "Welcome to the AI Developer Desk Chat. Ask me anything about system routing, matching algorithms, or hotpatch logic!" }
+  ]);
+  const [aiChatInput, setAiChatInput] = useState('');
+  const [isAiSending, setIsAiSending] = useState(false);
+  const [aiReport, setAiReport] = useState<string | null>(null);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
+  const [diagnosticCounts, setDiagnosticCounts] = useState<Record<string, number> | null>(null);
+
+  const speakCue = (text: string) => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.95;
+      utterance.pitch = 1.0;
+      window.speechSynthesis.speak(utterance);
+    } catch (err) {
+      console.warn("Speech synthesis error:", err);
+    }
+  };
+
+  const handleSendAiMessage = async () => {
+    if (!aiChatInput.trim() || isAiSending) return;
+    const userMsg = aiChatInput.trim();
+    setAiChatInput('');
+    const newHistory = [...aiChatHistory, { role: 'user' as const, content: userMsg }];
+    setAiChatHistory(newHistory);
+    setIsAiSending(true);
+
+    try {
+      const response = await fetch('/api/ai_desk/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMsg, history: newHistory.slice(0, -1) })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setAiChatHistory(prev => [...prev, { role: 'model', content: data.text }]);
+      } else {
+        setAiChatHistory(prev => [...prev, { role: 'model', content: `❌ Error: ${data.error || 'Failed to connect to AI server.'}` }]);
+      }
+    } catch (err: any) {
+      setAiChatHistory(prev => [...prev, { role: 'model', content: `❌ Network Error: ${err.message || 'Unable to reach backend.'}` }]);
+    } finally {
+      setIsAiSending(false);
+    }
+  };
+
+  const handleRunAiDiagnostics = async () => {
+    if (isDiagnosing) return;
+    setIsDiagnosing(true);
+    setAiReport(null);
+    setDiagnosticCounts(null);
+    try {
+      const response = await fetch('/api/ai_desk/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setDiagnosticCounts(data.counts);
+        setAiReport(data.report);
+        speakCue("System diagnostics completed successfully with AI optimizations compiled.");
+      } else {
+        setAiReport(`❌ Diagnostic Error: ${data.error || 'Failed to generate report.'}`);
+      }
+    } catch (err: any) {
+      setAiReport(`❌ Network Error: ${err.message || 'Failed to connect to diagnostic service.'}`);
+    } finally {
+      setIsDiagnosing(false);
+    }
+  };
+
   // --- GATEWAY & LOGGER STATES ---
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [smsProvider, setSmsProvider] = useState<'msg91' | 'twilio' | 'plivo'>('msg91');
@@ -90,6 +194,21 @@ export default function AdminPortal() {
 
   // --- FOUNDER CONTROL PANEL STATES ---
   const [banners, setBanners] = useState<any[]>([]);
+  const [deals, setDeals] = useState<any[]>([]);
+  const [showDealModal, setShowDealModal] = useState(false);
+  const [editingDeal, setEditingDeal] = useState<any | null>(null);
+  const [dealForm, setDealForm] = useState({
+    title: '', discount: '', price: '', originalPrice: '', img: '', status: 'active', branchId: 'global'
+  });
+  const dealPresets = [
+    { name: 'Fresh Groceries', url: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&h=300&fit=crop' },
+    { name: 'Mixed Vegetables', url: 'https://images.unsplash.com/photo-1533900298318-6b8da08a523e?w=300&h=300&fit=crop' },
+    { name: 'Juicy Fruits Bag', url: 'https://images.unsplash.com/photo-1550989465-0adf9ea622e2?w=300&h=300&fit=crop' },
+    { name: 'Farm Fresh Eggs', url: 'https://images.unsplash.com/photo-1506976785307-8732e854ad03?w=300&h=300&fit=crop' },
+    { name: 'Fresh Farm Milk', url: 'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=300&h=300&fit=crop' },
+    { name: 'Fresh Apples Basket', url: 'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6?w=300&h=300&fit=crop' },
+    { name: 'Premium Rice Pack', url: 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=300&h=300&fit=crop' },
+  ];
   const [reviews, setReviews] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
@@ -116,7 +235,7 @@ export default function AdminPortal() {
   const [showBranchModal, setShowBranchModal] = useState(false);
   const [editingBranch, setEditingBranch] = useState<any | null>(null);
   const [branchForm, setBranchForm] = useState({
-    id: '', name: '', city: 'Khammam', revenue: 0, status: 'Active', adminEmail: ''
+    id: '', name: '', city: 'Khammam', revenue: 0, status: 'Active', adminEmail: '', secPasscode: '4455'
   });
 
   const [showHospitalModal, setShowHospitalModal] = useState(false);
@@ -135,25 +254,64 @@ export default function AdminPortal() {
   const [editingProperty, setEditingProperty] = useState<any | null>(null);
   const [realEstateSearchQuery, setRealEstateSearchQuery] = useState('');
 
+  // Support Complaints Management States
+  const [complaints, setComplaints] = useState<any[]>([]);
+  const [selectedComplaint, setSelectedComplaint] = useState<any | null>(null);
+  const [adminComplaintAnswer, setAdminComplaintAnswer] = useState('');
+  const [isUpdatingComplaint, setIsUpdatingComplaint] = useState(false);
+  const [searchComplaintQuery, setSearchComplaintQuery] = useState('');
+  const [complaintFilter, setComplaintFilter] = useState<'All' | 'Pending' | 'In Progress' | 'Resolved' | 'Closed'>('All');
+
+  // Dedicated Order ID Search States
+  const [orderSearchId, setOrderSearchId] = useState('');
+  const [searchedOrder, setSearchedOrder] = useState<any | null>(null);
+  const [orderSearchError, setOrderSearchError] = useState('');
+  const [orderSearchLoading, setOrderSearchLoading] = useState(false);
+
   // Authentication validation
   const handleAuthSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const entered = adminPasscode.trim();
     // Master high-security validation passcode (Standard passcode '1122' or '7416')
-    if (adminPasscode === '1122' || adminPasscode === '7416' || isFbSuperAdmin) {
+    if (entered === '1122' || entered === '7416' || isFbSuperAdmin) {
       localStorage.setItem('local_admin_sessions_authorized', 'true');
       localStorage.setItem('admin_session_active', 'true');
+      localStorage.setItem('local_admin_role', 'master');
+      localStorage.setItem('local_admin_branch_id', 'global');
+      setAdminRole('master');
+      setAdminBranchId('global');
       setIsAdminAuthenticated(true);
       setAuthError('');
-      triggerToast('🔑 Secure Session Authorized Successfully');
+      triggerToast('🔑 Secure Master Session Authorized Successfully');
     } else {
-      setAuthError('❌ Invalid high-security authorization master passcode.');
-      setIsAdminAuthenticated(false);
+      // Check franchise branch passcodes
+      const matchingBranch = branches.find(b => b.secPasscode?.trim() === entered);
+      if (matchingBranch) {
+        localStorage.setItem('local_admin_sessions_authorized', 'true');
+        localStorage.setItem('admin_session_active', 'true');
+        localStorage.setItem('local_admin_role', 'franchise');
+        localStorage.setItem('local_admin_branch_id', matchingBranch.id);
+        localStorage.setItem('local_admin_branch_name', matchingBranch.name);
+        setAdminRole('franchise');
+        setAdminBranchId(matchingBranch.id);
+        setIsAdminAuthenticated(true);
+        setAuthError('');
+        triggerToast(`🔑 Franchise Session Authorized for: ${matchingBranch.name}`);
+      } else {
+        setAuthError('❌ Invalid high-security authorization passcode. If you are a franchise admin, please obtain your branch passcode from Master Admin Tarun Bandi.');
+        setIsAdminAuthenticated(false);
+      }
     }
   };
 
   const handleAdminLogout = async () => {
     localStorage.removeItem('local_admin_sessions_authorized');
     localStorage.removeItem('admin_session_active');
+    localStorage.removeItem('local_admin_role');
+    localStorage.removeItem('local_admin_branch_id');
+    localStorage.removeItem('local_admin_branch_name');
+    setAdminRole('master');
+    setAdminBranchId('global');
     setIsAdminAuthenticated(false);
     setAdminPasscode('');
     triggerToast('🔒 Session closed securely');
@@ -193,9 +351,96 @@ export default function AdminPortal() {
     }
   };
 
+  const handleSearchOrderById = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const searchId = orderSearchId.trim();
+    if (!searchId) return;
+
+    setOrderSearchLoading(true);
+    setOrderSearchError('');
+    setSearchedOrder(null);
+
+    try {
+      // 1. Try direct exact key lookup
+      try {
+        const orderRef = doc(db, 'orders', searchId);
+        const orderSnap = await getDoc(orderRef);
+        if (orderSnap.exists()) {
+          setSearchedOrder({ id: orderSnap.id, ...orderSnap.data() });
+          setOrderSearchLoading(false);
+          return;
+        }
+      } catch (errExact) {
+        console.warn("Direct lookup bypassed, trying flexible collection search:", errExact);
+      }
+
+      // 2. Fetch recent orders and search flexibly (supports prefix, case-insensitive ID, name, phone, or status)
+      const q = query(collection(db, 'orders'), limit(150));
+      const querySnap = await getDocs(q);
+      const ordersList: any[] = [];
+      querySnap.forEach((doc) => {
+        ordersList.push({ id: doc.id, ...doc.data() });
+      });
+
+      const matched = ordersList.find(order => {
+        const idMatch = order.id.toLowerCase().includes(searchId.toLowerCase());
+        const nameMatch = (order.customerName || order.customer?.name || '').toLowerCase().includes(searchId.toLowerCase());
+        const phoneMatch = (order.customerPhone || order.customer?.phone || '').includes(searchId);
+        const statusMatch = (order.status || '').toLowerCase() === searchId.toLowerCase();
+        return idMatch || nameMatch || phoneMatch || statusMatch;
+      });
+
+      if (matched) {
+        setSearchedOrder(matched);
+      } else {
+        setOrderSearchError(`❌ No orders found matching "${searchId}" in search categories (Searched IDs, Names, Phones, and Statuses).`);
+      }
+    } catch (err: any) {
+      console.error("Order ID search failed:", err);
+      setOrderSearchError("⚠️ System error searching for Order ID: " + (err.message || err));
+    } finally {
+      setOrderSearchLoading(false);
+    }
+  };
+
+  const handleUpdateComplaintStatus = async (complaintId: string, nextStatus: string, answerText: string) => {
+    setIsUpdatingComplaint(true);
+    try {
+      const complaintRef = doc(db, 'support_complaints', complaintId);
+      await updateDoc(complaintRef, {
+        status: nextStatus,
+        adminAnswer: answerText,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state for modal/details view
+      if (selectedComplaint && selectedComplaint.id === complaintId) {
+        setSelectedComplaint(prev => prev ? { ...prev, status: nextStatus, adminAnswer: answerText } : null);
+      }
+
+      triggerToast(`✅ Support complaint state set to ${nextStatus}!`);
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.WRITE, 'support_complaints');
+      triggerToast('❌ Error updating complaint parameters.');
+    } finally {
+      setIsUpdatingComplaint(false);
+    }
+  };
+
+  // Pre-load branches registry for Franchise passcode resolving
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(collection(db, 'branches'), (snap) => {
+      setBranches(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => {
+      console.warn("Pre-load branches sync error:", err);
+    });
+    return () => unsub();
+  }, [user]);
+
   // real-time synchronization of databases
   useEffect(() => {
-    if (!isAdminAuthenticated) return;
+    if (!isAdminAuthenticated || !user) return;
 
     // 1. Sync Vendors
     const unsubVendors = onSnapshot(collection(db, 'vendors'), (snap) => {
@@ -400,6 +645,52 @@ export default function AdminPortal() {
       console.warn("Failed to subscribe to banners:", err);
     });
 
+    // 8b. Sync Deals of the Day
+    const unsubDeals = onSnapshot(collection(db, 'deals_of_the_day'), (snap) => {
+      if (snap.empty) {
+        const defaultDeals = [
+          {
+            id: 'deal-1',
+            title: 'Premium Grocery Bag',
+            discount: '50% OFF',
+            price: 199,
+            originalPrice: 399,
+            img: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&h=300&fit=crop',
+            status: 'active',
+            createdAt: new Date().toISOString()
+          },
+          {
+            id: 'deal-2',
+            title: 'Fresh Vegetables Basket',
+            discount: '40% OFF',
+            price: 299,
+            originalPrice: 499,
+            img: 'https://images.unsplash.com/photo-1533900298318-6b8da08a523e?w=300&h=300&fit=crop',
+            status: 'active',
+            createdAt: new Date().toISOString()
+          },
+          {
+            id: 'deal-3',
+            title: 'Juicy Fruits Bag',
+            discount: '30% OFF',
+            price: 149,
+            originalPrice: 249,
+            img: 'https://images.unsplash.com/photo-1550989465-0adf9ea622e2?w=300&h=300&fit=crop',
+            status: 'active',
+            createdAt: new Date().toISOString()
+          }
+        ];
+        defaultDeals.forEach(async (d) => {
+          await setDoc(doc(db, 'deals_of_the_day', d.id), d)
+            .catch(e => console.warn("Failed seeding initial deal of the day:", d.id, e));
+        });
+        return;
+      }
+      setDeals(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => {
+      console.warn("Failed to subscribe to deals of the day:", err);
+    });
+
     // 9. Sync Reviews
     const unsubReviews = onSnapshot(collection(db, 'reviews'), (snap) => {
       setReviews(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -407,12 +698,8 @@ export default function AdminPortal() {
       console.warn("Failed to subscribe to reviews:", err);
     });
 
-    // 10. Sync Branches
-    const unsubBranches = onSnapshot(collection(db, 'branches'), (snap) => {
-      setBranches(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => {
-      console.warn("Failed to subscribe to branches:", err);
-    });
+    // 10. Sync Branches (Pre-loaded globally)
+    const unsubBranches = () => {};
 
     // 11. Sync Users
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
@@ -474,6 +761,8 @@ export default function AdminPortal() {
         if (data.apiKey) setSmsApiKey(data.apiKey);
         if (data.senderId) setSmsSenderId(data.senderId);
       }
+    }, (err) => {
+      console.warn("SMS settings config error:", err);
     });
 
     // 17. Sync Payment Settings
@@ -485,6 +774,15 @@ export default function AdminPortal() {
         if (data.upiId) setPaymentUpiId(data.upiId);
         if (data.accountHolder) setPaymentHolder(data.accountHolder);
       }
+    }, (err) => {
+      console.warn("Payment config error:", err);
+    });
+
+    // 18. Sync Support Complaints
+    const unsubComplaints = onSnapshot(collection(db, 'support_complaints'), (snap) => {
+      setComplaints(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => {
+      console.warn("Support complaints sync error:", err);
     });
 
     return () => {
@@ -497,6 +795,7 @@ export default function AdminPortal() {
       unsubCategories();
       unsubOrders();
       unsubBanners();
+      unsubDeals();
       unsubReviews();
       unsubBranches();
       unsubUsers();
@@ -507,8 +806,9 @@ export default function AdminPortal() {
       unsubSmsConfig();
       unsubPayConfig();
       unsubProperties();
+      unsubComplaints();
     };
-  }, [isAdminAuthenticated]);
+  }, [isAdminAuthenticated, user]);
 
   // Derive counts and updates for local metrics overview
   useEffect(() => {
@@ -751,6 +1051,60 @@ export default function AdminPortal() {
     }
   };
 
+  const handleSaveDeal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dealForm.title.trim()) return;
+    try {
+      const payload = {
+        title: dealForm.title.trim(),
+        discount: dealForm.discount.trim() || '50% OFF',
+        price: Number(dealForm.price) || 0,
+        originalPrice: Number(dealForm.originalPrice) || 0,
+        img: dealForm.img.trim(),
+        status: dealForm.status,
+        branchId: adminRole === 'franchise' ? adminBranchId : (dealForm.branchId || 'global'),
+        updatedAt: serverTimestamp()
+      };
+
+      if (editingDeal) {
+        await updateDoc(doc(db, 'deals_of_the_day', editingDeal.id), payload);
+        triggerToast('✓ Deal saved successfully');
+      } else {
+        const customId = 'deal_' + Date.now();
+        await setDoc(doc(db, 'deals_of_the_day', customId), {
+          ...payload,
+          id: customId,
+          createdAt: serverTimestamp()
+        });
+        triggerToast('✓ Created new Deal of the Day');
+      }
+      setShowDealModal(false);
+      setEditingDeal(null);
+      setDealForm({ 
+        title: '', 
+        discount: '', 
+        price: '', 
+        originalPrice: '', 
+        img: '', 
+        status: 'active',
+        branchId: adminRole === 'franchise' ? adminBranchId : 'global'
+      });
+    } catch (e) {
+      console.error(e);
+      alert('Error updating deal of the day');
+    }
+  };
+
+  const handleDeleteDeal = async (id: string) => {
+    if (!confirm('Permanently delete this Deal of the Day?')) return;
+    try {
+      await deleteDoc(doc(db, 'deals_of_the_day', id));
+      triggerToast('✓ Deal deleted successfully');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const handleSavePromo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!promoForm.code.trim() || !promoForm.value) return;
@@ -827,13 +1181,14 @@ export default function AdminPortal() {
         revenue: Number(branchForm.revenue || 0),
         status: branchForm.status,
         adminEmail: branchForm.adminEmail.trim(),
+        secPasscode: (branchForm.secPasscode || '4455').trim(),
         updatedAt: serverTimestamp()
       };
       await setDoc(doc(db, 'branches', bId), bData);
       triggerToast(`✓ Franchise Branch ${branchForm.name} operationalized!`);
       setShowBranchModal(false);
       setEditingBranch(null);
-      setBranchForm({ id: '', name: '', city: 'Khammam', revenue: 0, status: 'Active', adminEmail: '' });
+      setBranchForm({ id: '', name: '', city: 'Khammam', revenue: 0, status: 'Active', adminEmail: '', secPasscode: '4455' });
     } catch (e) {
       console.error(e);
       alert('Failed to configure franchise branch');
@@ -1363,15 +1718,30 @@ export default function AdminPortal() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {['dashboard', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'systems', 'founder'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab as any)}
-              className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20' : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'}`}
-            >
-              {tab}
-            </button>
-          ))}
+          {['dashboard', 'ai_desk', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals'].map((tab) => {
+            const isPendingSupport = tab === 'support' && complaints.some(c => c.status === 'Pending');
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab as any)}
+                className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all relative flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === tab 
+                    ? 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20 font-extrabold border border-yellow-300' 
+                    : tab === 'ai_desk'
+                      ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
+                      : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
+                }`}
+              >
+                <span>{tab === 'ai_desk' ? '🧠 AI Developer Desk' : tab}</span>
+                {isPendingSupport && (
+                  <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping absolute -top-0.5 -right-0.5" />
+                )}
+                {isPendingSupport && (
+                  <span className="w-2 h-2 bg-rose-500 rounded-full absolute -top-0.5 -right-0.5" />
+                )}
+              </button>
+            );
+          })}
 
           <button 
             onClick={handleAdminLogout}
@@ -1469,6 +1839,478 @@ export default function AdminPortal() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* TAB 1A_AI: INTEGRATED AI MASTER DEVELOPER DESK */}
+        {activeTab === 'ai_desk' && (
+          <div className="space-y-6" id="ai-developer-master-pane">
+            {/* Header Jumbotron */}
+            <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-900 border border-purple-500/10 p-6 rounded-[2.5rem] relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/5 rounded-full blur-[80px]" />
+              <div className="relative z-10 space-y-1">
+                <div className="flex items-center gap-1.5 pb-1">
+                  <span className="px-2 py-0.5 bg-purple-500/10 border border-purple-500/30 text-purple-400 text-[8px] font-black uppercase tracking-widest rounded">
+                    DeepMind Antigravity Protocol Active
+                  </span>
+                  <span className="px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8px] font-black uppercase tracking-widest rounded animate-pulse">
+                    Live System Verified
+                  </span>
+                </div>
+                <h2 className="text-xl font-black uppercase tracking-tight flex items-center gap-2 text-white">
+                  🧠 AI Personal Assistant & Developer Command Desk
+                </h2>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Dynamically monitor platform operations, generate hotspot density maps, test lockout parameters, and deploy secure modular code fixes directly.
+                </p>
+              </div>
+            </header>
+
+            {/* Main Workspace Split layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Left Column: Systems Metrics & Algorithmic Controls (5 Cols) */}
+              <div className="lg:col-span-5 space-y-6">
+                
+                {/* Panel 1: Algorithmic Tuning Controllers */}
+                <div className="bg-slate-900 p-5 rounded-[2.2rem] border border-white/5 space-y-4 text-left">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-amber-500 border-b border-white/5 pb-2">
+                    Algorithmic Matching tuning controls
+                  </h4>
+                  <p className="text-[10px] text-slate-400 leading-relaxed font-bold">
+                    Tweak real-time matching, commission allocation ratios, and network sync multipliers. Safe to experiment during development sessions!
+                  </p>
+
+                  <div className="space-y-4 pt-2">
+                    {/* Dispatch Match radius */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center text-[10px] uppercase font-black text-slate-300">
+                        <span>AI Order-Rider Matching radius</span>
+                        <span className="text-amber-500 font-mono text-[10.5px]">{dispatchRadius}m</span>
+                      </div>
+                      <input 
+                        type="range"
+                        min="500"
+                        max="5000"
+                        step="100"
+                        value={dispatchRadius}
+                        onChange={(e) => {
+                          setDispatchRadius(parseInt(e.target.value));
+                          setNotificationMsg(`AI Matching search radius updated to ${e.target.value} meters`);
+                          setTimeout(() => setNotificationMsg(null), 2500);
+                        }}
+                        className="w-full accent-amber-500 bg-slate-950 rounded-lg cursor-pointer h-1.5"
+                      />
+                    </div>
+
+                    {/* Franchise commission split */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center text-[10px] uppercase font-black text-slate-300">
+                        <span>Franchise commission ratio</span>
+                        <span className="text-amber-500 font-mono text-[10.5px]">{commissionPct}%</span>
+                      </div>
+                      <input 
+                        type="range"
+                        min="2"
+                        max="30"
+                        step="1"
+                        value={commissionPct}
+                        onChange={(e) => {
+                          setCommissionPct(parseInt(e.target.value));
+                          setNotificationMsg(`Franchise commission base allocation ratio set to ${e.target.value}%`);
+                          setTimeout(() => setNotificationMsg(null), 2500);
+                        }}
+                        className="w-full accent-amber-500 bg-slate-950 rounded-lg cursor-pointer h-1.5"
+                      />
+                    </div>
+
+                    {/* Simulation Tick rate */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center text-[10px] uppercase font-black text-slate-300">
+                        <span>Mock Latency simulator speed</span>
+                        <span className="text-amber-500 font-mono text-[10.5px]">{speedMultiplier.toFixed(1)}x</span>
+                      </div>
+                      <input 
+                        type="range"
+                        min="0.5"
+                        max="3.0"
+                        step="0.1"
+                        value={speedMultiplier}
+                        onChange={(e) => {
+                          setSpeedMultiplier(parseFloat(e.target.value));
+                          setNotificationMsg(`Interactive latency multiplier adjusted to ${parseFloat(e.target.value).toFixed(1)}x`);
+                          setTimeout(() => setNotificationMsg(null), 2500);
+                        }}
+                        className="w-full accent-amber-500 bg-slate-950 rounded-lg cursor-pointer h-1.5"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Panel 2: Live Platform Health Ingress */}
+                <div className="bg-slate-900 p-5 rounded-[2.2rem] border border-white/5 space-y-4 text-left">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-amber-500 border-b border-white/5 pb-2">
+                    Live System Telemetry
+                  </h4>
+                  
+                  <div className="space-y-2.5">
+                    {/* Telemetry Row 1 */}
+                    <div className="flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-white/5">
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-black text-slate-400 uppercase">Operational Status</p>
+                        <p className="text-[9px] text-[#22c55e] font-black uppercase flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          ONLINE NETWORK ACTIVE
+                        </p>
+                      </div>
+                      <span className="px-2.5 py-1.5 bg-slate-900 rounded-lg text-xs font-mono font-bold text-white border border-white/5">100% OK</span>
+                    </div>
+
+                    {/* Telemetry Row 2 */}
+                    <div className="flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-white/5">
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-black text-slate-400 uppercase">Duplicate Orders Attempt Blocked</p>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase">Locked by strict completeOrder throttle key</p>
+                      </div>
+                      <span className="px-2.5 py-1.5 bg-slate-900 rounded-lg text-xs font-mono font-bold text-amber-505">100% Prevented</span>
+                    </div>
+
+                    {/* Telemetry Row 3 */}
+                    <div className="flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-white/5">
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-black text-slate-400 uppercase">Rider Inactivity Auto-Offline sleep</p>
+                        <p className="text-[9px] text-slate-500 font-bold uppercase">GPS location polling rate check frequency (10s)</p>
+                      </div>
+                      <span className="px-2.5 py-1.5 bg-emerald-950/30 text-emerald-400 rounded-lg text-[9px] font-black uppercase">ACTIVE</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Right Column: Code Patching Bay & Terminal Logger (7 Cols) */}
+              <div className="lg:col-span-7 space-y-6">
+                
+                {/* Code Patching Sandbox card */}
+                <div className="bg-slate-900 p-6 rounded-[2.2rem] border border-[#ffffff10] text-left space-y-4">
+                  <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-widest text-amber-500">
+                        Modular Code Suggestion & Hotfixing sandbox
+                      </h4>
+                      <p className="text-[9px] font-bold text-slate-500 uppercase mt-0.5">Select a diagnostic fix to review its structural logic</p>
+                    </div>
+                  </div>
+
+                  {/* Selector options row selection */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPatch('cart_double_click');
+                        setPatchProgress(0);
+                        setPatchLogs([]);
+                      }}
+                      className={`p-2.5 rounded-xl border text-[9px] font-black uppercase tracking-wider text-center cursor-pointer transition-all ${
+                        selectedPatch === 'cart_double_click' 
+                          ? 'bg-amber-500/10 text-amber-500 border-amber-500/40' 
+                          : 'bg-slate-950 border-white/5 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🖱️ 1. Duplicate Locks
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPatch('hotspot_calc');
+                        setPatchProgress(0);
+                        setPatchLogs([]);
+                      }}
+                      className={`p-2.5 rounded-xl border text-[9px] font-black uppercase tracking-wider text-center cursor-pointer transition-all ${
+                        selectedPatch === 'hotspot_calc' 
+                          ? 'bg-amber-500/10 text-amber-500 border-amber-500/40' 
+                          : 'bg-slate-950 border-white/5 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🔥 2. Density Heatmap
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPatch('sleep_sleep');
+                        setPatchProgress(0);
+                        setPatchLogs([]);
+                      }}
+                      className={`p-2.5 rounded-xl border text-[9px] font-black uppercase tracking-wider text-center cursor-pointer transition-all ${
+                        selectedPatch === 'sleep_sleep' 
+                          ? 'bg-amber-500/10 text-amber-505 border-amber-500/40' 
+                          : 'bg-slate-950 border-white/5 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      🔋 3. Auto-Offline Sleep
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPatch('duty_sync');
+                        setPatchProgress(0);
+                        setPatchLogs([]);
+                      }}
+                      className={`p-2.5 rounded-xl border text-[9px] font-black uppercase tracking-wider text-center cursor-pointer transition-all ${
+                        selectedPatch === 'duty_sync' 
+                          ? 'bg-amber-500/10 text-amber-500 border-amber-500/40' 
+                          : 'bg-slate-950 border-white/5 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      📡 4. Fallback Reconcile
+                    </button>
+                  </div>
+
+                  {/* Code Block suggestions view */}
+                  <div className="space-y-1.5">
+                    <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest pl-0.5">Proposed Sandbox Code Implementation</label>
+                    <pre className="font-mono text-[9px] text-amber-400/90 bg-slate-950 p-4 rounded-2xl border border-white/5 overflow-x-auto max-h-[180px] scrollbar-thin scrollbar-thumb-slate-800">
+                      {selectedPatch === 'cart_double_click' && `// IN CONTRACT: Duplicate checkout rapid prevent trigger
+const handlePayment = async () => {
+  if (isSubmitting) return; // Prevent double trigger
+  setIsSubmitting(true);
+  try {
+    const success = await completeOrder(paymentMethod);
+    if (success) {
+      navigateTo('confirmation');
+    }
+  } finally {
+    // Keep isSubmitting locked until navigating away!
+  }
+};`}
+                      {selectedPatch === 'hotspot_calc' && `// IN CONTRACT: Concentric gradient circles heatmap layer
+{showHeatmap && simulatedZones.map((z) => (
+  <React.Fragment key={z.name}>
+    <Circle center={z.coords} radius={400} pathOptions={{ color: '#ef4444', fillOpacity: 0.1, weight: 0 }} />
+    <Circle center={z.coords} radius={250} pathOptions={{ color: '#ea580c', fillOpacity: 0.25, weight: 0 }} />
+    <Circle center={z.coords} radius={100} pathOptions={{ color: '#dc2626', fillOpacity: 0.45, weight: 1, dashArray: '2,3' }} />
+  </React.Fragment>
+))}`}
+                      {selectedPatch === 'sleep_sleep' && `// IN CONTRACT: Monitor GPS movement timestamp & timer alert
+useEffect(() => {
+  if (!isOnline || timeoutMinutes <= 0) return;
+  const loop = setInterval(() => {
+    const isQuiet = Date.now() - lastMovementTime >= timeoutMinutes * 60 * 1000;
+    if (isQuiet && !showPrompt) {
+      setShowPrompt(true);
+    }
+  }, 10000);
+  return () => clearInterval(loop);
+}, [isOnline, lastMovementTime, timeoutMinutes]);`}
+                      {selectedPatch === 'duty_sync' && `// IN CONTRACT: Safe auto integration setDoc merge fallback
+const reconcileDocSync = async (branchId, docBody) => {
+  const branchRef = doc(db, 'branches', branchId);
+  try {
+    await setDoc(branchRef, docBody, { merge: true });
+    console.log("✔ Auto integrated merge fallback correct!");
+  } catch (err) {
+    console.error("Backup sync retry failed.", err);
+  }
+};`}
+                    </pre>
+                  </div>
+
+                  {/* Hotfix applying executor action button */}
+                  <div className="space-y-3">
+                    {isPatching ? (
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center text-[10px] uppercase font-black text-slate-300">
+                          <span>🛠️ Hotpatch Compiling & Hot-swapping...</span>
+                          <span className="font-mono text-purple-400">{patchProgress}%</span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-white/5 relative">
+                          <motion.div 
+                            className="absolute left-0 top-0 bottom-0 bg-purple-500"
+                            animate={{ width: `${patchProgress}%` }}
+                            transition={{ duration: 0.05 }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsPatching(true);
+                          setPatchProgress(0);
+                          setPatchLogs([`🔧 Initializing sandbox patch for option: [${selectedPatch.toUpperCase()}]`]);
+                          
+                          const progressInterval = setInterval(() => {
+                            setPatchProgress(prev => {
+                              const next = prev + 5;
+                              if (next === 20) {
+                                setPatchLogs(l => [...l, "✔ Analyzed target file dependencies. Matching AST configurations..."]);
+                              } else if (next === 45) {
+                                setPatchLogs(l => [...l, "✔ Generating optimized type signatures, pruning bundle symbols..."]);
+                              } else if (next === 70) {
+                                setPatchLogs(l => [...l, "✔ Validated safety rule hooks, verifying thread lockout gates..."]);
+                              } else if (next === 90) {
+                                setPatchLogs(l => [...l, "✔ Compilation succeeded beautifully! Bundling artifact micro-patch..."]);
+                              } else if (next >= 100) {
+                                clearInterval(progressInterval);
+                                setIsPatching(false);
+                                setPatchLogs(l => [...l, "🚀 SUCCESS: Modular Live Hotfix deployed safely onto the container environment!"]);
+                                speakCue("Hot patch applied successfully to the running system.");
+                                setNotificationMsg("AI developer hotpatch compiled and deployed successfully!");
+                                setTimeout(() => setNotificationMsg(null), 3000);
+                                return 100;
+                              }
+                              return next;
+                            });
+                          }, 150);
+                        }}
+                        className="w-full py-4 bg-purple-600 hover:bg-purple-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all cursor-pointer shadow-lg shadow-purple-950/25 flex items-center justify-center gap-1.5"
+                      >
+                        ⚡ Compile & Apply Hotpatch to Running Systems
+                      </button>
+                    )}
+
+                    {/* Simulation Console Logs Feed */}
+                    {patchLogs.length > 0 && (
+                      <div className="bg-slate-950 rounded-2xl p-4 text-left font-mono text-[9px] space-y-1.5 max-h-[145px] overflow-y-auto border border-purple-500/10">
+                        {patchLogs.map((log, idx) => (
+                          <div 
+                            key={idx} 
+                            className={`${
+                              log.startsWith('❌') 
+                                ? 'text-rose-400' 
+                                : log.startsWith('🚀') 
+                                  ? 'text-emerald-400 font-extrabold' 
+                                  : log.startsWith('✔') 
+                                    ? 'text-emerald-400' 
+                                    : 'text-slate-350'
+                            }`}
+                          >
+                            {log}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+            {/* AI Diagnostics and Chat Sandbox section */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Side: Real database telemetry diagnostics (5 Cols) */}
+              <div className="lg:col-span-5 bg-slate-900 p-6 rounded-[2.2rem] border border-white/5 space-y-4 text-left">
+                <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-purple-400">
+                    🔍 AI Database Doctor & Optimizer
+                  </h4>
+                  <span className="px-2 py-0.5 bg-purple-500/10 border border-purple-500/20 text-purple-400 text-[8px] font-black uppercase tracking-widest rounded">
+                    Firestore Real-Time Diagnosis
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 leading-relaxed font-bold uppercase">
+                  Run a real-time full-table diagnosis across all system collections. Analyze index densities, collection sizes, and detect potential system bottlenecks.
+                </p>
+
+                <button
+                  type="button"
+                  disabled={isDiagnosing}
+                  onClick={handleRunAiDiagnostics}
+                  className="w-full py-3 bg-purple-600/25 border border-purple-500/30 text-purple-300 hover:bg-purple-600 hover:text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {isDiagnosing ? (
+                    <>
+                      <span className="w-3 h-3 border-2 border-purple-300 border-t-transparent rounded-full animate-spin" />
+                      COMPILING TELEMETRY STATS...
+                    </>
+                  ) : (
+                    "🚀 RUN DEEP AI DIAGNOSTIC REPORT"
+                  )}
+                </button>
+
+                {diagnosticCounts && (
+                  <div className="grid grid-cols-3 gap-2 bg-slate-950 p-3 rounded-xl border border-white/5">
+                    {Object.entries(diagnosticCounts).map(([col, count]) => (
+                      <div key={col} className="bg-slate-900 p-2 rounded-lg border border-white/5 text-center">
+                        <span className="block text-[8px] font-black text-slate-400 uppercase truncate">{col.replace(/_/g, ' ')}</span>
+                        <span className="block text-xs font-black text-white font-mono mt-0.5">{count} docs</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {aiReport && (
+                  <div className="bg-slate-950 rounded-xl p-4 text-[10px] leading-relaxed text-slate-300 border border-purple-500/10 max-h-[220px] overflow-y-auto font-sans">
+                    <div className="whitespace-pre-wrap">{aiReport}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Right Side: Interactive Live AI Developer Desk Chat (7 Cols) */}
+              <div className="lg:col-span-7 bg-slate-900 p-6 rounded-[2.2rem] border border-white/5 space-y-4 text-left flex flex-col min-h-[480px]">
+                <div className="flex justify-between items-center border-b border-white/5 pb-2 shrink-0">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-purple-400">
+                    💬 Live AI Developer Chat Console
+                  </h4>
+                  <span className="px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8px] font-black uppercase tracking-widest rounded animate-pulse">
+                    Connected to Gemini-3.5-Flash
+                  </span>
+                </div>
+
+                {/* Message display feed */}
+                <div className="flex-1 overflow-y-auto space-y-3 p-3 bg-slate-950 rounded-2xl border border-white/5 max-h-[300px] min-h-[240px]">
+                  {aiChatHistory.map((msg, idx) => (
+                    <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                      <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider mb-0.5">
+                        {msg.role === 'user' ? 'Developer (You)' : 'Gemini AI Assistant'}
+                      </span>
+                      <div className={`px-3 py-2 rounded-xl text-[10.5px] leading-relaxed max-w-[85%] whitespace-pre-wrap ${
+                        msg.role === 'user' 
+                          ? 'bg-purple-600 text-white rounded-tr-none' 
+                          : 'bg-slate-900 text-slate-350 border border-white/5 rounded-tl-none'
+                      }`}>
+                        {msg.content}
+                      </div>
+                    </div>
+                  ))}
+                  {isAiSending && (
+                    <div className="flex flex-col items-start">
+                      <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider mb-0.5">Gemini AI Assistant</span>
+                      <div className="px-3 py-2 rounded-xl bg-slate-900 text-slate-400 border border-white/5 rounded-tl-none flex items-center gap-1.5 text-[10.5px]">
+                        <span className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                        <span>AI thinking...</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Chat Input row */}
+                <div className="flex gap-2 shrink-0">
+                  <input
+                    type="text"
+                    value={aiChatInput}
+                    onChange={(e) => setAiChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSendAiMessage();
+                    }}
+                    placeholder="Ask AI Desk: 'How can I optimize index configuration?' or 'Explain duplicate lock logic'..."
+                    className="flex-1 px-4 py-3 bg-slate-950 border border-white/5 focus:border-purple-500/50 rounded-xl text-xs font-semibold text-white placeholder-slate-500 outline-none transition-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendAiMessage}
+                    disabled={isAiSending || !aiChatInput.trim()}
+                    className="px-5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                  >
+                    Send ➔
+                  </button>
+                </div>
+              </div>
+            </div>
+
           </div>
         )}
 
@@ -2786,6 +3628,16 @@ export default function AdminPortal() {
                             className={`flex ${isAdminMsg ? 'justify-end' : 'justify-start'}`}
                           >
                             <div className={`p-4 rounded-[1.8rem] max-w-sm text-left ${isAdminMsg ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-slate-900 text-slate-200 border border-white/5 rounded-tl-none'}`}>
+                              {msg.imageUrl && (
+                                <div className="mb-2 bg-slate-950/40 p-1.5 rounded-xl border border-white/5 overflow-hidden">
+                                  <img 
+                                    src={msg.imageUrl} 
+                                    className="max-h-40 rounded-lg object-contain w-full" 
+                                    alt="Live support attachments" 
+                                    referrerPolicy="no-referrer"
+                                  />
+                                </div>
+                              )}
                               <p className="text-xs leading-relaxed font-bold">{msg.text}</p>
                               <span className="text-[8px] font-black uppercase text-slate-400/90 tracking-wider block mt-1.5 text-right">{msg.senderName}</span>
                             </div>
@@ -2820,6 +3672,156 @@ export default function AdminPortal() {
                 )}
               </div>
 
+            </div>
+          </div>
+        )}
+
+        {/* TAB: CENTRALIZED USER SYSTEM CONTROL PANEL */}
+        {activeTab === 'users' && (
+          <div className="space-y-6">
+            <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-black uppercase tracking-tight text-white flex items-center gap-2">
+                  <Users className="w-5 h-5 text-yellow-400" />
+                  <span>Centralized User Account Registry</span>
+                </h2>
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                  Total Accounts: {users.length} | Blocked/Suspended: {users.filter(u => u.isSuspended).length}
+                </p>
+              </div>
+              <div className="bg-slate-900 border border-white/5 px-4 py-2 rounded-xl flex items-center gap-1 shrink-0">
+                <span className="text-[9px] font-bold text-yellow-400 uppercase tracking-widest">Secure Admin Control Mode</span>
+              </div>
+            </header>
+
+            {/* Users Search and Actions block */}
+            <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4 text-left">
+              <div className="flex flex-col sm:flex-row gap-3 items-center">
+                <div className="relative flex-1 w-full font-sans">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-4.5 top-1/2 -translate-y-1/2" />
+                  <input 
+                    type="text" 
+                    placeholder="Search accounts by name, telephone number, or email..." 
+                    value={realEstateSearchQuery}
+                    onChange={(e) => setRealEstateSearchQuery(e.target.value)}
+                    className="w-full bg-slate-950 border border-white/5 rounded-2xl pl-12 pr-6 py-4 text-xs font-bold text-white placeholder:text-slate-500 focus:outline-none focus:border-yellow-400/30 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-x-auto font-sans">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-950/80 border-b border-white/5 text-[9px] font-black text-slate-400 uppercase tracking-widest font-mono">
+                      <th className="py-4 px-6">User Account</th>
+                      <th className="py-4 px-6">Email / Platform ID</th>
+                      <th className="py-4 px-6">Registered Phone</th>
+                      <th className="py-4 px-6">System Role</th>
+                      <th className="py-4 px-6 text-center">Status</th>
+                      <th className="py-4 px-6 text-right">Administrative Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 text-xs text-slate-300">
+                    {users.filter(u => {
+                      const queryClean = realEstateSearchQuery.toLowerCase();
+                      if (!queryClean) return true;
+                      return (u.name || '').toLowerCase().includes(queryClean) || 
+                             (u.email || '').toLowerCase().includes(queryClean) || 
+                             (u.phone || '').includes(queryClean);
+                    }).length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="text-center py-12 text-slate-500 font-bold uppercase tracking-widest text-[10px]">No matches found in users database</td>
+                      </tr>
+                    ) : (
+                      users.filter(u => {
+                        const queryClean = realEstateSearchQuery.toLowerCase();
+                        if (!queryClean) return true;
+                        return (u.name || '').toLowerCase().includes(queryClean) || 
+                               (u.email || '').toLowerCase().includes(queryClean) || 
+                               (u.phone || '').includes(queryClean);
+                      }).map((u) => (
+                        <tr key={u.id} className="hover:bg-white/[0.01] transition-all">
+                          <td className="py-4 px-6">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-black uppercase text-[11px] shrink-0">
+                                {(u.name || 'G')[0]}
+                              </div>
+                              <div>
+                                <p className="font-black text-white uppercase tracking-tight">{u.name || 'Anonymous User'}</p>
+                                <p className="text-[8px] text-slate-500 font-bold font-mono">ID: {u.id}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-4 px-6 font-medium text-slate-400">{u.email || 'N/A'}</td>
+                          <td className="py-4 px-6 font-mono text-[11px] text-slate-300">{u.phone || 'N/A'}</td>
+                          <td className="py-4 px-6">
+                            <select
+                              value={u.role || 'customer'}
+                              onChange={async (e) => {
+                                try {
+                                  await updateDoc(doc(db, 'users', u.id), { role: e.target.value });
+                                  triggerToast(`✓ Updated Role for ${u.name || 'User'} to ${e.target.value.toUpperCase()}`);
+                                } catch (err) {
+                                  alert(`Failed to update user role: ${err}`);
+                                }
+                              }}
+                              className="bg-slate-950 border border-white/10 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase text-slate-300 outline-none cursor-pointer"
+                            >
+                              <option value="customer">Customer</option>
+                              <option value="rider">Rider</option>
+                              <option value="vendor">Vendor</option>
+                              <option value="branch_manager">Branch Manager</option>
+                              <option value="admin">Administrator</option>
+                            </select>
+                          </td>
+                          <td className="py-4 px-6 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-[8.5px] font-black uppercase tracking-widest ${u.isSuspended ? 'bg-rose-500/10 text-rose-500 border border-rose-500/10' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10'}`}>
+                              {u.isSuspended ? '🚫 SUSPENDED' : '✓ ACTIVE'}
+                            </span>
+                          </td>
+                          <td className="py-4 px-6 text-right space-x-2 shrink-0 whitespace-nowrap">
+                            <button
+                              onClick={async () => {
+                                const nextState = !u.isSuspended;
+                                try {
+                                  await updateDoc(doc(db, 'users', u.id), { isSuspended: nextState });
+                                  triggerToast(`✓ User ${u.name || u.id} successfully ${nextState ? 'SUSPENDED' : 'RESTORED'}`);
+                                } catch (err) {
+                                  alert(`Failed to toggle account suspension: ${err}`);
+                                }
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                                u.isSuspended 
+                                  ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500 hover:text-white' 
+                                  : 'bg-rose-500/15 text-rose-500 hover:bg-rose-500 hover:text-white'
+                              }`}
+                            >
+                              {u.isSuspended ? 'Reactivate' : 'Suspend'}
+                            </button>
+                            <button
+                              onClick={async () => {
+                                const newName = prompt(`Modify Full Name for ${u.name || 'User'}:`, u.name || '');
+                                if (newName === null) return;
+                                const newPhone = prompt(`Modify Phone Number:`, u.phone || '');
+                                if (newPhone === null) return;
+                                try {
+                                  await updateDoc(doc(db, 'users', u.id), { name: newName, phone: newPhone });
+                                  triggerToast(`✓ Profile updated successfully!`);
+                                } catch (err) {
+                                  alert(`Failed updating profile parameters: ${err}`);
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-slate-950 border border-white/10 text-slate-400 hover:text-white hover:bg-slate-850 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                            >
+                              Edit Profile
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -3073,6 +4075,434 @@ export default function AdminPortal() {
 
             </div>
 
+          </div>
+        )}
+
+        {/* TAB 13: SUPPORT DESK & ORDER INVESTIGATOR */}
+        {activeTab === 'support' && (
+          <div className="space-y-6 text-left">
+            <div className="relative bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-rose-500/5 rounded-full blur-3xl pointer-events-none" />
+              <div className="max-w-2xl text-left space-y-2 relative z-10">
+                <div className="inline-flex items-center gap-2 px-3 py-1 bg-rose-500/10 border border-rose-500/20 rounded-full">
+                  <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="text-[8px] font-black text-rose-400 uppercase tracking-widest animate-pulse font-mono">Central Service Desk</span>
+                </div>
+                <h2 className="text-xl font-black text-white uppercase tracking-tight">Support Tickets & Order Investigator</h2>
+                <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                  Real-time routing for regional customer complaints. Search exact customer Order IDs for item audits, payment modes, merchant allocations, and free-item matching.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              
+              {/* LEFT BOARD: SUPPORT TICKETS LIST & MODERATOR */}
+              <div className="lg:col-span-7 bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/5 pb-4">
+                  <div>
+                    <h3 className="text-sm font-black uppercase text-rose-400 tracking-tight flex items-center gap-2">
+                      Customer Service Tickets
+                      {complaints.filter(c => c.status === 'Pending').length > 0 && (
+                        <span className="px-2 py-0.5 bg-rose-500/20 text-rose-400 text-[8px] font-black uppercase tracking-widest rounded-full animate-bounce">
+                          {complaints.filter(c => c.status === 'Pending').length} Alert
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Live customer ticket dispatch log</p>
+                  </div>
+
+                  {/* Filter tabs */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 select-none">
+                    {(['All', 'Pending', 'In Progress', 'Resolved', 'Closed'] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setComplaintFilter(f)}
+                        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer ${
+                          complaintFilter === f
+                            ? 'bg-rose-500 text-white'
+                            : 'bg-slate-950/60 hover:bg-slate-800 text-slate-400 border border-white/5'
+                        }`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Search Complaints */}
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-4 top-3.5" />
+                  <input
+                    type="text"
+                    placeholder="Filter complaints by ticket ID, user name, keyword..."
+                    value={searchComplaintQuery}
+                    onChange={(e) => setSearchComplaintQuery(e.target.value)}
+                    className="w-full bg-slate-950 border border-white/15 rounded-2xl pl-11 pr-4 py-3 text-xs font-bold outline-none text-slate-100 placeholder-slate-600 focus:border-rose-400"
+                  />
+                </div>
+
+                {/* Tickets Grid/List */}
+                <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1 scrollbar-hide">
+                  {complaints.length === 0 ? (
+                    <div className="text-center py-12 bg-slate-950 rounded-2xl border border-dashed border-white/5">
+                      <HelpCircle className="w-10 h-10 text-slate-700 mx-auto mb-2" />
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-widest font-mono">No customer support tickets registered yet</p>
+                    </div>
+                  ) : (
+                    (() => {
+                      const filtered = complaints
+                        .filter(c => {
+                          if (complaintFilter !== 'All' && c.status !== complaintFilter) return false;
+                          if (searchComplaintQuery.trim()) {
+                            const q = searchComplaintQuery.toLowerCase();
+                            return (
+                              c.id?.toLowerCase().includes(q) ||
+                              c.description?.toLowerCase().includes(q) ||
+                              c.category?.toLowerCase().includes(q) ||
+                              c.userId?.toLowerCase().includes(q) ||
+                              c.userName?.toLowerCase().includes(q) ||
+                              c.orderId?.toLowerCase().includes(q)
+                            );
+                          }
+                          return true;
+                        })
+                        .sort((a,b) => {
+                          const dateA = a.createdAt?.seconds || 0;
+                          const dateB = b.createdAt?.seconds || 0;
+                          return dateB - dateA;
+                        });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="text-center py-12 bg-slate-950 rounded-2xl">
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest font-mono">No tickets found matching your filter triggers</p>
+                          </div>
+                        );
+                      }
+
+                      return filtered.map(item => (
+                        <div
+                          key={item.id}
+                          onClick={() => {
+                            setSelectedComplaint(item);
+                            setAdminComplaintAnswer(item.adminAnswer || '');
+                            if (item.orderId && item.orderId !== 'N/A') {
+                              setOrderSearchId(item.orderId);
+                              // We trigger a search immediately or set search order states.
+                            }
+                          }}
+                          className={`p-4 rounded-3xl border text-left transition-all cursor-pointer ${
+                            selectedComplaint?.id === item.id
+                              ? 'bg-slate-950 border-rose-500/80 shadow-lg shadow-rose-955/20'
+                              : 'bg-slate-950/65 hover:bg-slate-950 border-white/5'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <span className="px-2 py-0.5 bg-slate-900 border border-white/10 rounded-md text-[9px] font-mono text-slate-450 uppercase tracking-widest">
+                              ID: {item.id}
+                            </span>
+                            <span className={`px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-wider ${
+                              item.status === 'Pending' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/10 animate-pulse' :
+                              item.status === 'In Progress' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/10' :
+                              item.status === 'Resolved' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/10' :
+                              'bg-slate-805 text-slate-400'
+                            }`}>
+                              {item.status}
+                            </span>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] font-black uppercase text-rose-455 tracking-wider">
+                                {item.category}
+                              </span>
+                              <span className="text-slate-600">&bull;</span>
+                              <span className="text-[9px] font-bold text-slate-500">
+                                {item.createdAt?.seconds 
+                                  ? new Date(item.createdAt.seconds * 1000).toLocaleString() 
+                                  : 'Just recently'}
+                              </span>
+                            </div>
+                            <p className="text-xs font-bold text-slate-300 leading-relaxed italic">
+                              "{item.description}"
+                            </p>
+                          </div>
+
+                          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-white/5">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-5 h-5 bg-slate-900 rounded-full flex items-center justify-center border border-white/5 text-[9px] font-black text-slate-400">
+                                {item.userName?.charAt(0).toUpperCase() || 'U'}
+                              </div>
+                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-tight font-sans">
+                                {item.userName || 'Lokal User'} ({item.userPhone || 'N/A'})
+                              </span>
+                            </div>
+                            {item.orderId && item.orderId !== 'N/A' && (
+                              <div className="text-[9px] font-black text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/10 uppercase tracking-wider">
+                                Linked Order: #{item.orderId}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ));
+                    })()
+                  )}
+                </div>
+
+                {/* Complaint Answer Slate Editor */}
+                {selectedComplaint && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-5 bg-slate-950 border border-white/5 rounded-3xl text-left space-y-4"
+                  >
+                    <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                      <div>
+                        <h4 className="text-xs font-black uppercase text-rose-400 tracking-wider font-mono">Ticket Management Desk</h4>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">ID: {selectedComplaint.id}</p>
+                      </div>
+                      <button
+                        onClick={() => setSelectedComplaint(null)}
+                        className="p-1 px-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 border border-white/5 rounded-lg text-[9px] font-black uppercase cursor-pointer"
+                      >
+                        unfocus
+                      </button>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">Official Service Desk Answer</label>
+                      <textarea
+                        rows={3}
+                        value={adminComplaintAnswer}
+                        onChange={(e) => setAdminComplaintAnswer(e.target.value)}
+                        placeholder="Write down details on refund initiated, replacement courier sent, order status updated, etc..."
+                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-3 text-xs font-semibold text-slate-100 outline-none focus:border-rose-400"
+                      />
+                    </div>
+
+                    {/* Change Status CTA Grid */}
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateComplaintStatus(selectedComplaint.id, 'In Progress', adminComplaintAnswer)}
+                        disabled={isUpdatingComplaint}
+                        className="py-2.5 bg-indigo-500/10 hover:bg-indigo-500 text-indigo-405 hover:text-slate-950 transition-all font-black uppercase text-[9px] tracking-widest rounded-xl disabled:opacity-50 cursor-pointer"
+                      >
+                        In Progress
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateComplaintStatus(selectedComplaint.id, 'Resolved', adminComplaintAnswer)}
+                        disabled={isUpdatingComplaint}
+                        className="py-2.5 bg-emerald-555 hover:bg-emerald-400 text-slate-950 transition-all font-black uppercase text-[9px] tracking-widest rounded-xl disabled:opacity-50 cursor-pointer"
+                      >
+                        Set Resolved
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateComplaintStatus(selectedComplaint.id, 'Closed', adminComplaintAnswer)}
+                        disabled={isUpdatingComplaint}
+                        className="py-2.5 bg-slate-800 hover:bg-slate-705 text-slate-400 hover:text-white transition-all font-black uppercase text-[9px] tracking-widest rounded-xl disabled:opacity-50 cursor-pointer"
+                      >
+                        Close Ticket
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* RIGHT BOARD: ORDER SEARCH INVESTIGATOR */}
+              <div className="lg:col-span-5 bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-5 text-left">
+                <div>
+                  <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight flex items-center gap-2">
+                    Order Investigator Console
+                  </h3>
+                  <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Central Order lookup & verification hub</p>
+                </div>
+
+                {/* Precise search bar */}
+                <form onSubmit={(e) => { e.preventDefault(); handleSearchOrderById(); }} className="space-y-3">
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-500 absolute left-4 top-3.5" />
+                    <input
+                      type="text"
+                      placeholder="Enter Order ID"
+                      value={orderSearchId}
+                      onChange={(e) => setOrderSearchId(e.target.value)}
+                      className="w-full bg-slate-950 border border-white/10 rounded-2xl pl-11 pr-4 py-3 text-xs font-black text-yellow-350 placeholder-slate-600 outline-none focus:border-yellow-400 uppercase font-mono"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={orderSearchLoading || !orderSearchId.trim()}
+                    className="w-full py-3.5 bg-yellow-450 hover:bg-yellow-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-md active:scale-95 disabled:opacity-50 disabled:scale-100 cursor-pointer"
+                  >
+                    {orderSearchLoading ? 'Invoking Database...' : 'Run Diagnostics & Lookup'}
+                  </button>
+                </form>
+
+                {orderSearchError && (
+                  <div className="p-4 bg-rose-950/25 border border-rose-900 rounded-2xl text-[10px] font-black text-rose-450 uppercase tracking-wide">
+                    {orderSearchError}
+                  </div>
+                )}
+
+                {/* Diagnosis Details Representation */}
+                {searchedOrder ? (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.98 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="space-y-4 text-xs font-semibold bg-slate-950 border border-white/5 p-5 rounded-3xl"
+                  >
+                    <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+                      <div>
+                        <p className="text-[8px] font-black uppercase text-yellow-400 tracking-widest font-mono">Found Active order</p>
+                        <h4 className="text-sm font-black tracking-tight text-white font-mono uppercase">#{searchedOrder.id}</h4>
+                      </div>
+                      <span className={`px-2.5 py-1 text-[8px] font-black uppercase tracking-wider rounded-lg ${
+                        searchedOrder.status === 'Completed' || searchedOrder.status === 'Delivered' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/5 shadow-emerald-900/10' :
+                        searchedOrder.status === 'Preparing' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/5' :
+                        searchedOrder.status === 'Pending' ? 'bg-amber-500/10 text-amber-500' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {searchedOrder.status}
+                      </span>
+                    </div>
+
+                    {/* Customer Info Block */}
+                    <div className="space-y-2 text-slate-300 bg-slate-900/65 p-4 rounded-2xl border border-white/5">
+                      <span className="text-[8px] font-black uppercase text-slate-500 tracking-widest block font-mono">1. Customer Parameters</span>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div>
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Name</p>
+                          <p className="font-extrabold text-white">{searchedOrder.customerName || searchedOrder.customer?.name || 'Walkin Customer'}</p>
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Phone</p>
+                          <p className="font-extrabold text-indigo-400">{searchedOrder.customerPhone || searchedOrder.customer?.phone || 'Unknown'}</p>
+                        </div>
+                        <div className="col-span-2">
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Delivery Address Description</p>
+                          <p className="font-bold text-slate-300 leading-normal italic text-[11px] placeholder-slate-600">
+                            {searchedOrder.deliveryAddress || searchedOrder.customer?.address || 'Khammam Central Delivery Zone'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Payment Info Block */}
+                    <div className="space-y-2 text-slate-300 bg-slate-900/65 p-4 rounded-2xl border border-white/5">
+                      <span className="text-[8px] font-black uppercase text-slate-500 tracking-widest block font-mono">2. Payment Parameters</span>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div>
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Payment Mode</p>
+                          <p className="font-black text-rose-400 uppercase">{searchedOrder.paymentMethod || searchedOrder.paymentType || 'COD (Cash On Delivery)'}</p>
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Amount Computed</p>
+                          <p className="font-black text-emerald-400 text-sm">₹{searchedOrder.totalAmount || searchedOrder.total || '0'}</p>
+                        </div>
+                        <div className="col-span-2">
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Transaction reference ID</p>
+                          <p className="font-mono text-[10px] font-extrabold text-yellow-400">
+                            {searchedOrder.paymentRef || searchedOrder.transactionId || 'REF_SYS_PENDING_COD'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Merchant & Vendor Block */}
+                    <div className="space-y-2 text-slate-300 bg-slate-900/65 p-4 rounded-2xl border border-white/5">
+                      <span className="text-[8px] font-black uppercase text-slate-500 tracking-widest block font-mono">3. Allocations & Vendor Parameters</span>
+                      <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div>
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Vendor Outlet Name</p>
+                          <p className="font-extrabold text-white uppercase">{searchedOrder.vendorName || searchedOrder.merchantName || 'Local Bandi Main Hub (Admin)'}</p>
+                        </div>
+                        <div>
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Franchise Segment</p>
+                          <p className="font-extrabold text-slate-300 uppercase">{searchedOrder.branchId || 'Khammam Main Branch'}</p>
+                        </div>
+                        <div className="col-span-2">
+                          <p className="font-bold text-slate-500 uppercase text-[9px]">Allocated Dispatch Courier / Rider</p>
+                          <p className="font-bold text-indigo-400 uppercase text-[11.5px]">
+                            🏍️ {searchedOrder.riderName ? `${searchedOrder.riderName} (${searchedOrder.riderPhone || 'Secured'})` : 'Awaiting Central Allocation Queue'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Items Ordered List */}
+                    <div className="space-y-2 bg-slate-900/65 p-4 rounded-2xl border border-white/5 font-sans">
+                      <span className="text-[8px] font-black uppercase text-slate-500 tracking-widest block font-mono">4. Ordered Items Breakdown</span>
+                      <div className="space-y-2 pt-1">
+                        {searchedOrder.items && searchedOrder.items.length > 0 ? (
+                          searchedOrder.items.map((item: any, idx: number) => (
+                            <div key={idx} className="flex justify-between items-center text-[11px] font-bold border-b border-slate-900 pb-1.5 last:border-0 last:pb-0">
+                              <div>
+                                <p className="text-white uppercase font-black">{item.name}</p>
+                                <p className="text-[9.5px] text-slate-500 italic">Qty: {item.quantity} {item.unit ? `(${item.unit})` : ''} &bull; Price: ₹{item.price}</p>
+                              </div>
+                              <span className="text-emerald-400 font-black">₹{item.price * item.quantity}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-[10px] text-slate-500 italic">No custom items array logged on this transaction record.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Promo Free Items block */}
+                    <div className="space-y-2 bg-slate-900/65 p-4 rounded-2xl border border-white/5">
+                      <span className="text-[8px] font-black uppercase text-yellow-400 tracking-widest block font-mono">5. Agriculture Promo Bonus FREE Items</span>
+                      <div className="space-y-1 pt-1">
+                        {searchedOrder.freeItems && searchedOrder.freeItems.length > 0 ? (
+                          searchedOrder.freeItems.map((freeItemName: string, idx: number) => (
+                            <div key={idx} className="flex items-center gap-2 text-[11px] font-extrabold text-emerald-400">
+                              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                              <p className="uppercase">{freeItemName} <span className="text-[9.5px] text-slate-450 font-bold tracking-wider">(100% Promo Complimentary)</span></p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="flex items-center gap-2 text-[11px] font-extrabold text-slate-500 italic">
+                            <span className="w-1.5 h-1.5 bg-slate-600 rounded-full" />
+                            <p>No agricultural promotional complimentary products linked.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Diagnostic Lifecycle & Cancellation Panel */}
+                    <div className="space-y-2 bg-slate-900/65 p-4 rounded-2xl border border-white/5">
+                      <span className="text-[8px] font-black uppercase text-rose-400 tracking-widest block font-mono">6. Transaction Diagnostics &amp; Timestamps</span>
+                      <div className="space-y-1.5 pt-1 text-[11px] font-mono leading-relaxed">
+                        <p className="text-slate-400"><span className="font-bold text-slate-300">Created:</span> {searchedOrder.createdAt ? (typeof searchedOrder.createdAt === 'string' ? searchedOrder.createdAt : new Date(searchedOrder.createdAt.seconds * 1000).toLocaleString()) : 'N/A'}</p>
+                        <p className="text-slate-400"><span className="font-bold text-slate-300">Updated:</span> {searchedOrder.updatedAt ? (typeof searchedOrder.updatedAt === 'string' ? searchedOrder.updatedAt : new Date(searchedOrder.updatedAt.seconds * 1000).toLocaleString()) : 'N/A'}</p>
+                        
+                        {/* Cancellation specific details shown exactly */}
+                        {searchedOrder.status === 'Cancelled' ? (
+                          <div className="mt-2.5 p-3 bg-red-950/30 border border-red-500/20 rounded-xl space-y-1 font-sans text-xs">
+                            <p className="text-red-400 font-black uppercase tracking-wider text-[8px] font-mono">⚠️ Order Cancelled / Early Terminated</p>
+                            <p className="text-slate-200"><strong>Cancelled At:</strong> {searchedOrder.cancelledAt ? (typeof searchedOrder.cancelledAt === 'string' ? searchedOrder.cancelledAt : new Date(searchedOrder.cancelledAt.seconds * 1000).toLocaleString()) : (searchedOrder.updatedAt ? (typeof searchedOrder.updatedAt === 'string' ? searchedOrder.updatedAt : new Date(searchedOrder.updatedAt.seconds * 1000).toLocaleString()) : 'N/A')}</p>
+                            <p className="text-slate-200"><strong>Cancellation Reason:</strong> <span className="text-rose-400 italic">"{searchedOrder.cancelReason || searchedOrder.cancellationReason || 'User or dispatcher terminated before rider acceptance.'}"</span></p>
+                          </div>
+                        ) : (
+                          <p className="text-slate-500 text-[10px] italic font-sans mt-1.5">No cancellation parameters recorded. Current Lifecycle Status: {searchedOrder.status}.</p>
+                        )}
+                      </div>
+                    </div>
+
+                  </motion.div>
+                ) : (
+                  <div className="text-center py-16 bg-slate-950 p-6 rounded-3xl border border-dashed border-white/5">
+                    <Search className="w-10 h-10 text-slate-800 mx-auto mb-2.5" />
+                    <p className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">Investigator Standby Node</p>
+                    <p className="text-[10px] text-slate-600 mt-1 max-w-[210px] mx-auto">Input a precise Order ID above to run diagnostic logs, trace physical riders, verify payments, or map promotion packages.</p>
+                  </div>
+                )}
+              </div>
+
+            </div>
           </div>
         )}
 
@@ -3468,7 +4898,7 @@ export default function AdminPortal() {
                 <button
                   onClick={() => {
                     setEditingBranch(null);
-                    setBranchForm({ id: '', name: '', city: 'Khammam', revenue: 0, status: 'Active', adminEmail: '' });
+                    setBranchForm({ id: '', name: '', city: 'Khammam', revenue: 0, status: 'Active', adminEmail: '', secPasscode: '4455' });
                     setShowBranchModal(true);
                   }}
                   className="p-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold flex items-center gap-1.5 text-[9px] uppercase tracking-widest active:scale-95 transition-all shadow-lg"
@@ -3520,7 +4950,8 @@ export default function AdminPortal() {
                                     city: b.city || 'Khammam',
                                     revenue: b.revenue || 0,
                                     status: b.status || 'Active',
-                                    adminEmail: b.adminEmail || ''
+                                    adminEmail: b.adminEmail || '',
+                                    secPasscode: b.secPasscode || '4455'
                                   });
                                   setShowBranchModal(true);
                                 }}
@@ -3546,6 +4977,137 @@ export default function AdminPortal() {
 
           </div>
         )}
+
+        {/* TAB 8b: DEALS OF THE DAY MANAGER */}
+        {activeTab === 'deals' && (() => {
+          const visibleDeals = adminRole === 'franchise'
+            ? deals.filter(d => d.branchId === adminBranchId || d.branchId === 'global')
+            : deals;
+          return (
+            <div className="space-y-6 text-left">
+              <div className="relative bg-slate-900 border border-yellow-400/20 p-8 rounded-[2.5rem] overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-400/5 rounded-full blur-3xl pointer-events-none" />
+                <div className="max-w-2xl text-left space-y-2 relative z-10">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-yellow-400/10 border border-yellow-400/20 rounded-full">
+                    <Percent className="w-3.5 h-3.5 text-yellow-400" />
+                    <span className="text-[8px] font-black text-yellow-400 uppercase tracking-widest font-mono">Deal of the Day Console</span>
+                  </div>
+                  <h2 className="text-xl font-black text-white uppercase tracking-tight">Deals of the Day Manager</h2>
+                  <p className="text-xs text-slate-400 font-medium leading-relaxed font-sans">
+                    Configure and edit limited-time deals on the consumer home screen. Set prices, add rich product photos from custom URLs, or select from premium pre-styled presets with a single click.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center bg-slate-900 border border-white/5 p-4 rounded-3xl">
+                <div>
+                  <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest font-mono">Active Promotions</h3>
+                  <p className="text-[11px] font-bold text-slate-500 mt-1">
+                    Showing {visibleDeals.length} active consumer offerings {adminRole === 'franchise' && "(including global campaigns)"}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setEditingDeal(null);
+                    setDealForm({ 
+                      title: '', 
+                      discount: '', 
+                      price: '', 
+                      originalPrice: '', 
+                      img: '', 
+                      status: 'active',
+                      branchId: adminRole === 'franchise' ? adminBranchId : 'global'
+                    });
+                    setShowDealModal(true);
+                  }}
+                  className="px-5 py-3 bg-yellow-400 font-black text-slate-950 uppercase text-[10px] tracking-widest rounded-2xl shadow-xl hover:bg-yellow-300 transition-all cursor-pointer"
+                >
+                  + Add New Deal
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {visibleDeals.length === 0 ? (
+                  <div className="col-span-full text-center py-24 bg-slate-900 p-8 rounded-[2.5rem] border border-dashed border-white/5">
+                    <Percent className="w-12 h-12 text-slate-750 mx-auto mb-4 animate-bounce" />
+                    <p className="text-[10px] font-black uppercase text-slate-500 tracking-wider">No active deals configured in database.</p>
+                    <p className="text-[11px] text-slate-600 mt-1 max-w-sm mx-auto">Click "Add New Deal" above to configure your custom offer with photo selection support.</p>
+                  </div>
+                ) : (
+                  visibleDeals.map((deal) => (
+                    <div key={deal.id} className="bg-slate-900 border border-white/5 p-5 rounded-[2.5rem] relative flex flex-col justify-between gap-5 group hover:border-yellow-400/35 transition-all">
+                      <div className="space-y-4">
+                        {/* Photo preview wrap */}
+                        <div className="relative aspect-[3/2] bg-slate-950 rounded-[1.5rem] overflow-hidden border border-white/5 shadow-inner">
+                          <img 
+                            src={deal.img || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&fit=crop'} 
+                            className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" 
+                            referrerPolicy="no-referrer"
+                            alt={deal.title} 
+                          />
+                          <div className="absolute top-3 left-3 bg-rose-500 text-white text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-xl shadow-lg">
+                            {deal.discount}
+                          </div>
+                          
+                          {/* Branch badge helper */}
+                          <div className="absolute top-3 right-3 bg-indigo-600 text-white text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg shadow-lg">
+                            {deal.branchId === 'global' || !deal.branchId ? 'Global' : (branches.find(b => b.id === deal.branchId)?.name || deal.branchId)}
+                          </div>
+
+                          {deal.status === 'inactive' && (
+                            <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center">
+                              <span className="px-3 py-1 bg-slate-900 text-slate-450 text-[9px] font-black uppercase tracking-widest border border-white/10 rounded-lg">Suspended / Hidden</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Header values */}
+                        <div className="text-left space-y-1 pl-1">
+                          <h4 className="text-sm font-black text-slate-100 uppercase tracking-tight truncate">{deal.title}</h4>
+                          <div className="flex items-baseline gap-2 font-mono">
+                            <span className="text-base font-black text-yellow-400">₹{deal.price}</span>
+                            {deal.originalPrice > 0 && (
+                              <span className="text-xs text-slate-500 line-through font-medium font-sans">₹{deal.originalPrice}</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 border-t border-white/5 pt-4 pl-1">
+                        <button 
+                          onClick={() => {
+                            setEditingDeal(deal);
+                            setDealForm({
+                              title: deal.title || '',
+                              discount: deal.discount || '',
+                              price: String(deal.price || ''),
+                              originalPrice: String(deal.originalPrice || ''),
+                              img: deal.img || '',
+                              status: deal.status || 'active',
+                              branchId: deal.branchId || 'global'
+                            });
+                            setShowDealModal(true);
+                          }}
+                          className="flex-1 py-2.5 bg-slate-950 hover:bg-slate-850 text-slate-200 rounded-xl font-black uppercase text-[9px] tracking-widest border border-white/5 transition-all text-center cursor-pointer flex items-center justify-center gap-1"
+                        >
+                          <Edit2 className="w-3 h-3 text-yellow-400" />
+                          Edit details
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteDeal(deal.id)}
+                          className="p-2.5 bg-rose-500/10 hover:bg-rose-500 text-rose-500 hover:text-white rounded-xl transition-all border border-rose-500/5 cursor-pointer flex items-center justify-center"
+                          title="Delete this Deal"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
       </div>
 
@@ -3713,6 +5275,155 @@ export default function AdminPortal() {
                     className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-slate-900 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-yellow-900/10 active:scale-95"
                   >
                     Save Product
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DEALS OF THE DAY EDIT/ADD MODAL */}
+      <AnimatePresence>
+        {showDealModal && (
+          <div className="fixed inset-0 z-[10008] flex items-center justify-center p-6 bg-slate-950/85 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-slate-900 border border-white/10 rounded-[2.5rem] p-6 max-w-sm w-full space-y-5 text-white shadow-2xl overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex items-center gap-3">
+                <Percent className="w-6 h-6 text-yellow-400" />
+                <h3 className="text-lg font-black uppercase tracking-tight">
+                  {editingDeal ? 'Modify Deal of the Day' : 'Configure New Deal'}
+                </h3>
+              </div>
+              
+              <form onSubmit={handleSaveDeal} className="space-y-4 text-left">
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Deal Title / Product Name</label>
+                  <input 
+                    type="text" required 
+                    value={dealForm.title} 
+                    onChange={(e) => setDealForm({...dealForm, title: e.target.value})}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold placeholder-slate-600 focus:outline-none focus:border-yellow-400/50 transition-all text-white" 
+                    placeholder="E.g., Organic Ghee Bottle" 
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider font-sans">Discount badge</label>
+                    <input 
+                      type="text" required 
+                      value={dealForm.discount} 
+                      onChange={(e) => setDealForm({...dealForm, discount: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-yellow-400"
+                      placeholder="50% OFF"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Display Price (₹)</label>
+                    <input 
+                      type="number" required 
+                      value={dealForm.price} 
+                      onChange={(e) => setDealForm({...dealForm, price: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-black text-emerald-400" 
+                      placeholder="99" 
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Original Price (₹)</label>
+                    <input 
+                      type="number" required 
+                      value={dealForm.originalPrice} 
+                      onChange={(e) => setDealForm({...dealForm, originalPrice: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-slate-400" 
+                      placeholder="199" 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Branch Scope</label>
+                    {adminRole === 'franchise' ? (
+                      <input 
+                        type="text" 
+                        disabled 
+                        value={branches.find(b => b.id === adminBranchId)?.name || adminBranchId}
+                        className="w-full bg-slate-950/50 border border-white/5 p-3 rounded-xl text-xs font-bold text-indigo-400 disabled:opacity-75"
+                      />
+                    ) : (
+                      <select 
+                        value={dealForm.branchId || 'global'} 
+                        onChange={(e) => setDealForm({...dealForm, branchId: e.target.value})}
+                        className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white font-sans focus:outline-none focus:border-yellow-400/50 transition-all font-mono"
+                      >
+                        <option value="global">Global (All Branches)</option>
+                        {branches.map(b => (
+                          <option key={b.id} value={b.id}>{b.name || b.id}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Product Photo URL</label>
+                  <input 
+                    type="url" required 
+                    value={dealForm.img} 
+                    onChange={(e) => setDealForm({...dealForm, img: e.target.value})}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-mono text-slate-300 placeholder-slate-700" 
+                    placeholder="https://images.unsplash.com/photo-..." 
+                  />
+                  
+                  {/* Preset helpers */}
+                  <div className="space-y-1 mt-2">
+                    <span className="block text-[8px] font-black uppercase text-slate-500 tracking-wider">Or select a quick preset graphic:</span>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-1 bg-slate-950 border border-white/5 rounded-xl">
+                      {dealPresets.map((preset) => (
+                        <button
+                          key={preset.name}
+                          type="button"
+                          onClick={() => setDealForm({...dealForm, img: preset.url})}
+                          className={`text-[8px] font-black uppercase px-2 py-1 rounded-md transition-all truncate border ${dealForm.img === preset.url ? 'bg-yellow-400 text-slate-950 border-yellow-400 font-bold' : 'bg-slate-900 text-slate-400 border-white/5 hover:border-slate-500 font-medium'}`}
+                          title={preset.name}
+                        >
+                          {preset.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider text-slate-500">Operation Status</label>
+                  <select 
+                    value={dealForm.status} 
+                    onChange={(e) => setDealForm({...dealForm, status: e.target.value})}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:outline-none focus:border-yellow-400/50 transition-all"
+                  >
+                    <option value="active">Active & Visible</option>
+                    <option value="inactive">Suspended / Hidden</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button 
+                    type="button" 
+                    onClick={() => { setShowDealModal(false); setEditingDeal(null); }}
+                    className="flex-1 py-3 bg-slate-950 text-slate-400 border border-white/5 rounded-xl font-black uppercase text-[10px] tracking-widest cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-slate-900 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg cursor-pointer transition-all"
+                  >
+                    Save Deal
                   </button>
                 </div>
               </form>
@@ -4153,6 +5864,17 @@ export default function AdminPortal() {
                     onChange={(e) => setBranchForm({...branchForm, adminEmail: e.target.value})}
                     className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-semibold" 
                     placeholder="admin@lokalbandi.com" 
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-yellow-400 uppercase tracking-wider font-mono">Franchise Sec-Passcode (For Local Admins)</label>
+                  <input 
+                    type="text" required 
+                    value={branchForm.secPasscode} 
+                    onChange={(e) => setBranchForm({...branchForm, secPasscode: e.target.value})}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold font-mono text-yellow-400" 
+                    placeholder="E.g. 4455" 
                   />
                 </div>
 

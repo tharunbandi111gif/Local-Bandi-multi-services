@@ -98,6 +98,8 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
     return () => unsubscribe();
   }, [userId]);
 
+  const [branches, setBranches] = useState<any[]>([]);
+
   useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -116,7 +118,17 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
         console.error("Settings fetch error:", err);
       }
     };
+    const fetchBranches = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'branches'));
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setBranches(list);
+      } catch (err) {
+        console.error("Error fetching branches for onboarding:", err);
+      }
+    };
     fetchSettings();
+    fetchBranches();
   }, []);
   
   const [firstProduct, setFirstProduct] = useState({
@@ -137,7 +149,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
   }, [userId]);
 
   useEffect(() => {
-    let timeout: NodeJS.Timeout;
+    let timeout: any;
     if (step === 2) {
       // Small delay to ensure the DOM element is rendered
       timeout = setTimeout(() => {
@@ -227,6 +239,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
     pincode: '',
     stateName: '',
     districtName: '',
+    branchId: '',
   });
 
   const handleSubmit = async () => {
@@ -278,6 +291,21 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
           createdAt: serverTimestamp()
         });
 
+        // Dispatch real SMS via backend MSG91 API gateway
+        try {
+          fetch('/api/send-otp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phoneNumber: formData.phone, code: secureCode })
+          }).then(res => res.json()).then(data => {
+            console.log("Direct SMS Onboarding OTP dispatched successfully:", data);
+          }).catch(smsErr => {
+            console.warn("Non-blocking SMS API error in Onboarding:", smsErr);
+          });
+        } catch (smsCatch) {
+          console.warn("SMS Onboarding try-catch error:", smsCatch);
+        }
+
         // Set a mock conformation result just to satisfy conditions or let verify pass
         setConfirmationResult({ confirm: async () => ({ user: null }) } as any);
         setStep(5);
@@ -321,6 +349,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
         fullName: formData.fullName,
         phone: formData.phone,
         status: 'Pending',
+        branchId: formData.branchId || '',
         createdAt: serverTimestamp(),
       };
 
@@ -709,6 +738,21 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                               onChange={(e) => setFormData({...formData, location: e.target.value})}
                               className="w-full bg-gray-50 dark:bg-slate-800 border-none rounded-2xl py-5 pl-14 pr-6 text-base font-extrabold text-slate-900 focus:ring-2 focus:ring-yellow-400 dark:text-white outline-none transition-colors shadow-sm placeholder:font-black placeholder:text-gray-300"
                             />
+                          </div>
+
+                          <div className="relative">
+                            <Building2 className="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+                            <select
+                              required
+                              value={formData.branchId}
+                              onChange={(e) => setFormData({...formData, branchId: e.target.value})}
+                              className="w-full bg-gray-50 dark:bg-slate-800 border-none rounded-2xl py-5 pl-14 pr-6 text-base font-extrabold text-slate-900 focus:ring-2 focus:ring-yellow-400 dark:text-white outline-none appearance-none transition-colors shadow-sm"
+                            >
+                              <option value="" disabled>Select Franchise / Branch Area *</option>
+                              {branches.map((b: any) => (
+                                <option key={b.id} value={b.id}>{b.name} ({b.city})</option>
+                              ))}
+                            </select>
                           </div>
                         </>
                       )}

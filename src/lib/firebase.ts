@@ -11,9 +11,9 @@ import firebaseConfig from '../../firebase-applet-config.json';
 // Initialize app only once
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore with long-polling auto-detection for better connectivity
+// Initialize Firestore with forced long-polling for robust connectivity in iframes
 export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
+  experimentalForceLongPolling: true,
 }, firebaseConfig.firestoreDatabaseId);
 
 export const auth = getAuth(app);

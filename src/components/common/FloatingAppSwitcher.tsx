@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, Truck, Bike, ShieldAlert, Layers, ChevronUp, X, ExternalLink } from 'lucide-react';
+import { Users, Truck, Bike, ShieldAlert, Layers, ChevronUp, X, ExternalLink, Building2 } from 'lucide-react';
 
 interface AppInfo {
-  id: 'customer' | 'partner' | 'admin';
+  id: 'customer' | 'partner' | 'admin' | 'franchise';
   name: string;
   description: string;
   url: string;
@@ -11,7 +11,7 @@ interface AppInfo {
   color: string;
 }
 
-export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'customer' | 'partner' | 'admin' }) {
+export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'customer' | 'partner' | 'admin' | 'franchise' }) {
   const [isOpen, setIsOpen] = useState(false);
 
   const apps: AppInfo[] = [
@@ -32,9 +32,17 @@ export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'custo
       color: 'bg-emerald-500 text-emerald-400 border-emerald-500/20 hover:border-emerald-500/40 text-emerald-400 shadow-emerald-500/5',
     },
     {
+      id: 'franchise',
+      name: 'Franchise App',
+      description: 'Authorized local branch workspace to edit categories and manage regional team members.',
+      url: '/franchise',
+      icon: <Building2 className="w-5 h-5" />,
+      color: 'bg-indigo-500 text-indigo-400 border-indigo-500/20 hover:border-indigo-500/40 text-indigo-400 shadow-indigo-500/5',
+    },
+    {
       id: 'admin',
-      name: 'Admin Console',
-      description: 'Master platform parameters, merchant/rider credentials, approvals, and logs control.',
+      name: 'Master Admin Console',
+      description: 'Master platform parameters, global edit/delete controls, and supreme founder panel.',
       url: '/admin',
       icon: <ShieldAlert className="w-5 h-5" />,
       color: 'bg-red-500 text-red-500 border-red-500/20 hover:border-red-500/40 text-red-500 shadow-red-500/5',

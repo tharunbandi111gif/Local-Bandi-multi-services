@@ -47,11 +47,15 @@ import {
   VolumeX,
   Database,
   WifiOff,
-  Wifi
+  Wifi,
+  Sun,
+  Share2,
+  Info,
+  Loader2
 } from 'lucide-react';
 import { APIProvider, Map, AdvancedMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import LiveMap, { tileCache } from './LiveMap';
-import { AreaChart, Area, XAxis, YAxis, Tooltip as ChartTooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, Tooltip as ChartTooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
@@ -96,12 +100,48 @@ const API_KEY = process.env.GOOGLE_MAPS_PLATFORM_KEY || '';
 const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
 const DEFAULT_COORDS = { lat: 17.2473, lng: 80.1514 };
 
+// Proactive Geo-coordinate integrity validator
+const validateGeoIPCoords = (coords: any): { isValid: boolean; warnings: string[] } => {
+  const warnings: string[] = [];
+  const lat = Number(coords?.lat);
+  const lng = Number(coords?.lng);
+  
+  if (isNaN(lat) || isNaN(lng)) {
+    warnings.push("Physical coordinate parsing failed (NaN coordinates detected)!");
+    return { isValid: false, warnings };
+  }
+
+  if (lat < -90 || lat > 90) {
+    warnings.push("Latitude coordinates reside layout-wise out of legal bounds [-90, +90]!");
+  }
+  if (lng < -180 || lng > 180) {
+    warnings.push("Longitude coordinates reside layout-wise out of legal bounds [-180, +180]!");
+  }
+  
+  // Null Island check
+  if (Math.abs(lat) < 0.001 && Math.abs(lng) < 0.001) {
+    warnings.push("Null Island error (0,0) - likely simulated or uninitialized geocode fallback!");
+  }
+
+  // Focus sector active region constraint check: Telangana (India) around Khammam / Guntur / Suryapet
+  const isKhammamZone = lat >= 15.0 && lat <= 19.5 && lng >= 77.0 && lng <= 82.5;
+  if (!isKhammamZone) {
+    warnings.push("Coordinates reside outside active region coverage boundaries.");
+  }
+
+  const isValid = warnings.length === 0 || !warnings.some(w => w.includes("bounds") || w.includes("failed"));
+  return { isValid, warnings };
+};
+
 const getSafeCoords = (loc: any, fallback = DEFAULT_COORDS): google.maps.LatLngLiteral => {
   if (loc && loc.lat !== undefined && loc.lng !== undefined) {
     const lat = Number(loc.lat);
     const lng = Number(loc.lng);
     if (!isNaN(lat) && !isNaN(lng)) {
-      return { lat, lng };
+      // Proactively enforce general constraints
+      if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+        return { lat, lng };
+      }
     }
   }
   return fallback;
@@ -117,6 +157,36 @@ function RouteMap({ origin, destination, onUpdateETA }: RouteMapProps) {
   const map = useMap();
   const routesLib = useMapsLibrary('routes');
   const polylinesRef = useRef<google.maps.Polyline[]>([]);
+  const [trafficEnabled, setTrafficEnabled] = useState(true);
+  const trafficLayerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!map) return;
+    
+    // Instantiates a live traffic layer layer using google maps global
+    try {
+      if (trafficEnabled) {
+        if (!trafficLayerRef.current) {
+          trafficLayerRef.current = new google.maps.TrafficLayer();
+        }
+        trafficLayerRef.current.setMap(map);
+      } else {
+        if (trafficLayerRef.current) {
+          trafficLayerRef.current.setMap(null);
+        }
+      }
+    } catch (e) {
+      console.warn("Traffic layer map injection warning:", e);
+    }
+
+    return () => {
+      try {
+        if (trafficLayerRef.current) {
+          trafficLayerRef.current.setMap(null);
+        }
+      } catch (_) {}
+    };
+  }, [map, trafficEnabled]);
 
   useEffect(() => {
     if (!routesLib || !map || !origin || !destination) return;
@@ -158,6 +228,21 @@ function RouteMap({ origin, destination, onUpdateETA }: RouteMapProps) {
       <AdvancedMarker position={destination}>
         <Pin background="#E11D48" glyphColor="#fff" />
       </AdvancedMarker>
+
+      {/* Floating Traffic Control Indicator Overlay */}
+      <div className="absolute top-4 left-4 z-[9999] bg-slate-950/90 backdrop-blur-md border border-white/10 rounded-xl px-2.5 py-1.5 flex items-center gap-2 shadow-xl">
+        <span className={`w-2 h-2 rounded-full ${trafficEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`} />
+        <button 
+          onClick={(e) => {
+            e.stopPropagation();
+            setTrafficEnabled(!trafficEnabled);
+          }}
+          className="text-[9px] font-black uppercase tracking-widest text-[#F59E0B] hover:text-white font-mono cursor-pointer transition-colors outline-none"
+          title="Toggle Google Maps Live Traffic Overlay Congestion Layer"
+        >
+          Traffic: {trafficEnabled ? 'Syncing...' : 'Disabled'}
+        </button>
+      </div>
     </>
   );
 }
@@ -239,6 +324,12 @@ export default function DeliveryPartnerApp() {
   const { user, login, logout } = useFirebase();
   const [appScreen, setAppScreen] = useState<'splash' | 'auth' | 'signup' | 'pin_lock' | 'dashboard'>('splash');
   const [loading, setLoading] = useState(true);
+  const [isGoogleLoggingIn, setIsGoogleLoggingIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // Battery and power states
+  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
+  const [isCharging, setIsCharging] = useState(false);
 
   // Profile states
   const [riderProfile, setRiderProfile] = useState<any | null>(null);
@@ -263,11 +354,90 @@ export default function DeliveryPartnerApp() {
   // Tabs navigation
   const [activeTab, setActiveTab] = useState<'jobs' | 'earnings' | 'profile' | 'support'>('jobs');
 
+  // Auto-Offline and Active Delivery States
+  const [autoOfflineMinutes, setAutoOfflineMinutes] = useState<number>(30);
+  const [lastMovementTime, setLastMovementTime] = useState<number>(Date.now());
+  const [showAutoOfflinePrompt, setShowAutoOfflinePrompt] = useState<boolean>(false);
+  const [goOfflineAfterCurrentOrder, setGoOfflineAfterCurrentOrder] = useState<boolean>(false);
+
   // Core records lists
   const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
   const [activeOrder, setActiveOrder] = useState<DeliveryOrder | null>(null);
   const [completedOrders, setCompletedOrders] = useState<DeliveryOrder[]>([]);
   const [showPrintReport, setShowPrintReport] = useState(false);
+  const [showLegalTerms, setShowLegalTerms] = useState(false);
+
+  // States to track new assignments alert, pulse and sound notifications
+  const [orderArrivalTimes, setOrderArrivalTimes] = useState<Record<string, number>>({});
+  const isFirstLoad = useRef(true);
+
+  const playNotificationSound = () => {
+    if (typeof window === 'undefined') return;
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    try {
+      const ctx = new AudioContextClass();
+      
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(523.25, ctx.currentTime); // C5 principal note
+      gain1.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      
+      osc1.start();
+      osc1.stop(ctx.currentTime + 0.15);
+      
+      setTimeout(() => {
+        try {
+          const osc2 = ctx.createOscillator();
+          const gain2 = ctx.createGain();
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(659.25, ctx.currentTime); // E5 harmonious response note
+          gain2.gain.setValueAtTime(0.12, ctx.currentTime);
+          gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+          
+          osc2.connect(gain2);
+          gain2.connect(ctx.destination);
+          
+          osc2.start();
+          osc2.stop(ctx.currentTime + 0.2);
+        } catch (e) {
+          console.warn("Chime response beep failed:", e);
+        }
+      }, 120);
+    } catch (err) {
+      console.warn("Sound play AudioContext failed:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (availableOrders.length === 0) return;
+    let updated = false;
+    const now = Date.now();
+    const newArrivals = { ...orderArrivalTimes };
+
+    availableOrders.forEach(o => {
+      if (!newArrivals[o.id]) {
+        newArrivals[o.id] = now;
+        updated = true;
+      }
+    });
+
+    if (updated) {
+      setOrderArrivalTimes(newArrivals);
+      if (!isFirstLoad.current) {
+        playNotificationSound();
+      }
+    }
+
+    if (isFirstLoad.current) {
+      isFirstLoad.current = false;
+    }
+  }, [availableOrders]);
 
   const [eta, setEta] = useState<string>('estimating...');
   const [isOnlineNetwork, setIsOnlineNetwork] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -275,6 +445,9 @@ export default function DeliveryPartnerApp() {
   // Date range filtering and sorting options for Earnings tab
   const [earningsDaysFilter, setEarningsDaysFilter] = useState<string>('30');
   const [earningsSortOption, setEarningsSortOption] = useState<string>('date_desc');
+  const [earningsStartDate, setEarningsStartDate] = useState<string>('');
+  const [earningsEndDate, setEarningsEndDate] = useState<string>('');
+  const [tipTrendInterval, setTipTrendInterval] = useState<'daily' | 'weekly'>('daily');
 
   // Generate memoized 60 days historical settlement payout timeline
   const rawPayoutHistory = React.useMemo(() => {
@@ -300,6 +473,8 @@ export default function DeliveryPartnerApp() {
         date: d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
         Settled: Number(settled.toFixed(0)),
         Pending: Number(pending.toFixed(0)),
+        Tips: Number((tips + pendingTips).toFixed(0)),
+        BaseFee: Number((baseFee + pendingBase).toFixed(0)),
         trips: isWeekend ? 8 : 5,
         status: i === 0 ? 'Processing' : 'Settled'
       });
@@ -322,14 +497,43 @@ export default function DeliveryPartnerApp() {
       result = result.filter(item => item.dateObj.getMonth() === 5 && item.dateObj.getFullYear() === 2026);
     } else if (earningsDaysFilter === 'previous_month') {
       result = result.filter(item => item.dateObj.getMonth() === 4 && item.dateObj.getFullYear() === 2026);
+    } else if (earningsDaysFilter === 'custom') {
+      if (earningsStartDate) {
+        const start = new Date(earningsStartDate);
+        start.setHours(0, 0, 0, 0);
+        result = result.filter(item => item.dateObj.getTime() >= start.getTime());
+      }
+      if (earningsEndDate) {
+        const end = new Date(earningsEndDate);
+        end.setHours(23, 59, 59, 999);
+        result = result.filter(item => item.dateObj.getTime() <= end.getTime());
+      }
     }
     
     return result;
-  }, [rawPayoutHistory, earningsDaysFilter]);
+  }, [rawPayoutHistory, earningsDaysFilter, earningsStartDate, earningsEndDate]);
 
   const chartDataToShow = React.useMemo(() => {
     return [...filteredPayoutData].sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
   }, [filteredPayoutData]);
+
+  const weeklyTipsData = React.useMemo(() => {
+    const chunks = [];
+    const copy = [...chartDataToShow];
+    for (let i = 0; i < copy.length; i += 7) {
+      const chunk = copy.slice(i, i + 7);
+      if (chunk.length === 0) continue;
+      const totalTips = chunk.reduce((sum, item) => sum + (item.Tips || 0), 0);
+      const startDateStr = chunk[0].date;
+      const endDateStr = chunk[chunk.length - 1].date;
+      chunks.push({
+        date: `${startDateStr} - ${endDateStr}`,
+        Tips: totalTips,
+        trips: chunk.reduce((sum, item) => sum + (item.trips || 0), 0),
+      });
+    }
+    return chunks;
+  }, [chartDataToShow]);
 
   const sortedBreakdownData = React.useMemo(() => {
     const list = [...filteredPayoutData];
@@ -396,11 +600,101 @@ export default function DeliveryPartnerApp() {
   const [isSyncingOfflineQueue, setIsSyncingOfflineQueue] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
 
+  const [showSyncStatusModal, setShowSyncStatusModal] = useState(false);
+  const [syncQueueItems, setSyncQueueItems] = useState<any[]>([]);
+
+  // Load initial IndexedDB Offline sync count
+  const loadSyncQueueItems = async () => {
+    const items = await fetchQueuedDeliveryJobs();
+    setSyncQueueItems(items);
+    setOfflineSyncQueueCount(items.length);
+  };
+
+  const handleRetrySingleJob = async (job: any) => {
+    try {
+      console.log(`[Offline Synchronizer] Manually retrying job:`, job);
+      const jobType = job.type || 'DELIVERY_COMPLETED';
+
+      if (jobType === 'DELIVERY_COMPLETED') {
+        const orderRef = doc(db, 'orders', job.orderId);
+        await updateDoc(orderRef, {
+          ...job.orderUpdate,
+          updatedAt: serverTimestamp()
+        });
+
+        if (riderProfile) {
+          const riderRef = doc(db, 'deliveryPartners', riderProfile.id);
+          const riderDoc = await getDoc(riderRef);
+          if (riderDoc.exists()) {
+            const currentRiderData = riderDoc.data();
+            const tripPayout = job.payoutBreakdown?.tripPayout || 45;
+            const tipPayout = job.payoutBreakdown?.tipPayout || 0;
+            const totalPayout = tripPayout + tipPayout;
+
+            const syncedEarnings = (currentRiderData.earnings || 0) + totalPayout;
+            const syncedTips = (currentRiderData.tips || 0) + tipPayout;
+            const syncedDeliveryFees = (currentRiderData.deliveryFees || 0) + tripPayout;
+            const syncedTrips = (currentRiderData.trips || 0) + 1;
+            const syncedCash = job.orderUpdate?.paymentStatus && job.orderUpdate.paymentStatus.includes('COD') 
+              ? (currentRiderData.cashInHand || 0) + job.orderAmount 
+              : (currentRiderData.cashInHand || 0);
+
+            await updateDoc(riderRef, {
+              earnings: syncedEarnings,
+              tips: syncedTips,
+              deliveryFees: syncedDeliveryFees,
+              trips: syncedTrips,
+              cashInHand: syncedCash,
+              updatedAt: serverTimestamp()
+            });
+
+            setRiderProfile((prev: any) => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                earnings: syncedEarnings,
+                tips: syncedTips,
+                deliveryFees: syncedDeliveryFees,
+                trips: syncedTrips,
+                cashInHand: syncedCash
+              };
+            });
+          }
+        }
+      } else if (jobType === 'STATUS_UPDATE') {
+        const orderRef = doc(db, 'orders', job.orderId);
+        await updateDoc(orderRef, {
+          ...job.orderUpdate,
+          updatedAt: serverTimestamp()
+        });
+      } else if (jobType === 'CUSTOM_STATUS') {
+        const riderRef = doc(db, 'deliveryPartners', job.partnerId);
+        await updateDoc(riderRef, {
+          customStatus: job.statusValue,
+          updatedAt: serverTimestamp()
+        });
+      }
+
+      await deleteQueuedDeliveryJob(job.id);
+      await loadSyncQueueItems();
+      alert("✅ Job synchronized and updated successfully!");
+    } catch (err: any) {
+      console.error("Single Job Retry Failure:", err);
+      alert(`❌ Sync Failed: ${err.message || err.toString()}. The connection might still be offline.`);
+    }
+  };
+
+  const handleDeleteOfflineJob = async (id: string) => {
+    if (confirm("Are you sure you want to remove this cached job from the offline queue?")) {
+      await deleteQueuedDeliveryJob(id);
+      await loadSyncQueueItems();
+    }
+  };
+
   // Load initial IndexedDB Offline sync count
   const refreshOfflineSyncCount = async () => {
     try {
-      const jobs = await fetchQueuedDeliveryJobs();
-      setOfflineSyncQueueCount(jobs.length);
+      await loadSyncQueueItems();
     } catch (_) {}
   };
 
@@ -411,53 +705,69 @@ export default function DeliveryPartnerApp() {
       if (jobs.length === 0) return;
 
       setIsSyncingOfflineQueue(true);
-      console.log(`[Offline Synchronizer] Syncing ${jobs.length} offline deliveries...`);
+      console.log(`[Offline Synchronizer] Syncing ${jobs.length} offline tasks...`);
 
       for (const job of jobs) {
-        // Sync Order doc
-        const orderRef = doc(db, 'orders', job.orderId);
-        await updateDoc(orderRef, {
-          ...job.orderUpdate,
-          updatedAt: serverTimestamp()
-        });
+        const jobType = job.type || 'DELIVERY_COMPLETED'; // defaults to standard completed item
 
-        // Sync Delivery Partner doc
-        const riderRef = doc(db, 'deliveryPartners', riderProfile.id);
-        const riderDoc = await getDoc(riderRef);
-        if (riderDoc.exists()) {
-          const currentRiderData = riderDoc.data();
-          const tripPayout = job.payoutBreakdown.tripPayout;
-          const tipPayout = job.payoutBreakdown.tipPayout;
-          const totalPayout = tripPayout + tipPayout;
-
-          const syncedEarnings = (currentRiderData.earnings || 0) + totalPayout;
-          const syncedTips = (currentRiderData.tips || 0) + tipPayout;
-          const syncedDeliveryFees = (currentRiderData.deliveryFees || 0) + tripPayout;
-          const syncedTrips = (currentRiderData.trips || 0) + 1;
-          const syncedCash = job.orderUpdate.paymentStatus && job.orderUpdate.paymentStatus.includes('COD') 
-            ? (currentRiderData.cashInHand || 0) + job.orderAmount 
-            : (currentRiderData.cashInHand || 0);
-
-          await updateDoc(riderRef, {
-            earnings: syncedEarnings,
-            tips: syncedTips,
-            deliveryFees: syncedDeliveryFees,
-            trips: syncedTrips,
-            cashInHand: syncedCash,
+        if (jobType === 'DELIVERY_COMPLETED') {
+          // Sync Order doc
+          const orderRef = doc(db, 'orders', job.orderId);
+          await updateDoc(orderRef, {
+            ...job.orderUpdate,
             updatedAt: serverTimestamp()
           });
 
-          // Also update local profile state with latest synced database numbers
-          setRiderProfile((prev: any) => {
-            if (!prev) return null;
-            return {
-              ...prev,
+          // Sync Delivery Partner doc
+          const riderRef = doc(db, 'deliveryPartners', riderProfile.id);
+          const riderDoc = await getDoc(riderRef);
+          if (riderDoc.exists()) {
+            const currentRiderData = riderDoc.data();
+            const tripPayout = job.payoutBreakdown?.tripPayout || 45;
+            const tipPayout = job.payoutBreakdown?.tipPayout || 0;
+            const totalPayout = tripPayout + tipPayout;
+
+            const syncedEarnings = (currentRiderData.earnings || 0) + totalPayout;
+            const syncedTips = (currentRiderData.tips || 0) + tipPayout;
+            const syncedDeliveryFees = (currentRiderData.deliveryFees || 0) + tripPayout;
+            const syncedTrips = (currentRiderData.trips || 0) + 1;
+            const syncedCash = job.orderUpdate?.paymentStatus && job.orderUpdate.paymentStatus.includes('COD') 
+              ? (currentRiderData.cashInHand || 0) + job.orderAmount 
+              : (currentRiderData.cashInHand || 0);
+
+            await updateDoc(riderRef, {
               earnings: syncedEarnings,
               tips: syncedTips,
               deliveryFees: syncedDeliveryFees,
               trips: syncedTrips,
-              cashInHand: syncedCash
-            };
+              cashInHand: syncedCash,
+              updatedAt: serverTimestamp()
+            });
+
+            // Also update local profile state with latest synced database numbers
+            setRiderProfile((prev: any) => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                earnings: syncedEarnings,
+                tips: syncedTips,
+                deliveryFees: syncedDeliveryFees,
+                trips: syncedTrips,
+                cashInHand: syncedCash
+              };
+            });
+          }
+        } else if (jobType === 'STATUS_UPDATE') {
+          const orderRef = doc(db, 'orders', job.orderId);
+          await updateDoc(orderRef, {
+            ...job.orderUpdate,
+            updatedAt: serverTimestamp()
+          });
+        } else if (jobType === 'CUSTOM_STATUS') {
+          const riderRef = doc(db, 'deliveryPartners', job.partnerId);
+          await updateDoc(riderRef, {
+            customStatus: job.statusValue,
+            updatedAt: serverTimestamp()
           });
         }
 
@@ -467,7 +777,7 @@ export default function DeliveryPartnerApp() {
 
       await refreshOfflineSyncCount();
       setIsSyncingOfflineQueue(false);
-      alert(`🛰️ Connection Restored: Safely synchronized ${jobs.length} queued offline trips with the master database!`);
+      alert(`🛰️ Connection Restored: Safely synchronized ${jobs.length} queued offline tasks & state updates with the master database!`);
     } catch (e) {
       console.error("[Offline Synchronizer ERROR]", e);
       setIsSyncingOfflineQueue(false);
@@ -517,6 +827,11 @@ export default function DeliveryPartnerApp() {
   const [isTriggeringSOS, setIsTriggeringSOS] = useState(false);
   const [sosStatus, setSosStatus] = useState<'idle' | 'locating' | 'dispatching' | 'completed'>('idle');
   const [sosLogs, setSosLogs] = useState<string[]>([]);
+  const [sirenVolume, setSirenVolume] = useState<number>(0.5); // adjustable alarm siren volume range [0, 1]
+  const [sirenMode, setSirenMode] = useState<'Continuous' | 'Pulse'>('Continuous'); // Alarm siren wave patterns
+  const [pulseSpeed, setPulseSpeed] = useState<'Slow' | 'Medium' | 'High'>('Medium'); // Speed presets for pulse sound alternation
+  const [isSirenMuted, setIsSirenMuted] = useState(false); // mutable alarm siren mute status
+  const [sirenCountdown, setSirenCountdown] = useState(30); // auto-disable timer limits (max 30 seconds)
 
   // Web Audio API refs for continuous SOS siren alarm sound
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -526,7 +841,7 @@ export default function DeliveryPartnerApp() {
 
   // Web Audio API SOS Siren Controller
   useEffect(() => {
-    if (isTriggeringSOS) {
+    if (isTriggeringSOS && !isSirenMuted) {
       try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioContextClass) {
@@ -540,15 +855,15 @@ export default function DeliveryPartnerApp() {
           // Main gain control
           const mainGain = ctx.createGain();
           mainGain.gain.setValueAtTime(0, ctx.currentTime);
-          mainGain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.15); // Loud but safe 12% max gain
-          mainGain.connect(ctx.destination);
+          // Initial volume level based on current volume settings
+          const initialVol = sirenMode === 'Pulse' ? 0 : (sirenVolume * 0.15);
+          mainGain.gain.linearRampToValueAtTime(initialVol, ctx.currentTime + 0.15); // Safe but loud scaled output
           sirenGainRef.current = mainGain;
 
           // Piercing siren carrier wave (sawtooth waveform is standard for sirens)
           const osc = ctx.createOscillator();
           osc.type = 'sawtooth';
           osc.frequency.setValueAtTime(650, ctx.currentTime); // starting frequency
-          osc.connect(mainGain);
           sirenOscillatorRef.current = osc;
 
           // Modulation frequency (LFO) for continuous dual sweeping pitch (wee-woo)
@@ -561,9 +876,53 @@ export default function DeliveryPartnerApp() {
           const modGain = ctx.createGain();
           modGain.gain.setValueAtTime(200, ctx.currentTime); // frequencies swing +/- 200Hz
 
-          // Connect routing
+          // Connect Modulation
           lfo.connect(modGain);
           modGain.connect(osc.frequency);
+
+          // Advanced Audio Squelch: Peaking band boost around 1000Hz (the most piercing human audible speaker range)
+          const squelchFilter = ctx.createBiquadFilter();
+          squelchFilter.type = 'peaking';
+          squelchFilter.frequency.setValueAtTime(1000, ctx.currentTime);
+          squelchFilter.Q.setValueAtTime(1.2, ctx.currentTime);
+          squelchFilter.gain.setValueAtTime(4.0, ctx.currentTime); // Enhancer frequency boosting
+
+          // Dynamics Compressor to flatten speaker spikes & avoid micro-distortion/clipping on small mobile devices
+          const dynamicCompressor = ctx.createDynamicsCompressor();
+          dynamicCompressor.threshold.setValueAtTime(-24, ctx.currentTime); // compress signal exceeding -24dB
+          dynamicCompressor.knee.setValueAtTime(30, ctx.currentTime); // soft knee gradient curve
+          dynamicCompressor.ratio.setValueAtTime(12, ctx.currentTime); // 12:1 clean limit ratio
+          dynamicCompressor.attack.setValueAtTime(0.003, ctx.currentTime); // ultra fast 3ms response
+          dynamicCompressor.release.setValueAtTime(0.18, ctx.currentTime); // fast dampening decay
+
+          // Highpass Guard: Cut low frequency hum/rumble that can overheat compact audio transducers
+          const highPassClean = ctx.createBiquadFilter();
+          highPassClean.type = 'highpass';
+          highPassClean.frequency.setValueAtTime(350, ctx.currentTime);
+
+          // Dynamic Low-Pass filter: automatically reduce pitch/high-freq harmonics if battery drops below 15%
+          const lowPassFilter = ctx.createBiquadFilter();
+          lowPassFilter.type = 'lowpass';
+          const isLowBattery = batteryLevel !== null && batteryLevel < 0.15;
+          if (isLowBattery) {
+            // Muffle high frequencies to conserve physical speaker energy, focusing energy under 600Hz
+            lowPassFilter.frequency.setValueAtTime(600, ctx.currentTime);
+            setSosLogs(prev => [
+              ...prev,
+              "🔋 [POWER-GUARD ACTIVE] Dynamic Low-pass filter engaged! Siren frequency harmonics attenuated to conserve speaker life (<15% Battery)."
+            ]);
+          } else {
+            // Bypass high frequencies normally
+            lowPassFilter.frequency.setValueAtTime(20000, ctx.currentTime);
+          }
+
+          // Direct audio routing graph with Dynamic Power-Saving Low-Pass integration
+          osc.connect(mainGain);
+          mainGain.connect(highPassClean);
+          highPassClean.connect(squelchFilter);
+          squelchFilter.connect(lowPassFilter);
+          lowPassFilter.connect(dynamicCompressor);
+          dynamicCompressor.connect(ctx.destination);
 
           // Start nodes
           lfo.start(ctx.currentTime);
@@ -573,27 +932,68 @@ export default function DeliveryPartnerApp() {
         console.error("Failed to play continuous SOS siren sound:", err);
       }
     } else {
-      // Deactivation / cleanup
+      // Deactivation / cleanup with 500ms linear gain ramp-down
       try {
-        if (sirenOscillatorRef.current) {
-          sirenOscillatorRef.current.stop();
-          sirenOscillatorRef.current.disconnect();
-          sirenOscillatorRef.current = null;
-        }
-        if (sirenLfoRef.current) {
-          sirenLfoRef.current.stop();
-          sirenLfoRef.current.disconnect();
-          sirenLfoRef.current = null;
-        }
-        if (sirenGainRef.current) {
-          sirenGainRef.current.disconnect();
+        const actx = audioContextRef.current;
+        const gainNode = sirenGainRef.current;
+        const osc = sirenOscillatorRef.current;
+        const lfo = sirenLfoRef.current;
+        
+        if (actx && gainNode) {
+          // Cancel any scheduled parameter changes and ramp down smoothly
+          gainNode.gain.cancelScheduledValues(actx.currentTime);
+          gainNode.gain.setValueAtTime(gainNode.gain.value, actx.currentTime);
+          gainNode.gain.linearRampToValueAtTime(0, actx.currentTime + 0.5);
+          
+          // Nullify the global refs immediately so that effect dependencies won't trigger further changes
           sirenGainRef.current = null;
-        }
-        if (audioContextRef.current) {
-          if (audioContextRef.current.state !== 'closed') {
-            audioContextRef.current.close();
-          }
+          sirenOscillatorRef.current = null;
+          sirenLfoRef.current = null;
           audioContextRef.current = null;
+          
+          // Perform actual teardown after the ramp completes
+          setTimeout(() => {
+            try {
+              if (osc) {
+                osc.stop();
+                osc.disconnect();
+              }
+              if (lfo) {
+                lfo.stop();
+                lfo.disconnect();
+              }
+              if (gainNode) {
+                gainNode.disconnect();
+              }
+              if (actx && actx.state !== 'closed') {
+                actx.close();
+              }
+            } catch (err) {
+              console.warn("Delayed SOS siren cleanup error:", err);
+            }
+          }, 520);
+        } else {
+          // Fallback static cleanup
+          if (sirenOscillatorRef.current) {
+            sirenOscillatorRef.current.stop();
+            sirenOscillatorRef.current.disconnect();
+            sirenOscillatorRef.current = null;
+          }
+          if (sirenLfoRef.current) {
+            sirenLfoRef.current.stop();
+            sirenLfoRef.current.disconnect();
+            sirenLfoRef.current = null;
+          }
+          if (sirenGainRef.current) {
+            sirenGainRef.current.disconnect();
+            sirenGainRef.current = null;
+          }
+          if (audioContextRef.current) {
+            if (audioContextRef.current.state !== 'closed') {
+              audioContextRef.current.close();
+            }
+            audioContextRef.current = null;
+          }
         }
       } catch (err) {
         console.warn("SOS siren cleanup error:", err);
@@ -615,7 +1015,97 @@ export default function DeliveryPartnerApp() {
         }
       } catch (e) {}
     };
-  }, [isTriggeringSOS]);
+  }, [isTriggeringSOS, isSirenMuted, batteryLevel]);
+
+  // Handle live updates to Siren Volume slider and wave state properties
+  useEffect(() => {
+    let pulseInterval: any = null;
+    if (isTriggeringSOS && !isSirenMuted && sirenGainRef.current && audioContextRef.current) {
+      const gNode = sirenGainRef.current;
+      const actx = audioContextRef.current;
+      
+      // Set volume immediately to adjusted volume
+      try {
+        gNode.gain.setValueAtTime(gNode.gain.value, actx.currentTime);
+        gNode.gain.linearRampToValueAtTime(sirenVolume * 0.15, actx.currentTime + 0.1);
+      } catch (e) {}
+
+      if (sirenMode === 'Pulse') {
+        let isHighTone = true;
+        const delay = pulseSpeed === 'Slow' ? 1000 : pulseSpeed === 'Medium' ? 500 : 220;
+        pulseInterval = setInterval(() => {
+          if (actx && sirenOscillatorRef.current) {
+            try {
+              // Alternates between 880Hz (high tone) and 550Hz (low tone) to maximize alert urgency
+              const targetFreq = isHighTone ? 880 : 550;
+              sirenOscillatorRef.current.frequency.setValueAtTime(targetFreq, actx.currentTime);
+              isHighTone = !isHighTone;
+            } catch (e) {}
+          }
+        }, delay);
+      } else {
+        // Continuous Mode: restore starting carrier frequency of 650Hz (LFO will modulate normally around it)
+        if (sirenOscillatorRef.current) {
+          try {
+            sirenOscillatorRef.current.frequency.setValueAtTime(650, actx.currentTime);
+          } catch (e) {}
+        }
+      }
+    }
+    return () => {
+      if (pulseInterval) clearInterval(pulseInterval);
+    };
+  }, [isTriggeringSOS, sirenVolume, sirenMode, isSirenMuted, pulseSpeed]);
+
+  // Auto-disable timer: ticks down from 30 seconds to automatically silence alarm
+  useEffect(() => {
+    let countdownInterval: any = null;
+    if (isTriggeringSOS && !isSirenMuted && sirenCountdown > 0) {
+      countdownInterval = setInterval(() => {
+        setSirenCountdown(prev => {
+          if (prev <= 1) {
+            setIsSirenMuted(true);
+            setSosLogs(logs => [
+              ...logs, 
+              "⏱️ [AUTO-MUTE] Real-time 30-second siren play-time limit reached!",
+              "🔇 Safety protocol has automatically silenced the main speaker to avoid prolonged audio disturbance."
+            ]);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (countdownInterval) clearInterval(countdownInterval);
+    };
+  }, [isTriggeringSOS, isSirenMuted, sirenCountdown]);
+
+  // Listen for real hardware accelerometer DeviceMotion events for High-Impact Crash Auto-Trigger
+  useEffect(() => {
+    const handleDeviceMotion = (event: DeviceMotionEvent) => {
+      // Must be online (isOnline) and have active delivery on hand
+      if (!riderProfile?.isOnline || !activeOrder) return;
+      
+      const acc = event.accelerationIncludingGravity || event.acceleration;
+      if (!acc) return;
+      
+      const x = acc.x || 0;
+      const y = acc.y || 0;
+      const z = acc.z || 0;
+      
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+      // High-impact threshold (usually 25 m/s² represents a serious collision or drop)
+      if (magnitude > 25 && !isTriggeringSOS) {
+        handleTriggerSOS(true);
+      }
+    };
+    
+    window.addEventListener('devicemotion', handleDeviceMotion);
+    return () => {
+      window.removeEventListener('devicemotion', handleDeviceMotion);
+    };
+  }, [riderProfile?.isOnline, activeOrder, isTriggeringSOS]);
 
   // Sync real-time device network connection status
   useEffect(() => {
@@ -632,10 +1122,9 @@ export default function DeliveryPartnerApp() {
   }, []);
 
   // Battery Status API and map cache state declarations
-  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
-  const [isCharging, setIsCharging] = useState(false);
   const [cachedTileCount, setCachedTileCount] = useState(0);
   const [preCaching, setPreCaching] = useState(false);
+  const [isWakeLockActive, setIsWakeLockActive] = useState(false);
 
   // Read device battery status reactively
   useEffect(() => {
@@ -676,6 +1165,62 @@ export default function DeliveryPartnerApp() {
     };
   }, []);
 
+  // Hardware Screen Wake Lock Integration
+  const wakeLockRef = useRef<any>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function requestWakeLock() {
+      // Keep screen awake if rider is online on shift, or if an SOS emergency is being triggered
+      if (((riderProfile && riderProfile.isOnline) || isTriggeringSOS) && 'wakeLock' in navigator) {
+        try {
+          if (!wakeLockRef.current) {
+            wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+            if (active) {
+              setIsWakeLockActive(true);
+              console.log("🔒 [HARDWARE WAKE LOCK] Active. Prevented ambient dimming of dispatch tracking.");
+            }
+          }
+        } catch (err) {
+          console.warn("Screen Wake Lock request failed: ", err);
+          if (active) setIsWakeLockActive(false);
+        }
+      } else {
+        await releaseWakeLock();
+      }
+    }
+
+    async function releaseWakeLock() {
+      if (wakeLockRef.current) {
+        try {
+          await wakeLockRef.current.release();
+        } catch (e) {}
+        wakeLockRef.current = null;
+        if (active) {
+          setIsWakeLockActive(false);
+          console.log("🔓 [HARDWARE WAKE LOCK] Released. Screen returned to normal system rules.");
+        }
+      }
+    }
+
+    requestWakeLock();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      active = false;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+      }
+    };
+  }, [riderProfile?.isOnline, isTriggeringSOS]);
+
   // Track active shift duration dynamically based on shiftStartedAt
   useEffect(() => {
     if (riderProfile?.isOnline && riderProfile?.shiftStartedAt) {
@@ -711,6 +1256,30 @@ export default function DeliveryPartnerApp() {
     }
   }, [riderProfile?.isOnline, riderProfile?.shiftStartedAt]);
   
+  // Track movement to update lastMovementTime when GPS location updates or updates are simulated
+  useEffect(() => {
+    if (riderLocation) {
+      setLastMovementTime(Date.now());
+    }
+  }, [riderLocation?.lat, riderLocation?.lng]);
+
+  // Dynamic Auto-Offline Monitoring loop
+  useEffect(() => {
+    if (!riderProfile?.isOnline || autoOfflineMinutes <= 0 || showAutoOfflinePrompt) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      const elapsedMs = Date.now() - lastMovementTime;
+      const thresholdMs = autoOfflineMinutes * 60 * 1000;
+      if (elapsedMs >= thresholdMs) {
+        setShowAutoOfflinePrompt(true);
+      }
+    }, 10000); // Check every 10 seconds
+
+    return () => clearInterval(intervalId);
+  }, [riderProfile?.isOnline, autoOfflineMinutes, lastMovementTime, showAutoOfflinePrompt]);
+
   // Support state
   const [chatMessage, setChatMessage] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
@@ -1009,11 +1578,21 @@ export default function DeliveryPartnerApp() {
   };
 
   // Trigger security alarm and SMS coordinates panic sequence
-  const handleTriggerSOS = async () => {
+  const handleTriggerSOS = async (isAutoSimulated: boolean = false) => {
     if (!riderProfile) return;
     setIsTriggeringSOS(true);
     setSosStatus('locating');
-    setSosLogs(["🛰️ Initiating satellite location lookup..."]);
+    setIsSirenMuted(false);
+    setSirenCountdown(30);
+    if (isAutoSimulated) {
+      setSosLogs([
+        "🚨 [CRASH TRIGGER] COLLISION INTEGRITY ALERT PROTOCOL INITIATED!",
+        "💥 High-G impact spike (32.4 m/s²) detected via active accelerometer telemetry!",
+        "🛰️ Initiating auto-distress emergency dispatch location lookup..."
+      ]);
+    } else {
+      setSosLogs(["🛰️ Initiating satellite location lookup..."]);
+    }
 
     try {
       // Step 1: Geolocation tracking simulation
@@ -1094,6 +1673,25 @@ export default function DeliveryPartnerApp() {
   // Update dynamic custom status (e.g. Arriving at Store, Back in 5 mins)
   const handleUpdateCustomStatus = async (status: string) => {
     if (!riderProfile) return;
+
+    if (!isOnlineNetwork) {
+      try {
+        const queueJob = {
+          id: `offline-status-${riderProfile.id}-${Date.now()}`,
+          partnerId: riderProfile.id,
+          type: 'CUSTOM_STATUS',
+          statusValue: status
+        };
+        await saveOfflineDeliveryJob(queueJob);
+        await refreshOfflineSyncCount();
+        setRiderProfile((prev: any) => ({ ...prev, customStatus: status }));
+        alert("💾 Offline Mode: Custom duty status updated locally and queued for background synchronization.");
+      } catch (e) {
+        console.error("Offline custom status queue error:", e);
+      }
+      return;
+    }
+
     try {
       await updateDoc(doc(db, 'deliveryPartners', riderProfile.id), {
         customStatus: status,
@@ -1102,6 +1700,23 @@ export default function DeliveryPartnerApp() {
       setRiderProfile((prev: any) => ({ ...prev, customStatus: status }));
     } catch (err) {
       console.error("Failed to update custom status: ", err);
+    }
+  };
+
+  // Share current GPS coordinates with customer/merchant
+  const handleShareLocation = async () => {
+    if (!riderLocation) {
+      alert("⚠️ Cannot share location: GPS signal is currently initializing. Please toggle duty or active routing to activate location tracking.");
+      speakCue("Unable to obtain GPS; initializing telemetry.");
+      return;
+    }
+    const trackingUrl = `${window.location.origin}/?riderLat=${riderLocation.lat}&riderLng=${riderLocation.lng}&tracking=true&riderId=${riderProfile?.id || 'demo-rider'}`;
+    try {
+      await navigator.clipboard.writeText(trackingUrl);
+      alert(`🎯 Share Live Location Link:\n\n${trackingUrl}\n\nCopied to clipboard successfully! Customers can use this link to track your route in real-time.`);
+      speakCue("Real-time GPS tracker link copied to your clipboard.");
+    } catch (err) {
+      alert(`🎯 Share Live Location Link:\n\n${trackingUrl}\n\nPlease copy this link manually to share live route details.`);
     }
   };
 
@@ -1129,6 +1744,35 @@ export default function DeliveryPartnerApp() {
   // Change trip status: At Merchant -> Mark Picked Up
   const handleMarkPickedUp = async () => {
     if (!activeOrder) return;
+
+    if (!isOnlineNetwork) {
+      try {
+        const queueJob = {
+          id: `offline-pickup-${activeOrder.id}-${Date.now()}`,
+          orderId: activeOrder.id,
+          type: 'STATUS_UPDATE',
+          orderUpdate: {
+            status: 'PickedUp',
+          }
+        };
+        await saveOfflineDeliveryJob(queueJob);
+        await refreshOfflineSyncCount();
+        
+        // Optimistic UI state update
+        setActiveOrder((prev: any) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            status: 'PickedUp'
+          };
+        });
+        alert("💾 Offline Mode: Pickup state cached and queued in IndexedDB. Will sync when connectivity returns.");
+      } catch (e) {
+        console.error("Offline pick up cache error:", e);
+      }
+      return;
+    }
+
     try {
       await updateDoc(doc(db, 'orders', activeOrder.id), {
         status: 'PickedUp',
@@ -1179,6 +1823,30 @@ export default function DeliveryPartnerApp() {
           };
         });
 
+        // If rider has enabled goOfflineAfterCurrentOrder, queue it
+        if (goOfflineAfterCurrentOrder) {
+          const statusQueueJob = {
+            id: `offline-status-toggle-${riderProfile.id}-${Date.now()}`,
+            partnerId: riderProfile.id,
+            type: 'DUTY_STATUS',
+            isOnline: false,
+            statusValue: 'Offline'
+          };
+          await saveOfflineDeliveryJob(statusQueueJob);
+          setRiderProfile((prev: any) => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              isOnline: false,
+              status: 'Offline',
+              shiftStartedAt: null,
+              customStatus: 'Offline'
+            };
+          });
+          setGoOfflineAfterCurrentOrder(false);
+          alert("📡 Info: You have been switched to Offline as requested after completing the delivery!");
+        }
+
         alert(`💾 Offline Mode: Your internet is currently inactive. Order #${activeOrder.id.slice(0, 5).toUpperCase()} has been verified offline. We queued the fulfillment in IndexedDB for automatic background syncing!`);
         
         // Speak completion offline if voice is enabled
@@ -1214,16 +1882,44 @@ export default function DeliveryPartnerApp() {
       const updatedTrips = (riderProfile.trips || 0) + 1;
       const cashCollected = activeOrder.paymentMethod === 'cod' ? (riderProfile.cashInHand || 0) + activeOrder.total : (riderProfile.cashInHand || 0);
 
-      await updateDoc(doc(db, 'deliveryPartners', riderProfile.id), {
+      // If rider has enabled goOfflineAfterCurrentOrder
+      const updateData: any = {
         earnings: updatedEarnings,
         tips: updatedTips,
         deliveryFees: updatedDeliveryFees,
         trips: updatedTrips,
         cashInHand: cashCollected,
         updatedAt: serverTimestamp()
+      };
+
+      if (goOfflineAfterCurrentOrder) {
+        updateData.isOnline = false;
+        updateData.status = 'Offline';
+        updateData.shiftStartedAt = null;
+        updateData.customStatus = 'Offline';
+      }
+
+      await updateDoc(doc(db, 'deliveryPartners', riderProfile.id), {
+        ...updateData
       });
 
-      alert(`✅ Trip completed successfully! Payout of ₹${tripPayout} and Tip of ₹${tipPayout} added securely.`);
+      if (goOfflineAfterCurrentOrder) {
+        setRiderProfile((prev: any) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            ...updateData,
+            isOnline: false,
+            status: 'Offline',
+            shiftStartedAt: null,
+            customStatus: 'Offline'
+          };
+        });
+        setGoOfflineAfterCurrentOrder(false);
+        alert(`✅ Trip completed successfully! Switched to Offline as requested. Payout of ₹${tripPayout} added securely.`);
+      } else {
+        alert(`✅ Trip completed successfully! Payout of ₹${tripPayout} and Tip of ₹${tipPayout} added securely.`);
+      }
       
       // Voice prompt trigger
       speakCue("Trip successfully completed. Payout and tip added safely to your account profile.");
@@ -1376,18 +2072,43 @@ export default function DeliveryPartnerApp() {
               Welcome to the separate, secure rider terminal. All delivery operations require a linked Google Identity for biometric verification and secure salary remittances.
             </p>
             
+            {authError && (
+              <p className="text-rose-400 text-[10px] font-bold leading-tight bg-rose-950/30 border border-rose-900/40 p-3 rounded-xl italic">
+                {authError}
+              </p>
+            )}
+
             <button 
+              disabled={isGoogleLoggingIn}
               onClick={async () => {
+                if (isGoogleLoggingIn) return;
+                setIsGoogleLoggingIn(true);
+                setAuthError(null);
                 try {
                   await login();
-                } catch(e) {
+                } catch(e: any) {
                   console.error(e);
+                  if (e && (e.code === 'auth/popup-blocked' || (e.message && e.message.includes('popup-blocked')))) {
+                    setAuthError('Popup was blocked by your browser. Please allow popups or open the app in a new tab.');
+                  } else if (e && (e.code === 'auth/cancelled-popup-request' || (e.message && e.message.includes('cancelled-popup-request')))) {
+                    setAuthError('Login request was cancelled. Please try again.');
+                  } else {
+                    setAuthError(`Verification failed: ${e.message || 'Cancelled or timed out.'}`);
+                  }
+                } finally {
+                  setIsGoogleLoggingIn(false);
                 }
               }}
-              className="w-full py-4.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all flex items-center justify-center gap-2.5 shadow-lg shadow-amber-950/20 cursor-pointer"
+              className="w-full py-4.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all flex items-center justify-center gap-2.5 shadow-lg shadow-amber-950/20 cursor-pointer disabled:opacity-50"
             >
-              <img src="https://www.google.com/favicon.ico" className="w-4 h-4 bg-white rounded-full p-0.5" alt="" />
-              Connect Security Partner
+              {isGoogleLoggingIn ? (
+                <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+              ) : (
+                <>
+                  <img src="https://www.google.com/favicon.ico" className="w-4 h-4 bg-white rounded-full p-0.5" alt="" />
+                  Connect Security Partner
+                </>
+              )}
             </button>
           </div>
         </div>
@@ -1796,6 +2517,7 @@ export default function DeliveryPartnerApp() {
                 >
                   <option value="Available" className="bg-slate-900 text-white">🟢 Available</option>
                   <option value="Back in 5 mins" className="bg-slate-900 text-white">🕒 Back in 5m</option>
+                  <option value="Back in 10 mins" className="bg-slate-900 text-white">🕒 Back in 10m</option>
                   <option value="Arriving at Store" className="bg-slate-900 text-white">🚴 Arriving</option>
                 </select>
               </div>
@@ -1816,11 +2538,13 @@ export default function DeliveryPartnerApp() {
             {offlineSyncQueueCount > 0 && (
               <button
                 type="button"
-                onClick={handleSyncOfflineQueue}
-                disabled={isSyncingOfflineQueue}
+                onClick={async () => {
+                  await loadSyncQueueItems();
+                  setShowSyncStatusModal(true);
+                }}
                 className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 rounded-full cursor-pointer transition-all text-[8px] font-black uppercase tracking-wider shrink-0"
               >
-                <Database className={`w-3 h-3 ${isSyncingOfflineQueue ? 'animate-spin text-amber-400' : 'text-amber-500'}`} />
+                <Database className="w-3 h-3 text-amber-500" />
                 <span>Job Queue: {offlineSyncQueueCount} ({isOnlineNetwork ? 'Ready' : 'Offline Cached'})</span>
               </button>
             )}
@@ -1853,6 +2577,18 @@ export default function DeliveryPartnerApp() {
               </div>
             )}
 
+            {/* Screen Awake (Wake Lock) Status Badge */}
+            <div className={`flex items-center gap-1.5 px-2 py-1 border rounded-full mr-1.5 shrink-0 transition-colors ${
+              isWakeLockActive 
+                ? 'bg-amber-505/10 border-amber-500/30 text-amber-400 bg-amber-500/10' 
+                : 'bg-slate-950/60 border-white/5 text-slate-400 opacity-60'
+            }`} title="Screen Awake Lock state">
+              <Sun className={`w-3 h-3 ${isWakeLockActive ? 'text-amber-400 animate-spin' : 'text-slate-400'}`} style={{ animationDuration: '8s' }} />
+              <span className="text-[8px] font-black uppercase tracking-wider">
+                Lock: <span className={isWakeLockActive ? 'text-amber-400' : 'text-slate-400'}>{isWakeLockActive ? 'AWAKE' : 'SLEEP'}</span>
+              </span>
+            </div>
+
             {/* Shift Duration Tracker */}
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full mr-1.5 shrink-0">
               <Clock className="w-3 h-3 text-amber-500" />
@@ -1863,7 +2599,7 @@ export default function DeliveryPartnerApp() {
 
             {/* Emergency Security ALERT Panic Trigger Button */}
             <motion.button
-              onClick={handleTriggerSOS}
+              onClick={() => handleTriggerSOS(false)}
               animate={{
                 boxShadow: [
                   "0px 0px 0px rgba(239, 68, 68, 0.4)",
@@ -1882,6 +2618,21 @@ export default function DeliveryPartnerApp() {
               <ShieldAlert className="w-3 h-3" />
               <span>SOS</span>
             </motion.button>
+
+            {riderProfile.isOnline && (
+              <button
+                type="button"
+                onClick={() => handleUpdateCustomStatus('Back in 10 mins')}
+                className={`px-2.5 py-1.5 rounded-full text-[8.5px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1 shrink-0 ${
+                  riderProfile.customStatus === 'Back in 10 mins'
+                    ? 'bg-amber-500 text-slate-950 shadow border border-amber-450'
+                    : 'bg-slate-900 hover:bg-slate-800 text-amber-500 border border-white/5'
+                }`}
+                title="Quickly notify dispatch of a short break (Back in 10 mins)"
+              >
+                ☕ Break 10m
+              </button>
+            )}
 
             <span className={`text-[8px] font-black uppercase tracking-widest ${riderProfile.isOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
               {riderProfile.isOnline ? 'On Duty' : 'Offline'}
@@ -1906,6 +2657,40 @@ export default function DeliveryPartnerApp() {
           {/* TAB 1: DELIVERY POOL & ACTIVE JOBS */}
           {activeTab === 'jobs' && (
             <div className="space-y-4">
+              
+              {/* Quick-Action Navigation Chips */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1" id="rider-dash-quick-chips">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('profile');
+                    setTimeout(() => {
+                      const el = document.getElementById('systems-caching-diagnostics');
+                      if (el) el.scrollIntoView({ behavior: 'smooth' });
+                    }, 200);
+                  }}
+                  className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-white/5 hover:border-amber-500/20 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                >
+                  <Settings className="w-3.5 h-3.5 text-amber-500 animate-spin-slow" />
+                  <span>Settings Style</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('profile')}
+                  className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-white/5 hover:border-amber-500/20 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                >
+                  <User className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Profile Space</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('support')}
+                  className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-white/5 hover:border-amber-500/20 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Support Desk</span>
+                </button>
+              </div>
               
               {/* BLOCK 1: IF OFFLINE */}
               {!riderProfile.isOnline && (
@@ -1938,6 +2723,31 @@ export default function DeliveryPartnerApp() {
                       <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Payout Est</span>
                       <p className="text-sm font-black text-emerald-400">₹45.00</p>
                     </div>
+                  </div>
+
+                  {/* Toggle: Auto-Offline After Current Delivery completes */}
+                  <div className="flex justify-between items-center bg-slate-950 p-3 rounded-2.5xl border border-[#ffffff10] shadow-inner" id="rider-auto-offline-active-order-toggle">
+                    <div className="flex flex-col pr-3">
+                      <span className="text-[9px] font-black uppercase text-slate-200 tracking-wider">Auto-Offline After Delivery</span>
+                      <span className="text-[8.5px] text-slate-500 font-bold uppercase tracking-wide">Go offline automatically after completing this trip</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGoOfflineAfterCurrentOrder(!goOfflineAfterCurrentOrder);
+                        speakCue(`Auto offline after trip is now ${!goOfflineAfterCurrentOrder ? 'enabled' : 'disabled'}`);
+                      }}
+                      className={`w-11 h-6 rounded-full p-0.5 transition-colors duration-200 cursor-pointer shrink-0 ${
+                        goOfflineAfterCurrentOrder ? 'bg-amber-500' : 'bg-slate-800'
+                      }`}
+                      title="Toggle auto-offline mode for post-delivery"
+                    >
+                      <div className={`w-5 h-5 bg-slate-950 rounded-full shadow transform transition-transform duration-200 flex items-center justify-center ${
+                        goOfflineAfterCurrentOrder ? 'translate-x-5 bg-slate-950' : 'translate-x-0 bg-slate-400'
+                      }`}>
+                        {goOfflineAfterCurrentOrder && <Check className="w-3 h-3 text-amber-500 stroke-[3]" />}
+                      </div>
+                    </button>
                   </div>
 
                   {/* Journey Milestones Timeline */}
@@ -2081,35 +2891,122 @@ export default function DeliveryPartnerApp() {
                     </div>
                   </div>
 
-                  {/* REAL-TIME DELIVERY ROUTE MAP */}
-                  <div className="bg-slate-950 rounded-[2rem] border border-white/5 overflow-hidden text-left space-y-2 p-1.5 shadow-2xl">
-                    <div className="p-4.5 pb-2 flex items-center justify-between">
-                      <div>
-                        <span className="text-[8px] text-amber-500 font-black uppercase tracking-widest block font-mono">Live Dispatch Navigation</span>
-                        <h4 className="text-sm font-black text-white leading-none mt-1">Route: Store to Customer</h4>
-                      </div>
-                      
+                  {/* SIMULATED ACCELEROMETER COLLISION DETECTOR */}
+                  <div className="bg-slate-950 p-4.5 rounded-[2rem] border border-rose-500/10 text-left space-y-3.5 shadow-inner">
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        {/* Auto-Center Toggle Button */}
-                        <button
-                          type="button"
-                          onClick={() => setAutoCenter(prev => !prev)}
-                          className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
-                            autoCenter 
-                              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 animate-pulse' 
-                              : 'bg-slate-900 border-white/10 text-slate-400'
-                          }`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${autoCenter ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
-                          Auto-Center: {autoCenter ? 'ON' : 'OFF'}
-                        </button>
+                        <Activity className="w-4 h-4 text-rose-500 animate-pulse" />
+                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-300 font-mono">Telemetry Monitor</span>
+                      </div>
+                      <span className="text-[8px] bg-rose-500/10 text-rose-400 font-black px-2 py-0.5 rounded uppercase tracking-wider animate-pulse">
+                        Auto-Response Ready
+                      </span>
+                    </div>
+                    
+                    <p className="text-[10px] text-slate-400 font-bold leading-relaxed">
+                      Using device-level accelerometer forces to track gravity fluctuations (collision/drops). High impact triggers auto-SOS alert.
+                    </p>
 
-                        <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 border border-white/5 rounded-full">
-                          <Navigation className="w-3.5 h-3.5 text-amber-500 animate-pulse font-bold" />
-                          <span className="text-[9px] font-black text-emerald-400 font-mono uppercase">{eta}</span>
-                        </div>
+                    <div className="bg-slate-900 border border-white/5 rounded-2xl p-3 flex justify-around text-center font-mono text-[9px] text-slate-500">
+                      <div>
+                        <span className="block text-[8px] uppercase tracking-wider text-slate-500 mb-0.5">X axis</span>
+                        <span className="text-emerald-400 font-extrabold">{(0.18 + Math.random() * 0.05).toFixed(2)} m/s²</span>
+                      </div>
+                      <div className="border-r border-white/5 h-6 self-center" />
+                      <div>
+                        <span className="block text-[8px] uppercase tracking-wider text-slate-500 mb-0.5">Y axis</span>
+                        <span className="text-emerald-400 font-extrabold">{(-0.35 + Math.random() * 0.05).toFixed(2)} m/s²</span>
+                      </div>
+                      <div className="border-r border-white/5 h-6 self-center" />
+                      <div>
+                        <span className="block text-[8px] uppercase tracking-wider text-slate-500 mb-0.5">Z axis</span>
+                        <span className="text-emerald-400 font-extrabold">{(9.81 + Math.random() * 0.08).toFixed(2)} m/s²</span>
                       </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleTriggerSOS(true)}
+                      className="w-full py-3 bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-400 border border-rose-500/20 rounded-2xl text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer transition-all transition-duration-150"
+                    >
+                      <span>💥 Simulate High-Impact Collision (32.4 m/s²)</span>
+                    </button>
+                  </div>
+
+                  {/* REAL-TIME DELIVERY ROUTE MAP */}
+                  <div className="bg-slate-950 rounded-[2rem] border border-white/5 overflow-hidden text-left space-y-2 p-1.5 shadow-2xl">
+                    {(() => {
+                      const straightLineDist = calculateOrderDistance(activeOrder);
+                      const roadNetworkDist = Number((straightLineDist * 1.28).toFixed(1));
+                      return (
+                        <div className="p-4.5 pb-2 flex items-center justify-between">
+                          <div>
+                            <span className="text-[8px] text-amber-500 font-black uppercase tracking-widest block font-mono">Live Dispatch Navigation</span>
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <h4 className="text-sm font-black text-white leading-none">Route: Store to Customer</h4>
+                              
+                              {/* Tooltip Comparison overlay */}
+                              <div className="group relative inline-block">
+                                <button
+                                  type="button"
+                                  className="w-4 h-4 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-white/10 rounded-full flex items-center justify-center text-[9px] font-bold transition-all cursor-pointer"
+                                  title="Straight-line vs. Road-network distance"
+                                >
+                                  <Info className="w-2.5 h-2.5" />
+                                </button>
+                                <div className="absolute left-0 bottom-full mb-3 hidden group-hover:block w-52 p-3.5 bg-slate-900 border border-white/10 text-slate-200 text-[9.5px] rounded-2xl shadow-2xl z-50 space-y-1.5 leading-normal">
+                                  <span className="font-mono text-[7px] tracking-widest text-amber-500 font-black uppercase leading-none block">📏 DISTANCE DISPATCH INDEX</span>
+                                  <div className="border-t border-white/5 my-1" />
+                                  <div className="flex justify-between font-bold uppercase text-[8px] tracking-wider text-slate-450">
+                                    <span>Straight-Line:</span>
+                                    <span className="font-mono text-emerald-400 font-black">{straightLineDist.toFixed(1)} km</span>
+                                  </div>
+                                  <div className="flex justify-between font-bold uppercase text-[8px] tracking-wider text-slate-450">
+                                    <span>Road-Network:</span>
+                                    <span className="font-mono text-amber-400 font-black">{roadNetworkDist.toFixed(1)} km</span>
+                                  </div>
+                                  <p className="text-[7.5px] leading-tight text-slate-500 font-medium font-sans mt-0.5">
+                                    Standard actual roadway route includes ~28% topology detours and flow overhead.
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                            {/* Share Location Button */}
+                            <button
+                              type="button"
+                              onClick={handleShareLocation}
+                              className="flex items-center gap-1 px-3 py-1 bg-slate-900 border border-white/10 hover:border-white/20 text-slate-300 hover:text-white rounded-full text-[8.5px] font-black uppercase tracking-wider transition-all duration-200 cursor-pointer shadow-sm active:scale-95"
+                              title="Share live coordinate URL"
+                            >
+                              <Share2 className="w-3 h-3 text-amber-500 animate-pulse" />
+                              <span>Share GPS</span>
+                            </button>
+
+                            {/* Auto-Center Toggle Button */}
+                            <button
+                              type="button"
+                              onClick={() => setAutoCenter(prev => !prev)}
+                              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-[9px] font-black uppercase tracking-wider transition-all duration-300 cursor-pointer ${
+                                autoCenter 
+                                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 animate-pulse' 
+                                  : 'bg-slate-900 border-white/10 text-slate-450'
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${autoCenter ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
+                              Auto: {autoCenter ? 'ON' : 'OFF'}
+                            </button>
+
+                            <div className="flex items-center gap-1 px-3 py-1 bg-slate-900 border border-white/5 rounded-full">
+                              <Navigation className="w-3 h-3 text-amber-500 animate-pulse font-bold" />
+                              <span className="text-[8.5px] font-black text-emerald-400 font-mono uppercase">{eta}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     <div className="w-full h-72 rounded-[1.8rem] overflow-hidden relative border border-white/5 bg-slate-900">
                       {!hasValidKey ? (
@@ -2119,6 +3016,8 @@ export default function DeliveryPartnerApp() {
                           customerLoc={activeOrder?.deliveryLocation && typeof activeOrder.deliveryLocation.lat === 'number' ? [activeOrder.deliveryLocation.lat, activeOrder.deliveryLocation.lng] : undefined}
                           interactive={true}
                           autoCenter={autoCenter}
+                          vendorName={activeOrder?.vendorName}
+                          customerName={activeOrder?.customerName}
                         />
                       ) : (
                         <APIProvider apiKey={API_KEY} version="weekly">
@@ -2300,6 +3199,62 @@ export default function DeliveryPartnerApp() {
                     </div>
                   </div>
 
+                  {/* PROACTIVE GEOCODING INTEGRITY STATUS */}
+                  {(() => {
+                    const pickupVal = validateGeoIPCoords(activeOrder.pickupLocation);
+                    const deliveryVal = validateGeoIPCoords(activeOrder.deliveryLocation);
+                    const allValid = pickupVal.isValid && deliveryVal.isValid;
+                    
+                    return (
+                      <div className="p-4 bg-slate-950 rounded-2xl border border-white/5 space-y-3 text-left font-mono">
+                        <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                          <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                            <MapPin className="w-4 h-4 text-emerald-450 animate-pulse" /> Geocoding Integrity
+                          </span>
+                          <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
+                            allValid ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-500'
+                          }`}>
+                            {allValid ? '✓ Verified Safe' : '⚠ Near-Limit Location'}
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {/* Store Location Check */}
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-slate-500 font-bold uppercase">Store Pickup Geo:</span>
+                            <span className="text-slate-300 font-extrabold font-mono">
+                              {activeOrder.pickupLocation?.lat?.toFixed(4) || "17.2473"}, {activeOrder.pickupLocation?.lng?.toFixed(4) || "80.1514"}
+                            </span>
+                          </div>
+                          {pickupVal.warnings.map((w, idx) => (
+                            <p key={idx} className="text-[8px] text-amber-500 leading-normal pl-2 font-bold select-none border-l border-amber-500/20">
+                              ⚠ {w}
+                            </p>
+                          ))}
+
+                          {/* Client Destination Check */}
+                          <div className="flex items-center justify-between text-[10px] pt-1 border-t border-white/5">
+                            <span className="text-slate-500 font-bold uppercase">Delivery Dest Geo:</span>
+                            <span className="text-slate-300 font-extrabold font-mono text-slate-300 font-bold">
+                              {activeOrder.deliveryLocation?.lat?.toFixed(4) || "17.2514"}, {activeOrder.deliveryLocation?.lng?.toFixed(4) || "80.1614"}
+                            </span>
+                          </div>
+                          {deliveryVal.warnings.map((w, idx) => (
+                            <p key={idx} className="text-[8px] text-amber-500 leading-normal pl-2 font-bold select-none border-l border-amber-500/20">
+                              ⚠ {w}
+                            </p>
+                          ))}
+
+                          {allValid && pickupVal.warnings.length === 0 && deliveryVal.warnings.length === 0 && (
+                            <p className="text-[8.5px] text-emerald-400 font-black uppercase tracking-wider text-center select-none pt-1">
+                              ✓ Locations fully vetted inside geofence parameters
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {['Accepted', 'Preparing', 'ReadyForPickup', 'Ready'].includes(activeOrder.status) ? (
                     <button
                       onClick={handleMarkPickedUp}
@@ -2343,44 +3298,61 @@ export default function DeliveryPartnerApp() {
                       </div>
                     ) : (
                       <div className="space-y-3.5">
-                        {availableOrders.map((ord) => (
-                          <div key={ord.id} className="bg-slate-900 border border-white/5 p-4 rounded-3xl space-y-3 hover:border-amber-500/25 transition-colors">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest">DISPATCH POOL</span>
-                                <h5 className="text-sm font-black text-white mt-0.5 uppercase">Order #{ord.id}</h5>
-                              </div>
-                              <div className="text-right">
-                                <span className="text-[8px] font-black text-slate-505 uppercase tracking-widest">Earning Payout</span>
-                                <p className="text-xs font-black text-emerald-400">₹45.00</p>
-                              </div>
-                            </div>
-
-                            <div className="space-y-2 border-t border-b border-white/5 py-2.5 text-xs text-slate-400">
-                              <div className="flex gap-2">
-                                <span className="font-bold text-amber-500 shrink-0 uppercase">[STORE]:</span>
-                                <span className="font-black text-white uppercase">{ord.vendorName}</span>
-                              </div>
-                              <div className="flex gap-2">
-                                <span className="font-bold text-amber-500 shrink-0 uppercase">[CLIENT AREA]:</span>
-                                <span className="font-black text-white uppercase">{ord.deliveryAddress.slice(0, 48)}...</span>
-                              </div>
-                              <div className="pt-1 flex justify-between text-[10px] font-black uppercase text-slate-400">
-                                <span>Quantity: {ord.items} Items</span>
-                                <span className={ord.paymentMethod === 'cod' ? 'text-amber-400' : 'text-emerald-400'}>
-                                  ₹{ord.total} &bull; {ord.paymentMethod.toUpperCase()}
-                                </span>
-                              </div>
-                            </div>
-
-                            <button
-                              onClick={() => handleClaimOrder(ord.id)}
-                              className="w-full py-3 bg-slate-950 border border-amber-500/25 hover:bg-amber-500/10 text-amber-500 rounded-xl font-black uppercase tracking-widest text-[9px] cursor-pointer"
+                        {availableOrders.map((ord) => {
+                          const isNew = Date.now() - (orderArrivalTimes[ord.id] || 0) < 60000;
+                          return (
+                            <div 
+                              key={ord.id} 
+                              className={`bg-slate-900 border p-4 rounded-3xl space-y-3 transition-all relative overflow-hidden ${
+                                isNew 
+                                  ? 'border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.15)] animate-[pulse_1.8s_infinite]' 
+                                  : 'border-white/5 hover:border-amber-500/25'
+                              }`}
                             >
-                              Claim & Accept Delivery
-                            </button>
-                          </div>
-                        ))}
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  {isNew ? (
+                                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-amber-500/20 border border-amber-500/45 text-amber-400 text-[8px] font-black uppercase tracking-widest rounded animate-pulse">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                                      ⚡ NEW ASSIGNMENT
+                                    </span>
+                                  ) : (
+                                    <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest">DISPATCH POOL</span>
+                                  )}
+                                  <h5 className="text-sm font-black text-white mt-0.5 uppercase">Order #{ord.id}</h5>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-[8px] font-black text-slate-505 uppercase tracking-widest">Earning Payout</span>
+                                  <p className="text-xs font-black text-emerald-400">₹45.00</p>
+                                </div>
+                              </div>
+
+                              <div className="space-y-2 border-t border-b border-white/5 py-2.5 text-xs text-slate-400">
+                                <div className="flex gap-2">
+                                  <span className="font-bold text-amber-500 shrink-0 uppercase">[STORE]:</span>
+                                  <span className="font-black text-white uppercase">{ord.vendorName}</span>
+                                </div>
+                                <div className="flex gap-2">
+                                  <span className="font-bold text-amber-500 shrink-0 uppercase">[CLIENT AREA]:</span>
+                                  <span className="font-black text-white uppercase">{ord.deliveryAddress.slice(0, 48)}...</span>
+                                </div>
+                                <div className="pt-1 flex justify-between text-[10px] font-black uppercase text-slate-400">
+                                  <span>Quantity: {ord.items} Items</span>
+                                  <span className={ord.paymentMethod === 'cod' ? 'text-amber-400' : 'text-emerald-400'}>
+                                    ₹{ord.total} &bull; {ord.paymentMethod.toUpperCase()}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => handleClaimOrder(ord.id)}
+                                className="w-full py-3 bg-slate-950 border border-amber-500/25 hover:bg-amber-500/10 text-amber-500 rounded-xl font-black uppercase tracking-widest text-[9px] cursor-pointer"
+                              >
+                                Claim & Accept Delivery
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -2460,6 +3432,7 @@ export default function DeliveryPartnerApp() {
                       <option value="60">Last 60 Days</option>
                       <option value="current_month">June 2026</option>
                       <option value="previous_month">May 2026</option>
+                      <option value="custom">📅 Custom Date Range</option>
                     </select>
 
                     {/* Sort Selector */}
@@ -2475,6 +3448,36 @@ export default function DeliveryPartnerApp() {
                     </select>
                   </div>
                 </div>
+
+                {earningsDaysFilter === 'custom' && (
+                  <div className="flex flex-col sm:flex-row gap-3 bg-slate-950 p-3 rounded-2xl border border-white/5 items-center font-sans">
+                    <div className="flex flex-col w-full sm:w-auto">
+                      <span className="text-[7.5px] text-slate-400 font-extrabold uppercase tracking-widest mb-1">Start Date</span>
+                      <input 
+                        type="date"
+                        value={earningsStartDate}
+                        onChange={(e) => setEarningsStartDate(e.target.value)}
+                        className="bg-slate-900 border border-white/10 text-[9.5px] font-mono text-slate-200 rounded-lg p-1.5 focus:outline-none focus:border-indigo-400 inline-block w-full"
+                      />
+                    </div>
+                    <div className="flex flex-col w-full sm:w-auto">
+                      <span className="text-[7.5px] text-slate-400 font-extrabold uppercase tracking-widest mb-1">End Date</span>
+                      <input 
+                        type="date"
+                        value={earningsEndDate}
+                        onChange={(e) => setEarningsEndDate(e.target.value)}
+                        className="bg-slate-900 border border-white/10 text-[9.5px] font-mono text-slate-200 rounded-lg p-1.5 focus:outline-none focus:border-indigo-400 inline-block w-full"
+                      />
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={() => { setEarningsStartDate(''); setEarningsEndDate(''); }}
+                      className="mt-4 sm:mt-auto py-1.5 px-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-[8px] font-black uppercase tracking-wider transition-colors ml-auto cursor-pointer"
+                    >
+                      Reset Range
+                    </button>
+                  </div>
+                )}
                 
                 <div className="h-44 w-full">
                   <ResponsiveContainer width="100%" height="100%">
@@ -2497,7 +3500,7 @@ export default function DeliveryPartnerApp() {
                         tickLine={false} 
                         axisLine={false}
                         dy={6}
-                        interval={earningsDaysFilter === '7' ? 0 : earningsDaysFilter === '15' ? 1 : 4}
+                        interval={earningsDaysFilter === '7' ? 0 : earningsDaysFilter === '15' ? 1 : Math.max(1, Math.floor(chartDataToShow.length / 6))}
                       />
                       <YAxis 
                         stroke="#64748b" 
@@ -2558,6 +3561,125 @@ export default function DeliveryPartnerApp() {
                 </div>
               </div>
 
+              {/* CUSTOMER TIP ANALYTICS BREAKDOWN */}
+              <div className="bg-slate-900 border border-white/5 p-5 rounded-[2rem] space-y-4" id="earnings-tip-analytics-container">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+                  <div>
+                    <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest block font-mono">Tip Metrics &amp; Trends</span>
+                    <h5 className="text-xs font-black text-white uppercase font-sans">Customer Tip Analytics Breakdown</h5>
+                  </div>
+                  
+                  {/* Daily vs Weekly Toggle */}
+                  <div className="flex bg-slate-950 p-1 border border-white/15 rounded-xl self-start sm:self-auto">
+                    <button
+                      onClick={() => setTipTrendInterval('daily')}
+                      className={`px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                        tipTrendInterval === 'daily' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Daily
+                    </button>
+                    <button
+                      onClick={() => setTipTrendInterval('weekly')}
+                      className={`px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                        tipTrendInterval === 'weekly' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Weekly
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tip Performance Stats Grid */}
+                <div className="grid grid-cols-3 gap-2.5">
+                  <div className="bg-slate-950 p-3 rounded-xl border border-white/5 text-left">
+                    <span className="text-[7.5px] font-black text-slate-500 uppercase tracking-widest block mb-0.5 font-mono">Total Tips</span>
+                    <p className="text-sm font-mono font-black text-amber-400">
+                      ₹{chartDataToShow.reduce((acc, current) => acc + (current.Tips || 0), 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="bg-slate-950 p-3 rounded-xl border border-white/5 text-left">
+                    <span className="text-[7.5px] font-black text-slate-500 uppercase tracking-widest block mb-0.5 font-mono">Avg Tip / Day</span>
+                    <p className="text-xs font-mono font-black text-emerald-400">
+                      ₹{chartDataToShow.length > 0 
+                        ? Math.round(chartDataToShow.reduce((acc, current) => acc + (current.Tips || 0), 0) / chartDataToShow.length).toLocaleString()
+                        : 0
+                      }
+                    </p>
+                  </div>
+                  <div className="bg-slate-950 p-3 rounded-xl border border-white/5 text-left">
+                    <span className="text-[7.5px] font-black text-slate-500 uppercase tracking-widest block mb-0.5 font-mono">Peak Tip Day</span>
+                    <p className="text-xs font-mono font-black text-indigo-400">
+                      ₹{chartDataToShow.length > 0 
+                        ? Math.max(...chartDataToShow.map(item => item.Tips || 0)).toLocaleString()
+                        : 0
+                      }
+                    </p>
+                  </div>
+                </div>
+
+                {/* Recharts Bar Chart Visualizing Tip Trends */}
+                <div className="h-44 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart 
+                      data={tipTrendInterval === 'daily' ? chartDataToShow : weeklyTipsData} 
+                      margin={{ top: 10, right: 5, left: -25, bottom: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                      <XAxis 
+                        dataKey="date" 
+                        stroke="#64748b" 
+                        fontSize={8} 
+                        tickLine={false} 
+                        axisLine={false}
+                        dy={6}
+                        interval={
+                          tipTrendInterval === 'weekly' 
+                            ? 0 
+                            : (earningsDaysFilter === '7' ? 0 : earningsDaysFilter === '15' ? 1 : Math.max(1, Math.floor(chartDataToShow.length / 6)))
+                        }
+                      />
+                      <YAxis 
+                        stroke="#64748b" 
+                        fontSize={8} 
+                        tickLine={false} 
+                        axisLine={false}
+                        tickFormatter={(v) => `₹${v}`}
+                      />
+                      <ChartTooltip 
+                        contentStyle={{ 
+                          backgroundColor: '#090d16', 
+                          borderColor: 'rgba(255,255,255,0.08)',
+                          borderRadius: '12px',
+                          fontSize: '10px',
+                          fontFamily: 'monospace',
+                          color: '#fff'
+                        }}
+                        labelClassName="text-white font-black"
+                      />
+                      <Bar 
+                        dataKey="Tips" 
+                        fill="#F59E0B" 
+                        radius={[4, 4, 0, 0]}
+                        name="Customer Tips (₹)"
+                        isAnimationActive={true}
+                        animationDuration={800}
+                      >
+                        {(tipTrendInterval === 'daily' ? chartDataToShow : weeklyTipsData).map((entry, index) => (
+                          <Cell 
+                            key={`cell-${index}`} 
+                            className="cursor-pointer transition-opacity"
+                            fill={index % 2 === 0 ? '#F59E0B' : '#D97706'} 
+                            fillOpacity={0.85}
+                            id={`tip-bar-cell-${index}`}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
               {/* DETAILED DAILY PAYOUT TABLE LIST */}
               <div className="bg-slate-900 border border-white/5 p-4 rounded-3xl space-y-3" id="earnings-detailed-statement-list">
                 <div className="flex justify-between items-center">
@@ -2566,7 +3688,7 @@ export default function DeliveryPartnerApp() {
                     <h5 className="text-xs font-black text-white uppercase font-sans">Daily Settlement Logs ({sortedBreakdownData.length})</h5>
                   </div>
                   <span className="text-[8px] text-slate-400 font-mono font-bold uppercase">
-                    Range: {earningsDaysFilter === '7' ? '7 Days' : earningsDaysFilter === '15' ? '15 Days' : earningsDaysFilter === '30' ? '30 Days' : earningsDaysFilter === '60' ? '60 Days' : earningsDaysFilter === 'current_month' ? 'Current Month' : 'Previous Month'}
+                    Range: {earningsDaysFilter === '7' ? '7 Days' : earningsDaysFilter === '15' ? '15 Days' : earningsDaysFilter === '30' ? '30 Days' : earningsDaysFilter === '60' ? '60 Days' : earningsDaysFilter === 'current_month' ? 'Current Month' : earningsDaysFilter === 'previous_month' ? 'Previous Month' : `Custom (${earningsStartDate || 'Any'} to ${earningsEndDate || 'Any'})`}
                   </span>
                 </div>
 
@@ -3064,7 +4186,70 @@ export default function DeliveryPartnerApp() {
                     </div>
                   </div>
 
+                  {/* AUTO-OFFLINE CONTROL PANEL */}
+                  <div className="p-4 bg-slate-900 rounded-3xl border border-white/5 text-left space-y-4" id="systems-caching-diagnostics">
+                    <h5 className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1.5 border-b border-white/5 pb-2">
+                      <BatteryWarning className="w-3.5 h-3.5" />
+                      <span>Rider Auto-Offline & Battery Conservation</span>
+                    </h5>
+
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="space-y-0.5">
+                          <p className="text-[10.5px] font-black text-white uppercase tracking-wide">Inactivity Sleep Limit</p>
+                          <p className="text-[8.5px] font-medium text-slate-500 uppercase tracking-tight">Rider auto-prompts to go offline if no movement is detected on GPS</p>
+                        </div>
+                        <select
+                          value={autoOfflineMinutes}
+                          onChange={(e) => {
+                            const mins = parseInt(e.target.value);
+                            setAutoOfflineMinutes(mins);
+                            setLastMovementTime(Date.now());
+                            speakCue(`Auto offline timer set to ${mins === 0 ? 'disabled' : mins + ' minutes'}`);
+                          }}
+                          className="bg-slate-950 border border-white/10 text-xs font-bold text-amber-500 rounded-lg px-2.5 py-1.5 outline-none focus:border-amber-500 cursor-pointer"
+                        >
+                          <option value="0">⚠️ Disabled</option>
+                          <option value="5">🕒 5 Minutes (Demo)</option>
+                          <option value="15">🕒 15 Minutes</option>
+                          <option value="30">🕒 30 Minutes</option>
+                          <option value="60">🕒 60 Minutes</option>
+                        </select>
+                      </div>
+
+                      <div className="bg-slate-950/60 border border-white/5 p-3 rounded-2xl flex items-center justify-between text-[9px]">
+                        <span className="font-bold text-slate-400 uppercase tracking-widest">Inactivity Duration Tracker:</span>
+                        <span className="font-mono text-amber-400 font-extrabold bg-slate-950 px-2 py-0.5 rounded">
+                          {autoOfflineMinutes === 0 ? 'PAUSED' : 'ACTIVE MONITOR'}
+                        </span>
+                      </div>
+
+                      <div className="flex gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Instantly simulate no movement / force trigger the auto-offline warning dialog
+                            setLastMovementTime(Date.now() - autoOfflineMinutes * 60 * 1000 - 1000);
+                            alert("🔬 Simulation: Movement timeout forced instantly! The sleep alert dialog will activate on the next background cron check (within 10s).");
+                          }}
+                          disabled={autoOfflineMinutes === 0}
+                          className="flex-1 py-1.5 bg-slate-950 hover:bg-slate-900 border border-white/5 hover:border-amber-500/20 text-slate-400 hover:text-white rounded-lg text-[8px] font-black uppercase tracking-widest cursor-pointer disabled:opacity-50 transition-all"
+                        >
+                          ⏳ Fast-Sim Inactivity Timeout
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-2 text-left">
+                    <button
+                      onClick={() => setShowLegalTerms(true)}
+                      className="w-full py-4 bg-indigo-505/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/10 rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                    >
+                      <ShieldCheck className="w-4 h-4 text-indigo-400" />
+                      <span>Platform Payment & Refund Contract</span>
+                    </button>
+
                     <button
                       onClick={handleOpenEdit}
                       className="w-full py-4 bg-slate-900 border border-white/5 hover:border-amber-500/30 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] flex items-center justify-center gap-2 cursor-pointer transition-all"
@@ -3090,6 +4275,25 @@ export default function DeliveryPartnerApp() {
           {/* TAB 4: DIRECT CARE SUPPORT HELPDESK CHAT */}
           {activeTab === 'support' && (
             <div className="space-y-4 flex flex-col h-[65vh] text-left">
+
+              {/* Direct support helpline banner */}
+              <div className="px-4 py-3 bg-slate-900 border border-amber-500/20 rounded-2xl flex items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center font-black text-amber-500">
+                    <PhoneCall className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="text-[10px] font-black uppercase text-white leading-none tracking-wide">Helpline Care Support</h5>
+                    <span className="text-[10px] font-bold text-amber-500 mt-1.5 block font-mono">+91 7416574197</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => window.open("tel:7416574197")}
+                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-[9.5px] text-slate-950 font-black uppercase rounded-lg tracking-wider transition-all cursor-pointer"
+                >
+                  Call Helpline
+                </button>
+              </div>
               
               <div className="px-4 py-3 bg-slate-900 border border-white/5 rounded-2xl flex items-center gap-3 shrink-0">
                 <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center font-black text-amber-500 text-xs">DC</div>
@@ -3165,14 +4369,14 @@ export default function DeliveryPartnerApp() {
                 </div>
 
                 {/* Simulated Console Logs Terminal */}
-                <div className="bg-slate-950 rounded-2xl p-4 text-left font-mono text-[10px] space-y-2 max-h-[180px] overflow-y-auto border border-white/5 scrollbar-thin scrollbar-thumb-slate-800">
+                <div className="bg-slate-950 rounded-2xl p-4 text-left font-mono text-[10px] space-y-2 max-h-[140px] overflow-y-auto border border-white/5 scrollbar-thin scrollbar-thumb-slate-800">
                   {sosLogs.map((logStr, idx) => (
                     <div 
                       key={idx} 
                       className={`leading-relaxed border-l-2 pl-2 ${
                         logStr.includes('SUCCESS') 
                           ? 'border-emerald-500 text-emerald-400' 
-                          : logStr.includes('distress') || logStr.includes('⚠️') || logStr.includes('🚨')
+                          : logStr.includes('distress') || logStr.includes('⚠️') || logStr.includes('🚨') || logStr.includes('CRASH') || logStr.includes('HIGH-G')
                           ? 'border-rose-500 text-rose-400' 
                           : 'border-slate-800 text-slate-300'
                       }`}
@@ -3185,6 +4389,181 @@ export default function DeliveryPartnerApp() {
                       <span>⚡ Syncing and relaying diagnostics...</span>
                     </div>
                   )}
+                </div>
+
+                {/* SIREN INTEGRITY GUARDIAN TIMERS */}
+                <div className="bg-slate-950 p-4.5 rounded-[2rem] border border-amber-500/10 text-left space-y-3 shadow-inner">
+                  <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-amber-500 flex items-center gap-1.5 font-mono">
+                      <Clock className="w-3.5 h-3.5 text-amber-500 animate-spin" /> Siren Playback Guard
+                    </span>
+                    <span className="font-mono text-[10px] text-slate-400 font-bold">
+                      {isSirenMuted ? (
+                        <span className="text-emerald-405 font-extrabold text-emerald-400 uppercase">● Silenced</span>
+                      ) : (
+                        <span className="text-rose-450 font-extrabold text-rose-400 animate-pulse uppercase">● Playing</span>
+                      )}
+                    </span>
+                  </div>
+
+                  {isSirenMuted ? (
+                    <div className="bg-slate-900/80 p-3 rounded-2xl border border-emerald-500/10 text-center space-y-1">
+                      <p className="text-[10px] text-emerald-400 font-black uppercase tracking-widest">Siren Speaker Silenced ✓</p>
+                      <p className="text-[9px] text-slate-500 font-bold">Accidental prolonged noise blocked. Audio emission has been terminated.</p>
+                      {sirenCountdown > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsSirenMuted(false);
+                            setSirenCountdown(30);
+                            setSosLogs(prev => [...prev, "🔊 [RE-ARM] Siren speaker re-armed manually by user request."]);
+                          }}
+                          className="mt-1 text-[8px] font-black uppercase tracking-widest text-amber-500 hover:underline cursor-pointer"
+                        >
+                          Re-Arm Speaker Squelch 📢
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="flex justify-between items-center text-[10px] font-black uppercase text-slate-300">
+                        <span>Auto-Silencing Cutoff</span>
+                        <span className="font-mono text-rose-400 font-extrabold">{sirenCountdown}s remaining</span>
+                      </div>
+                      
+                      {/* Interactive Visual Countdown Progress Bar */}
+                      <div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden border border-white/5">
+                        <div 
+                          className="h-full bg-gradient-to-r from-rose-500 to-amber-500 transition-all duration-300"
+                          style={{ width: `${(sirenCountdown / 30) * 100}%` }}
+                        />
+                      </div>
+
+                      {/* Dynamic Low-Pass filter: Automatically reduce pitch if battery drops below 15% */}
+                      {batteryLevel !== null && batteryLevel < 0.15 && (
+                        <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-2xl flex items-start gap-2 select-none animate-pulse">
+                          <Sun className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <div className="flex-1 space-y-0.5">
+                            <span className="text-[9px] font-black uppercase text-amber-400 leading-none block">🔋 Low Battery Power-Guard</span>
+                            <span className="text-[8px] text-slate-400 font-medium leading-normal block">
+                              Siren pitch & frequency harmonics attenuated automatically to conserve speaker life at {Math.round(batteryLevel * 100)}% Battery.
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Manual Confirmation Action */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSirenMuted(true);
+                          setSosLogs(prev => [
+                            ...prev,
+                            "🛡️ [MANUAL OVERRIDE] Safety confirmation gesture processed. Siren manually muted."
+                          ]);
+                        }}
+                        className="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-black text-[9px] uppercase tracking-widest rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/40 transition-all cursor-pointer"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-white" />
+                        <span>Confirm Safety & Mute Siren</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* TAILORED EMERGENCY ALARM SIREN CONTROLS */}
+                <div className="bg-slate-950/90 p-4.5 rounded-[2rem] border border-rose-500/15 space-y-4 text-left">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-rose-400 flex items-center gap-1.5">
+                      <Volume2 className="w-4 h-4 text-rose-500 animate-pulse" /> Siren Config Panel
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest bg-rose-500/10 px-2 py-0.5 rounded text-rose-400">
+                      {sirenMode === 'Pulse' ? '⚠️ Pulsing Wave' : '📢 Continuous'}
+                    </span>
+                  </div>
+
+                  {/* Volume Slider Block */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center text-[10px] font-black uppercase text-slate-300">
+                      <span>Alarm Volume Intensity</span>
+                      <span className="font-mono text-amber-500 font-extrabold">{Math.round(sirenVolume * 100)}%</span>
+                    </div>
+                    <div className="flex items-center gap-3 bg-slate-900 px-3 py-2 rounded-2xl border border-white/5">
+                      <VolumeX className="w-4 h-4 text-slate-500" />
+                      <input 
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={sirenVolume}
+                        onChange={(e) => setSirenVolume(parseFloat(e.target.value))}
+                        className="flex-1 h-1.5 bg-slate-850 rounded-lg appearance-none cursor-pointer accent-rose-500 focus:outline-none"
+                      />
+                      <Volume2 className="w-4 h-4 text-rose-500" />
+                    </div>
+                  </div>
+
+                  {/* Siren Wave Pattern Selector */}
+                  <div 
+                    id="sirenMode" 
+                    className="space-y-3 p-3 rounded-2xl border transition-all"
+                    style={{
+                      borderColor: sirenMode === 'Pulse' && isTriggeringSOS && !isSirenMuted ? undefined : 'rgba(255,255,255,0.05)',
+                      animation: sirenMode === 'Pulse' && isTriggeringSOS && !isSirenMuted 
+                        ? `sirenPulseAnim ${2 * (pulseSpeed === 'Slow' ? 1000 : pulseSpeed === 'Medium' ? 500 : 220)}ms infinite ease-in-out` 
+                        : 'none'
+                    }}
+                  >
+                    <div>
+                      <span className="text-[9px] font-black uppercase text-slate-400 block tracking-wider">Sound Preset Environment</span>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        <button
+                          type="button"
+                          onClick={() => setSirenMode('Continuous')}
+                          className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wider text-center transition-all cursor-pointer ${
+                            sirenMode === 'Continuous'
+                              ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50'
+                              : 'bg-slate-900 text-slate-400 border border-white/5 hover:bg-slate-850/50'
+                          }`}
+                        >
+                          Continuous
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSirenMode('Pulse')}
+                          className={`py-2 rounded-xl text-[9px] font-black uppercase tracking-wider text-center transition-all cursor-pointer ${
+                            sirenMode === 'Pulse'
+                              ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50'
+                              : 'bg-slate-900 text-slate-400 border border-white/5 hover:bg-slate-850/50'
+                          }`}
+                        >
+                          Pulse Mode
+                        </button>
+                      </div>
+                    </div>
+
+                    {sirenMode === 'Pulse' && (
+                      <div className="space-y-1.5 pt-2 border-t border-white/5">
+                        <span className="text-[8px] font-black uppercase text-amber-400 block tracking-wider">Pulse Alternation Speed</span>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {(['Slow', 'Medium', 'High'] as const).map((speed) => (
+                            <button
+                              key={speed}
+                              type="button"
+                              onClick={() => setPulseSpeed(speed)}
+                              className={`py-1 rounded-lg text-[8px] font-black uppercase tracking-wider text-center transition-all cursor-pointer ${
+                                pulseSpeed === speed
+                                  ? 'bg-amber-400 text-slate-950 font-extrabold shadow-md shadow-amber-950/40'
+                                  : 'bg-slate-900 text-slate-400 border border-white/5 hover:bg-slate-850'
+                              }`}
+                            >
+                              {speed}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Actions */}
@@ -3205,6 +4584,281 @@ export default function DeliveryPartnerApp() {
                       <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping" />
                       <span>Transmitting Active GPS Carrier Signal...</span>
                     </div>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Auto-Offline Sleep Prompt Overlay */}
+        <AnimatePresence>
+          {showAutoOfflinePrompt && (
+            <div className="fixed inset-0 z-[11000] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+              <motion.div
+                initial={{ scale: 0.95, y: 10, opacity: 0 }}
+                animate={{ scale: 1, y: 0, opacity: 1 }}
+                exit={{ scale: 0.95, y: 10, opacity: 0 }}
+                className="bg-slate-900 border border-white/10 w-full max-w-sm rounded-[2.5rem] p-6 shadow-2xl relative space-y-4 text-center"
+              >
+                <div className="w-16 h-16 bg-amber-500/10 rounded-full flex items-center justify-center mx-auto border border-amber-500/25">
+                  <AlertCircle className="w-8 h-8 text-amber-500 animate-bounce" />
+                </div>
+                
+                <div className="space-y-1">
+                  <h3 className="text-sm font-black text-white uppercase tracking-wider">⏳ Sleep Warning: Auto-Offline?</h3>
+                  <p className="text-[10px] font-black text-amber-500 uppercase tracking-widest">Inactivity Power Conservation Protocol</p>
+                </div>
+
+                <p className="text-[10.5px] text-slate-350 leading-relaxed font-bold">
+                  Hi, {riderProfile?.name || 'Partner'}! Our systems have detected no GPS movement for over <span className="text-white font-extrabold">{autoOfflineMinutes} minutes</span>. 
+                  Would you like to toggle offline now to save cellular data and device battery?
+                </p>
+
+                <div className="flex flex-col gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setShowAutoOfflinePrompt(false);
+                      // Force rider offline
+                      if (riderProfile?.isOnline) {
+                        await handleDutyToggle();
+                      }
+                      speakCue("You are now offline. Stay safe.");
+                    }}
+                    className="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-black uppercase text-[10px] tracking-widest transition-all cursor-pointer shadow-lg shadow-rose-950/20"
+                  >
+                    🔴 Set Me Offline
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAutoOfflinePrompt(false);
+                      setLastMovementTime(Date.now());
+                      speakCue("Activity confirmed. Keeping you online.");
+                    }}
+                    className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all cursor-pointer border border-[#ffffff09]"
+                  >
+                    🟢 Keep Me Online
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Rider Corporate Legal & Refund Contract Modal */}
+        <AnimatePresence>
+          {showLegalTerms && (
+            <div className="fixed inset-0 z-[10005] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0, y: 15 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 15 }}
+                className="bg-slate-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-6 shadow-2xl relative flex flex-col max-h-[85vh] text-left"
+              >
+                <div className="flex items-center gap-3 border-b border-white/5 pb-4 mb-4">
+                  <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-500 shrink-0">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider">Payment & Refund Policy</h3>
+                    <p className="text-[9px] font-black text-amber-500 uppercase tracking-widest mt-0.5">Carrier Terms of Compensation</p>
+                  </div>
+                  <button 
+                    onClick={() => setShowLegalTerms(false)}
+                    className="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white ml-auto transition-colors focus:outline-none"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 text-slate-300 font-bold leading-relaxed text-[10.5px]">
+                  <section className="space-y-1.5">
+                    <h4 className="text-[9px] font-black text-amber-400 uppercase tracking-widest">1. Customer Refund Timelines</h4>
+                    <p>
+                      To maintain high customer trust, we follow strict service standards. If a customer cancels an order eligible for a refund:
+                    </p>
+                    <div className="bg-slate-950 border border-white/5 rounded-xl p-3 space-y-1.5 text-[9.5px]">
+                      <p className="font-extrabold text-amber-500">⏳ Accepted Processing Windows:</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        <li><strong className="text-white">UPI (GPay/PhonePe/Paytm):</strong> Processed instantly and credited within <span className="underline">a few hours or up to 1 day</span>.</li>
+                        <li><strong className="text-white">Debit & Credit Cards:</strong> Gateway banking clearance takes between <span className="underline">3 to 10 business days</span>.</li>
+                      </ul>
+                    </div>
+                  </section>
+
+                  <section className="space-y-1.5">
+                    <h4 className="text-[9px] font-black text-amber-400 uppercase tracking-widest">2. Compensation on Cancellations</h4>
+                    <p>
+                      If a customer or store cancels an order while you are on-route or have already completed product pickup, standard trip compensation is automatically verified and credited to your Rider Wallet to cover your time and fuel.
+                    </p>
+                  </section>
+
+                  <section className="space-y-1.5">
+                    <h4 className="text-[9px] font-black text-amber-400 uppercase tracking-widest">3. Escrow & Wallet Cash Matching</h4>
+                    <p>
+                      Cash collection for Cash on Delivery (COD) orders must match completely. Under-collected values or incorrect customer cancellations are automatically flagged by digital ledgers.
+                    </p>
+                  </section>
+
+                  <p className="text-[9px] text-slate-500 italic mt-3">
+                    These terms form part of your active carrier partner contract with Local Bandi Tech. For urgent dispatch/cash settlement help, raise a Helpdesk query or contact Carrier Operations.
+                  </p>
+                </div>
+
+                <div className="pt-4 border-t border-white/5 mt-4">
+                  <button 
+                    onClick={() => setShowLegalTerms(false)}
+                    className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all"
+                  >
+                    Agree & Accept Carrier terms
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* MANUAL RETRY & SYNCHRONIZATION QUEUE MODAL OVERLAY */}
+        <AnimatePresence>
+          {showSyncStatusModal && (
+            <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm font-sans">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0, y: 15 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 15 }}
+                className="bg-slate-900 border border-white/10 w-full max-w-lg rounded-[2.5rem] p-6 shadow-2xl relative flex flex-col max-h-[85vh] text-left text-white"
+              >
+                {/* Header */}
+                <div className="flex items-center gap-3 border-b border-white/5 pb-4 mb-4 font-sans">
+                  <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400 shrink-0">
+                    <Database className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-wider text-slate-100">Sync Manager</h3>
+                    <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mt-0.5 font-mono">Offline Cached Sync Queue</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setShowSyncStatusModal(false)}
+                    className="p-2.5 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white ml-auto transition-colors focus:outline-none cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Subtitle / Helper info */}
+                <div className="bg-slate-950/50 border border-white/5 p-3 rounded-2xl mb-4 text-[10px] text-slate-400 font-semibold leading-relaxed font-sans">
+                  <span className="font-extrabold text-indigo-400 block uppercase tracking-wide mb-0.5">📁 Stored Offline Synchronizations:</span>
+                  The actions listed below were generated during offline status gaps. Click <strong className="text-slate-200">Retry Sync</strong> on any item to force database reconciliation, or choose <strong className="text-slate-200">Reconcile All</strong>.
+                </div>
+
+                {/* Queue list container */}
+                <div className="flex-1 overflow-y-auto space-y-3 pr-1 pb-4 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent font-mono">
+                  {syncQueueItems.length === 0 ? (
+                    <div className="text-center py-12 space-y-2 font-sans">
+                      <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mx-auto text-slate-500">
+                        <Check className="w-6 h-6 text-emerald-400" />
+                      </div>
+                      <p className="text-xs font-mono text-slate-400 uppercase tracking-widest">No pending sync jobs found!</p>
+                      <p className="text-[9px] text-slate-500 uppercase font-black">All offline items have been synchronized with the main servers.</p>
+                    </div>
+                  ) : (
+                    syncQueueItems.map((item, index) => {
+                      const displayType = item.type === 'DELIVERY_COMPLETED' 
+                        ? '🎁 Complete Delivery Payment' 
+                        : item.type === 'STATUS_UPDATE' 
+                        ? '⚡ Cycle Status Update' 
+                        : item.type === 'CUSTOM_STATUS' 
+                        ? '🚲 Custom Status change' 
+                        : '🔄 Job Synchronize Action';
+
+                      return (
+                        <div key={item.id || index} className="bg-slate-950/60 p-3.5 rounded-2xl border border-white/5 space-y-2.5 hover:border-white/10 transition-all">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className="text-[9px] font-black text-indigo-400 uppercase tracking-wider block bg-indigo-950/50 py-0.5 px-2 rounded-md w-max border border-indigo-900/30">
+                                {displayType}
+                              </span>
+                              <span className="text-[7.5px] text-slate-500 block mt-1 uppercase">ID: {item.id}</span>
+                            </div>
+                            <span className="text-[8px] font-bold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/15 uppercase tracking-widest animate-pulse">
+                              Pending Retry
+                            </span>
+                          </div>
+
+                          <div className="space-y-1 text-[9.5px] text-slate-300 font-bold bg-slate-900/40 p-2.5 rounded-xl border border-white/5">
+                            {item.type === 'DELIVERY_COMPLETED' && (
+                              <>
+                                <p>Order ID: <span className="text-white font-extrabold">{item.orderId}</span></p>
+                                <p>Rider Payout: <span className="text-emerald-400">₹{item.payoutBreakdown?.tripPayout || 45}</span> | Tips: <span className="text-amber-400">₹{item.payoutBreakdown?.tipPayout || 0}</span></p>
+                                <p>Amount Paid: <span className="text-white">₹{item.orderAmount}</span></p>
+                              </>
+                            )}
+                            {item.type === 'STATUS_UPDATE' && (
+                              <>
+                                <p>Target Order: <span className="text-white font-extrabold">{item.orderId}</span></p>
+                                <p>Set Status: <span className="text-yellow-400 uppercase">{item.orderUpdate?.status}</span></p>
+                              </>
+                            )}
+                            {item.type === 'CUSTOM_STATUS' && (
+                              <>
+                                <p>Partner Status: <span className="text-white uppercase font-black">{item.statusValue}</span></p>
+                              </>
+                            )}
+                            {!['DELIVERY_COMPLETED', 'STATUS_UPDATE', 'CUSTOM_STATUS'].includes(item.type) && (
+                              <p className="break-all">{JSON.stringify(item.orderUpdate || item)}</p>
+                            )}
+                          </div>
+
+                          <div className="flex gap-2 font-sans pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() => handleRetrySingleJob(item)}
+                              disabled={isSyncingOfflineQueue}
+                              className="flex-1 py-1.5 px-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-black text-[9px] uppercase tracking-wider rounded-lg shadow-md transition-all flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              Retry Sync
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteOfflineJob(item.id)}
+                              className="py-1.5 px-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-black text-[9px] uppercase tracking-wider rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                              Purge
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Footer Controls */}
+                <div className="border-t border-white/5 pt-4 flex gap-3 font-sans">
+                  <button
+                    type="button"
+                    onClick={() => setShowSyncStatusModal(false)}
+                    className="flex-1 py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all cursor-pointer text-center"
+                  >
+                    Close Manager
+                  </button>
+                  {syncQueueItems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await handleSyncOfflineQueue();
+                        await loadSyncQueueItems();
+                      }}
+                      disabled={isSyncingOfflineQueue}
+                      className="flex-1 py-3.5 bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncingOfflineQueue ? 'animate-spin' : ''}`} />
+                      Reconcile All
+                    </button>
                   )}
                 </div>
               </motion.div>

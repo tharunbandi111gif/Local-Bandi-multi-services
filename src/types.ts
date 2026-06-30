@@ -69,6 +69,7 @@ export interface Branch {
   profitShare: number; // percentage
   contactPhone: string;
   adminEmail?: string;
+  secPasscode?: string;
   vendorsCount: number;
   ordersCount: number;
   revenue: number;
@@ -268,6 +269,7 @@ export interface Transaction {
 export interface CartItem extends Product {
   quantity: number;
   vendorId?: string;
+  isMonthlySubscription?: boolean;
 }
 
 
@@ -318,6 +320,7 @@ export interface SupportMessage {
   text: string;
   timestamp: any;
   careType?: string;
+  imageUrl?: string;
 }
 
 export interface SupportChat {

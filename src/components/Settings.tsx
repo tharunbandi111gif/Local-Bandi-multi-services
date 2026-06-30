@@ -86,6 +86,18 @@ export default function Settings({
 
   const faqs = [
     {
+      q: "Can I cancel my order? How do I get refund?",
+      a: "Yes, orders can be cancelled before they enter preparation. Refund timelines depend on your payment method: UPI refunds occur within a few hours or up to 1 day. Bank card refunds are initiated immediately but take between 3 and 10 business days to reflect in your card statement based on banking policies."
+    },
+    {
+      q: "How long do UPI refunds take?",
+      a: "UPI payment refunds (via Google Pay, PhonePe, Paytm, BHIM, etc.) are processed extremely fast and will appear back in your banking source within a few hours or up to a day."
+    },
+    {
+      q: "How long do Credit/Debit card refunds take?",
+      a: "While our system initiates card refunds immediately upon order cancellation, processing through visa/mastercard gateway networks and your card issuing bank typically takes 3 to 10 business days."
+    },
+    {
       q: "My payment failed but money was deducted.",
       a: "Don't worry! If a payment fails, your bank usually reverses the amount within 3-5 business days. You can also contact us with the transaction ID."
     },

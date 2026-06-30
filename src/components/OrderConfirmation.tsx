@@ -15,7 +15,10 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
   const vendorPos: [number, number] = [17.2473, 80.1514];
   const customerPos: [number, number] = [17.2550, 80.1600];
   
-  const total = items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const total = items.reduce((acc, item) => {
+    const base = item.price * item.quantity;
+    return acc + (item.isMonthlySubscription ? base * 30 : base);
+  }, 0);
   const finalTotal = Math.round(total * 1.05) + (total > 500 ? 0 : 40);
 
   useEffect(() => {
@@ -153,6 +156,40 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
             </div>
           </div>
         </div>
+
+        {/* Only Monthly plan chosen customers activation callback request section */}
+        {items.some(i => i.isMonthlySubscription) && (
+          <div className="bg-gradient-to-br from-indigo-950 to-slate-900 border border-indigo-500/20 rounded-[2.5rem] p-6 text-white space-y-4 shadow-xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-500/10 text-indigo-300 rounded-2xl flex items-center justify-center border border-indigo-500/20 shrink-0">
+                <Phone className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <h4 className="text-sm font-black uppercase tracking-tight text-slate-100">Monthly Plan Chosen</h4>
+                <p className="text-[8px] font-black uppercase tracking-widest text-emerald-400">Verification ID: #{orderId}</p>
+              </div>
+            </div>
+            <p className="text-[11px] text-indigo-150 leading-relaxed font-semibold text-slate-300">
+              Only monthly basis plans chosen customer can should inform to customer service or request a callback for final service activation slot times and subscription verification.
+            </p>
+            <div className="flex gap-2.5 pt-1.5 font-sans">
+              <a 
+                href="mailto:Localbandimultiservices@gmail.com?subject=Monthly Subscription Activation Request&body=Hi support, I have subscribed copy of Order ID: #{orderId}. Please call me back to confirm slot, delivery times, and activate my monthly direct program." 
+                className="flex-1 py-3 text-center bg-transparent border-2 border-indigo-500/20 text-white font-black text-[9px] uppercase tracking-wider rounded-xl cursor-pointer hover:bg-white/5 active:scale-95 transition-all"
+              >
+                Call / Contact Service
+              </a>
+              <button 
+                onClick={() => {
+                  alert("✓ Callback requested successfully! Customer support will reach you via Localbandimultiservices@gmail.com or call within morning daily slots 9:20 AM to 5:00 PM.");
+                }}
+                className="flex-1 py-3 bg-yellow-400 text-slate-950 font-black text-[9px] uppercase tracking-wider rounded-xl shadow-lg cursor-pointer hover:bg-yellow-350 active:scale-95 transition-all text-center"
+              >
+                Request Callback
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="bg-indigo-900 rounded-[2.5rem] p-8 text-white relative overflow-hidden">
           <div className="relative z-10">

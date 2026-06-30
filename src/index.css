@@ -44,3 +44,14 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+@keyframes sirenPulseAnim {
+  0%, 100% {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.4);
+  }
+}

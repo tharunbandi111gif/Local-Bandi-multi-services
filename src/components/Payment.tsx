@@ -392,7 +392,7 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                       <span className="text-slate-905 text-sm font-black">₹{finalAmountIncludingTip}</span>
                    </div>
                    <div className="flex justify-between items-center text-[10px] font-bold text-gray-400 italic">
-                      <span>Taxes & App Charges</span>
+                      <span>App Charges</span>
                       <span className="text-emerald-600 font-black">INCLUDED</span>
                    </div>
                    <div className="flex justify-between items-center text-[10px] font-bold text-gray-400 italic">

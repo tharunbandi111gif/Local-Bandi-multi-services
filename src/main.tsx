@@ -1,9 +1,15 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
+import React, { useEffect } from 'react';
 import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import { FirebaseProvider } from './contexts/FirebaseContext.tsx';
 import './index.css';
+
+// MSG91 OTP Widget Configuration & Initialization
+const widgetId = "36666c664e56353538383733";
+const authToken = "514095TuKDjYZn2WUw69fde13eP1";
+console.log("✓ Web MSG91 direct fetch integration configured (Widget ID:", widgetId, ")");
 
 // Silence Firebase quota-exhausted and assertion failures to prevent app crash
 if (typeof window !== 'undefined') {
