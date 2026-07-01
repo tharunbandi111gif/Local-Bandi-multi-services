@@ -1,0 +1,17 @@
+{
+  "name": "Local Bandi Multi Services",
+  "short_name": "LocalBandi",
+  "description": "Hyperlocal Logistics & Services for Khammam",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#facc15",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3063/3063822.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

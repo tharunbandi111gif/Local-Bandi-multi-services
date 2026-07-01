@@ -1,0 +1,1 @@
+const n={async sendSMS(o,t){try{const e=await(await fetch("/api/send-sms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({to:o,message:t})})).json();if(e.error)throw new Error(e.error);return e}catch(r){throw console.error("SMS Error:",r),r}}};export{n as integrationService};
