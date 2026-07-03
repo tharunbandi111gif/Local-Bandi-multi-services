@@ -552,8 +552,7 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
       label: 'Founder Dashboard', 
       sub: 'Manage App & Approvals', 
       onClick: () => {
-        onNavigate('home');
-        localStorage.setItem('openAdminOnHome', 'true');
+        window.location.href = '/admin';
       }
     }] : []),
     ...((isAdmin) ? [

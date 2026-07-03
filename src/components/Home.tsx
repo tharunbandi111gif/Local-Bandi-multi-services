@@ -621,18 +621,9 @@ export default function Home({
   }, []);
 
   useEffect(() => {
-    const shouldOpenAdmin = localStorage.getItem('openAdminOnHome');
-    const lastView = localStorage.getItem('admin_last_view');
-    if (isAdmin) {
-      const hasAutoOpened = sessionStorage.getItem('admin_auto_opened');
-      if (!hasAutoOpened || shouldOpenAdmin === 'true') {
-        setIsAdminOpen(true);
-        sessionStorage.setItem('admin_auto_opened', 'true');
-        if (lastView) setAdminView(lastView as any);
-        localStorage.removeItem('openAdminOnHome');
-        localStorage.removeItem('admin_last_view');
-      }
-    }
+    // Admin panel is moved to standalone console at /admin
+    localStorage.removeItem('openAdminOnHome');
+    localStorage.removeItem('admin_last_view');
   }, [isAdmin]);
 
   const [activeTopBanner, setActiveTopBanner] = useState(0);
@@ -2564,28 +2555,13 @@ export default function Home({
   }, [activeAdminSessions]);
 
   useEffect(() => {
-    if (isAdmin && !isAdminLoggedIn) {
-      setIsAdminLoggedIn(true);
-      localStorage.setItem('admin_session_active', 'true');
-    }
-
-    if (isAdminLoggedIn) {
-      onAdminAuth?.(true);
-    }
-    
-    // Check for deep links from profile
-    if (localStorage.getItem('openAdminOnHome') === 'true') {
-      localStorage.removeItem('openAdminOnHome');
-      if (isAdmin || isAdminLoggedIn) setIsAdminOpen(true);
-      else setShowAdminLogin(true);
-    }
     if (localStorage.getItem('openPartnerForm')) {
       const type = localStorage.getItem('openPartnerForm');
       localStorage.removeItem('openPartnerForm');
       setPartnerType(type as any);
       setShowPartnerForm(true);
     }
-  }, [isAdmin, isAdminLoggedIn, vendors]);
+  }, [vendors]);
 
   const handleSendOtp = async () => {
     if (!adminPhone || adminPhone.length < 10) {
@@ -3052,7 +3028,7 @@ export default function Home({
 
       {/* Admin Login Modal */}
       <AnimatePresence>
-        {showAdminLogin && (
+        {false && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
@@ -3191,7 +3167,7 @@ export default function Home({
         )}
       </AnimatePresence>
 
-        {showPanelSelection && (
+        {false && (
           <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-xl">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
@@ -3275,7 +3251,7 @@ export default function Home({
       {/* Founder Admin Dashboard */}
 
       <AnimatePresence>
-        {isLogisticsOpen && (
+        {false && (
           <div className="fixed inset-0 z-[120] bg-white flex flex-col">
             <header className="p-6 bg-gray-900 text-white flex items-center justify-between shadow-2xl">
               <div className="flex items-center gap-4">
@@ -3799,7 +3775,7 @@ export default function Home({
       </AnimatePresence>
 
       <AnimatePresence>
-        {isAdminOpen && (
+        {false && (
           <div className="fixed inset-0 z-[120] bg-white">
             <header className="p-6 border-b border-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -10606,19 +10582,17 @@ export default function Home({
       </nav>
 
       {/* Floating Customer Care Button */}
-      {!showAdminLogin && !isAdminOpen && !isLogisticsOpen && (
-        <motion.button
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-          onClick={() => setShowCustomerCare && setShowCustomerCare(true)}
-          className="fixed bottom-28 right-6 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg z-40 border-2 border-white cursor-pointer"
-        >
-          <Headphones className="w-4 h-4" />
-          <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white animate-pulse" />
-        </motion.button>
-      )}
+      <motion.button
+        initial={{ scale: 0, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.9 }}
+        onClick={() => setShowCustomerCare && setShowCustomerCare(true)}
+        className="fixed bottom-28 right-6 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg z-40 border-2 border-white cursor-pointer"
+      >
+        <Headphones className="w-4 h-4" />
+        <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white animate-pulse" />
+      </motion.button>
 
       {/* Cancellation Reason Modal */}
       <AnimatePresence>

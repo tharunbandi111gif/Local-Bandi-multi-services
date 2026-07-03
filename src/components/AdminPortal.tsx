@@ -1744,6 +1744,15 @@ export default function AdminPortal() {
           })}
 
           <button 
+            onClick={() => window.location.href = '/'}
+            className="px-4 py-2.5 bg-emerald-500/15 border border-emerald-500/10 rounded-xl text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all active:scale-95 text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 cursor-pointer"
+            title="Return to Customer App"
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>View App</span>
+          </button>
+
+          <button 
             onClick={handleAdminLogout}
             className="p-2.5 bg-rose-500/15 border border-rose-500/10 rounded-xl text-rose-500 hover:bg-rose-500 hover:text-white transition-all active:scale-95"
             title="Settle Admin Logout"
