@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, User, Phone, MapPin, Bell, Shield, ShieldCheck, LogOut, ChevronRight, Settings as SettingsIcon, Plus, Trash2, Edit2, X, Check, Gift, Share2, Copy, Wallet, Receipt, TrendingUp, TrendingDown, Package, Camera, Bike, Briefcase, Navigation, Loader2, Search, ListTodo, Store, Moon, Sun } from 'lucide-react';
+import { ArrowLeft, User, Phone, MapPin, Bell, Shield, ShieldCheck, LogOut, ChevronRight, Settings as SettingsIcon, Plus, Trash2, Edit2, X, Check, Gift, Share2, Copy, Wallet, Receipt, TrendingUp, TrendingDown, Package, Camera, Bike, Briefcase, Navigation, Loader2, Search, ListTodo, Store, Moon, Sun, AlertTriangle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, updateDoc, serverTimestamp, collection, query, where, onSnapshot, limit, orderBy, getDocs } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -20,7 +20,7 @@ interface ProfileProps {
 
 export default function Profile({ onBack, onNavigate, language, isAdmin: propIsAdmin }: ProfileProps) {
   const t = translations[language].profile;
-  const { user, userProfile: contextProfile, isAdmin: contextIsAdmin, logout } = useFirebase();
+  const { user, userProfile: contextProfile, isAdmin: contextIsAdmin, logout, deactivateAccount } = useFirebase();
   const isAdmin = propIsAdmin || contextIsAdmin || localStorage.getItem('admin_session_active') === 'true';
   const { theme, toggleTheme } = useTheme();
   
@@ -141,6 +141,22 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
 
     setProfileErrors(errs);
     return Object.keys(errs).length === 0;
+  };
+
+  const [showDeactivate, setShowDeactivate] = useState(false);
+  const [isDeactivating, setIsDeactivating] = useState(false);
+
+  const handleConfirmDeactivate = async () => {
+    setIsDeactivating(true);
+    try {
+      await deactivateAccount();
+      onNavigate('login');
+    } catch (err) {
+      console.error("Deactivation failed:", err);
+    } finally {
+      setIsDeactivating(false);
+      setShowDeactivate(false);
+    }
   };
 
   const [walletBalance, setWalletBalance] = useState(() => referralService.getWalletBalance());
@@ -1397,6 +1413,22 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
           <motion.button 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
+            transition={{ delay: 0.75 }}
+            onClick={() => setShowDeactivate(true)}
+            className="w-full flex items-center gap-4 p-5 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-[2.5rem] transition-all text-left text-rose-600 mt-6 border border-transparent hover:border-rose-100 dark:hover:border-rose-500/20 group"
+          >
+            <div className="bg-rose-50 dark:bg-rose-500/10 p-4 rounded-2xl group-hover:bg-white dark:group-hover:bg-slate-800 transition-colors shadow-sm text-rose-600">
+              <AlertTriangle className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <span className="font-black uppercase tracking-widest text-xs block text-rose-600">Deactivate Account</span>
+              <span className="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-tight mt-0.5 block">Instant & permanent deletion</span>
+            </div>
+          </motion.button>
+
+          <motion.button 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             transition={{ delay: 0.8 }}
             onClick={async () => {
               if (window.confirm("Are you sure you want to logout?")) {
@@ -1718,6 +1750,62 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
               setDefaultPartnerType(undefined);
             }}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showDeactivate && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-md z-[100] flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-white dark:bg-slate-900 w-full max-w-md rounded-[3rem] overflow-hidden shadow-2xl flex flex-col p-8 space-y-6 text-center border border-gray-100 dark:border-slate-800"
+            >
+              <div className="w-20 h-20 bg-rose-50 dark:bg-rose-950/30 text-rose-500 rounded-[2.5rem] flex items-center justify-center mx-auto shadow-inner animate-pulse">
+                <AlertTriangle className="w-10 h-10" />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">Deactivate Account?</h3>
+                <p className="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest">Immediate Effect • Permanent Action</p>
+              </div>
+
+              <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed font-medium">
+                Deactivating your account will instantly remove your personal profile from our databases, end your active sessions, cancel any pending partner registrations, and remove your wallet balance.
+              </p>
+
+              <div className="bg-rose-50/50 dark:bg-rose-950/10 border border-rose-100 dark:border-rose-900/30 p-4 rounded-2xl text-rose-600 dark:text-rose-400 text-xs font-black uppercase tracking-wider text-center">
+                This action cannot be undone.
+              </div>
+
+              <div className="flex flex-col gap-3 pt-2">
+                <button 
+                  onClick={handleConfirmDeactivate}
+                  disabled={isDeactivating}
+                  className="w-full py-5 bg-rose-500 text-white rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-lg shadow-rose-200 dark:shadow-none hover:bg-rose-600 active:scale-95 transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+                >
+                  {isDeactivating ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    "Deactivate Instantly"
+                  )}
+                </button>
+                <button 
+                  onClick={() => setShowDeactivate(false)}
+                  disabled={isDeactivating}
+                  className="w-full py-5 bg-gray-50 dark:bg-slate-800 text-gray-500 dark:text-gray-400 rounded-[2rem] font-black uppercase tracking-widest text-[10px] hover:bg-gray-100 dark:hover:bg-slate-700 transition-all disabled:opacity-50"
+                >
+                  Cancel & Keep Account
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

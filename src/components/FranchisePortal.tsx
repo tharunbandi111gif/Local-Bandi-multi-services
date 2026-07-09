@@ -4,7 +4,8 @@ import {
   Building2, ShieldCheck, MapPin, Phone, User, Mail, Lock, 
   Plus, Edit, Trash2, Users, Bike, Store, ShoppingBag, 
   TrendingUp, Loader2, LogOut, ArrowRight, Check, X,
-  Clock, AlertCircle, RefreshCw, FileText, Sparkles
+  Clock, AlertCircle, RefreshCw, FileText, Sparkles,
+  Heart, Home, Activity
 } from 'lucide-react';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, auth } from '../lib/firebase';
@@ -13,6 +14,7 @@ import {
   onSnapshot, 
   doc, 
   setDoc, 
+  updateDoc,
   addDoc, 
   deleteDoc, 
   serverTimestamp,
@@ -60,7 +62,7 @@ export default function FranchisePortal() {
 
   // Authenticated franchise session
   const [activeBranch, setActiveBranch] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'members' | 'applications'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'members' | 'applications' | 'orders' | 'marriage' | 'real_estate' | 'hospital'>('overview');
 
   // Business state
   const [categories, setCategories] = useState<any[]>([]);
@@ -68,6 +70,13 @@ export default function FranchisePortal() {
   const [riders, setRiders] = useState<any[]>([]);
   const [applications, setApplications] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
+  const [marriageProfiles, setMarriageProfiles] = useState<any[]>([]);
+  const [properties, setProperties] = useState<any[]>([]);
+  const [hospitalBookings, setHospitalBookings] = useState<any[]>([]);
+  const [hospitalPrices, setHospitalPrices] = useState<any>({});
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [editingOrder, setEditingOrder] = useState<any | null>(null);
+  const [showOrderModal, setShowOrderModal] = useState(false);
 
   // Category Form State
   const [showCatModal, setShowCatModal] = useState(false);
@@ -166,11 +175,45 @@ export default function FranchisePortal() {
       }
     );
 
+    const unsubMarriage = onSnapshot(
+      collection(db, 'marriageProfiles'),
+      (snap) => {
+        setMarriageProfiles(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+    );
+
+    const unsubProperties = onSnapshot(
+      collection(db, 'properties'),
+      (snap) => {
+        setProperties(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+    );
+
+    const unsubHospital = onSnapshot(
+      collection(db, 'hospital_bookings'),
+      (snap) => {
+        setHospitalBookings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }
+    );
+
+    const unsubHospitalPrices = onSnapshot(
+      doc(db, 'settings', 'hospital_prices'),
+      (snap) => {
+        if (snap.exists()) {
+          setHospitalPrices(snap.data());
+        }
+      }
+    );
+
     return () => {
       unsubVendors();
       unsubRiders();
       unsubApps();
       unsubOrders();
+      unsubMarriage();
+      unsubProperties();
+      unsubHospital();
+      unsubHospitalPrices();
     };
   }, [activeBranch]);
 
@@ -517,6 +560,216 @@ export default function FranchisePortal() {
   };
 
   // Quick Stats Helper
+  // Local Admin Control Handlers for Orders, Profiles, and Listings
+  const handleLocalAcceptOrder = async (orderId: string) => {
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: 'Accepted',
+        adminAccepted: true,
+        acceptedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      alert('Order status successfully updated to: Accepted');
+    } catch (err: any) {
+      alert('Failed to accept order: ' + err.message);
+    }
+  };
+
+  const handleLocalCancelOrder = async (orderId: string) => {
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: 'Cancelled',
+        cancelledAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      alert('Order successfully cancelled.');
+    } catch (err: any) {
+      alert('Failed to cancel order: ' + err.message);
+    }
+  };
+
+  const handleLocalUpdateOrderStatus = async (orderId: string, newStatus: string) => {
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: newStatus,
+        adminAccepted: true,
+        updatedAt: serverTimestamp()
+      });
+      alert(`Order status manually updated to: ${newStatus}`);
+    } catch (err: any) {
+      alert('Failed to update status: ' + err.message);
+    }
+  };
+
+  const handleLocalUpdateOrderDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingOrder) return;
+    try {
+      await updateDoc(doc(db, 'orders', editingOrder.id), {
+        customerName: editingOrder.customerName || editingOrder.userName || '',
+        phone: editingOrder.phone || editingOrder.userPhone || '',
+        address: editingOrder.address || '',
+        total: Number(editingOrder.total || 0),
+        orderItems: editingOrder.orderItems || [],
+        updatedAt: serverTimestamp()
+      });
+      alert('Order details updated successfully.');
+      setShowOrderModal(false);
+      setEditingOrder(null);
+    } catch (err: any) {
+      alert('Failed to update order details: ' + err.message);
+    }
+  };
+
+  const handleLocalUpdateMarriageProfileStatus = async (id: string, isApproved: boolean) => {
+    try {
+      await updateDoc(doc(db, 'marriageProfiles', id), {
+        isApproved,
+        updatedAt: serverTimestamp()
+      });
+      alert(`Marriage Profile status updated to: ${isApproved ? 'Approved' : 'Suspended'}`);
+    } catch (err: any) {
+      alert('Failed to update marriage profile status: ' + err.message);
+    }
+  };
+
+  const handleLocalUpdatePropertyStatus = async (id: string, isApproved: boolean) => {
+    try {
+      await updateDoc(doc(db, 'properties', id), {
+        isApproved,
+        updatedAt: serverTimestamp()
+      });
+      alert(`Property Listing status updated to: ${isApproved ? 'Approved' : 'Suspended'}`);
+    } catch (err: any) {
+      alert('Failed to update property listing status: ' + err.message);
+    }
+  };
+
+  const handleLocalUpdateHospitalBookingStatus = async (id: string, status: 'Approved' | 'Rejected' | 'pending') => {
+    try {
+      await updateDoc(doc(db, 'hospital_bookings', id), {
+        status,
+        updatedAt: serverTimestamp()
+      });
+      alert(`Hospital Booking status updated to: ${status}`);
+    } catch (err: any) {
+      alert('Failed to update hospital booking status: ' + err.message);
+    }
+  };
+
+  // Sync activeBranch with latest fields from branches collection
+  useEffect(() => {
+    if (activeBranch && branches.length > 0) {
+      const latest = branches.find(b => b.id === activeBranch.id);
+      if (latest) {
+        if (JSON.stringify(latest) !== JSON.stringify(activeBranch)) {
+          setActiveBranch(latest);
+        }
+      }
+    }
+  }, [branches, activeBranch]);
+
+  // Auto-Accept Orders Loop for Local Admin
+  useEffect(() => {
+    if (!activeBranch || activeBranch.orderAcceptanceMode !== 'automatic') return;
+
+    const vendorIds = vendors.map(v => v.id);
+    const pendingBranchOrders = orders.filter(o => 
+      o.status === 'Pending' && 
+      (o.branchId === activeBranch.id || vendorIds.includes(o.vendorId || o.storeId))
+    );
+
+    if (pendingBranchOrders.length === 0) return;
+
+    pendingBranchOrders.forEach(async (ord) => {
+      try {
+        await updateDoc(doc(db, 'orders', ord.id), {
+          status: 'Accepted',
+          adminAccepted: true,
+          acceptedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Auto-accept order error:", err);
+      }
+    });
+  }, [orders, vendors, activeBranch]);
+
+  const handleLocalUpdateVendorVerification = async (id: string, isVerified: boolean) => {
+    try {
+      await updateDoc(doc(db, 'vendors', id), {
+        isVerified,
+        status: isVerified ? 'Active' : 'Pending',
+        updatedAt: serverTimestamp()
+      });
+      alert(`Vendor verification status updated to: ${isVerified ? 'Verified/Active' : 'Unverified/Pending'}`);
+    } catch (err: any) {
+      alert('Failed to update vendor status: ' + err.message);
+    }
+  };
+
+  const handleLocalUpdateRiderVerification = async (id: string, isVerified: boolean) => {
+    try {
+      await updateDoc(doc(db, 'deliveryPartners', id), {
+        isVerified,
+        status: isVerified ? 'Active' : 'Pending',
+        updatedAt: serverTimestamp()
+      });
+      alert(`Rider verification status updated to: ${isVerified ? 'Verified/Active' : 'Unverified/Pending'}`);
+    } catch (err: any) {
+      alert('Failed to update rider status: ' + err.message);
+    }
+  };
+
+  const handleLocalUpdateHospitalOfficeVerification = async (hospitalName: string, isApproved: boolean) => {
+    try {
+      const existing = hospitalPrices[hospitalName] || {};
+      const updated = {
+        ...hospitalPrices,
+        [hospitalName]: {
+          ...existing,
+          isApproved,
+          updatedAt: new Date().toISOString()
+        }
+      };
+      await setDoc(doc(db, 'settings', 'hospital_prices'), updated);
+      alert(`Hospital Office ${hospitalName} is now ${isApproved ? 'Approved/Verified' : 'Unapproved/Pending'}`);
+    } catch (err: any) {
+      alert('Failed to update hospital office: ' + err.message);
+    }
+  };
+
+  const handleSaveLocalHospital = async (name: string, data: any) => {
+    try {
+      const updated = {
+        ...hospitalPrices,
+        [name]: {
+          ...data,
+          branchId: activeBranch.id,
+          isApproved: data.isApproved !== undefined ? data.isApproved : false
+        }
+      };
+      await setDoc(doc(db, 'settings', 'hospital_prices'), updated);
+      alert('Local Hospital Office Saved.');
+    } catch (err: any) {
+      alert('Failed to save hospital: ' + err.message);
+    }
+  };
+
+  const handleLocalToggleOrderAcceptanceMode = async () => {
+    if (!activeBranch) return;
+    try {
+      const nextMode = activeBranch.orderAcceptanceMode === 'automatic' ? 'manual' : 'automatic';
+      await updateDoc(doc(db, 'branches', activeBranch.id), {
+        orderAcceptanceMode: nextMode,
+        updatedAt: serverTimestamp()
+      });
+      alert(`Order Acceptance Mode set to: ${nextMode.toUpperCase()}`);
+    } catch (err: any) {
+      alert('Failed to toggle order acceptance mode: ' + err.message);
+    }
+  };
+
   const getBranchOrders = () => {
     const vendorIds = vendors.map(v => v.id);
     const riderIds = riders.map(r => r.id);
@@ -867,6 +1120,58 @@ export default function FranchisePortal() {
             <span className="absolute top-1 right-2 w-1.5 h-1.5 bg-rose-500 rounded-full" />
           )}
         </button>
+
+        <button
+          onClick={() => setActiveTab('orders')}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 relative ${
+            activeTab === 'orders' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:bg-white/5'
+          }`}
+        >
+          <ShoppingBag className="w-3.5 h-3.5 text-amber-400" />
+          <span>Local Orders ({getBranchOrders().length})</span>
+          {getBranchOrders().filter(o => o.status === 'Pending').length > 0 && (
+            <span className="absolute top-1 right-2 w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('marriage')}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 relative ${
+            activeTab === 'marriage' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:bg-white/5'
+          }`}
+        >
+          <Heart className="w-3.5 h-3.5 text-rose-400" />
+          <span>Marriage ({marriageProfiles.length})</span>
+          {marriageProfiles.filter(p => !p.isApproved).length > 0 && (
+            <span className="absolute top-1 right-2 w-1.5 h-1.5 bg-rose-500 rounded-full" />
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('real_estate')}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 relative ${
+            activeTab === 'real_estate' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:bg-white/5'
+          }`}
+        >
+          <Home className="w-3.5 h-3.5 text-sky-400" />
+          <span>Real Estate ({properties.length})</span>
+          {properties.filter(p => !p.isApproved).length > 0 && (
+            <span className="absolute top-1 right-2 w-1.5 h-1.5 bg-sky-500 rounded-full" />
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('hospital')}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 relative ${
+            activeTab === 'hospital' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:bg-white/5'
+          }`}
+        >
+          <Activity className="w-3.5 h-3.5 text-emerald-400" />
+          <span>Hospital OPs ({hospitalBookings.length})</span>
+          {hospitalBookings.filter(b => b.status === 'pending' || b.status === 'Pending').length > 0 && (
+            <span className="absolute top-1 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+          )}
+        </button>
       </div>
 
       {/* WORKSPACE VIEWPORT */}
@@ -935,6 +1240,44 @@ export default function FranchisePortal() {
                     25% is allocated automatically to Master Admin Tarun Bandi (Khammam HQ) for national brand advertisement, server maintenance, and technology stack licensing.
                   </p>
                 </div>
+              </div>
+            </div>
+
+            {/* ORDER ACCEPTANCE AND AUTO DISPATCH MANAGEMENT */}
+            <div className="bg-slate-900 border border-white/5 rounded-3xl p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-indigo-400" />
+                  <h3 className="text-xs font-black uppercase tracking-wider">Order Acceptance Configuration</h3>
+                </div>
+                <span className={`text-[8px] font-black px-2.5 py-1 rounded-full uppercase tracking-wider ${
+                  (activeBranch?.orderAcceptanceMode || 'manual') === 'automatic' 
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                    : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                }`}>
+                  {(activeBranch?.orderAcceptanceMode || 'manual') === 'automatic' ? '🤖 Automatic Mode' : '🎮 Manual Mode'}
+                </span>
+              </div>
+
+              <div className="flex flex-col md:flex-row items-center gap-4 justify-between bg-slate-950/40 p-4 rounded-2xl border border-white/5">
+                <div className="space-y-1">
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-200">
+                    Acceptance Mode Selector
+                  </h4>
+                  <p className="text-[9px] text-slate-400 max-w-xl leading-normal">
+                    In <strong>Automatic Mode</strong>, newly received customer orders are instantly marked as Accepted by the system. In <strong>Manual Mode</strong>, you must click and accept each incoming order manually in the Orders workspace.
+                  </p>
+                </div>
+                <button
+                  onClick={handleLocalToggleOrderAcceptanceMode}
+                  className={`px-4 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all cursor-pointer whitespace-nowrap ${
+                    (activeBranch?.orderAcceptanceMode || 'manual') === 'automatic'
+                      ? 'bg-amber-500/10 text-amber-500 hover:bg-amber-500 hover:text-slate-900'
+                      : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white'
+                  }`}
+                >
+                  {(activeBranch?.orderAcceptanceMode || 'manual') === 'automatic' ? 'Switch to Manual Accept' : 'Switch to Auto Accept'}
+                </button>
               </div>
             </div>
           </div>
@@ -1066,12 +1409,29 @@ export default function FranchisePortal() {
                         <p className="text-[9px] font-mono text-slate-500 flex items-center gap-1"><Phone className="w-2.5 h-2.5" /> +91 {v.phone}</p>
                       </div>
 
-                      <button
-                        onClick={() => handleDeleteMember('vendor', v.id)}
-                        className="w-7 h-7 bg-slate-950 hover:bg-rose-950/30 text-rose-400 border border-white/5 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-3" />
-                      </button>
+                      <div className="flex gap-1.5 items-center">
+                        {v.status !== 'Active' ? (
+                          <button
+                            onClick={() => handleLocalUpdateVendorVerification(v.id, true)}
+                            className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[8px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                          >
+                            Verify
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleLocalUpdateVendorVerification(v.id, false)}
+                            className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500 hover:text-white rounded-lg text-[8px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                          >
+                            Suspend
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteMember('vendor', v.id)}
+                          className="w-7 h-7 bg-slate-950 hover:bg-rose-950/30 text-rose-400 border border-white/5 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1106,12 +1466,29 @@ export default function FranchisePortal() {
                         <p className="text-[9px] font-mono text-slate-500 flex items-center gap-1"><Phone className="w-2.5 h-2.5" /> +91 {r.phone}</p>
                       </div>
 
-                      <button
-                        onClick={() => handleDeleteMember('rider', r.id)}
-                        className="w-7 h-7 bg-slate-950 hover:bg-rose-950/30 text-rose-400 border border-white/5 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-3" />
-                      </button>
+                      <div className="flex gap-1.5 items-center">
+                        {r.status !== 'Active' ? (
+                          <button
+                            onClick={() => handleLocalUpdateRiderVerification(r.id, true)}
+                            className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[8px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                          >
+                            Verify
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleLocalUpdateRiderVerification(r.id, false)}
+                            className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500 hover:text-white rounded-lg text-[8px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                          >
+                            Suspend
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteMember('rider', r.id)}
+                          className="w-7 h-7 bg-slate-950 hover:bg-rose-950/30 text-rose-400 border border-white/5 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1186,6 +1563,463 @@ export default function FranchisePortal() {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* VIEW 5: LOCAL ORDERS */}
+        {activeTab === 'orders' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-left">
+            {/* Orders Stream: 5 cols */}
+            <div className="lg:col-span-5 bg-slate-900 border border-white/5 p-5 rounded-[2.5rem] space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">Local Orders Queue</h3>
+                <span className="px-2 py-0.5 bg-slate-950 text-[8.5px] font-mono text-amber-400 rounded border border-white/5 uppercase">
+                  {getBranchOrders().length} Orders
+                </span>
+              </div>
+
+              <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                {getBranchOrders().length === 0 ? (
+                  <div className="text-center py-12">
+                    <ShoppingBag className="w-8 h-8 text-slate-600 mx-auto mb-2 animate-pulse" />
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">No active orders in this area.</p>
+                  </div>
+                ) : (
+                  getBranchOrders().map((ord) => {
+                    const isSelected = selectedOrderId === ord.id;
+                    return (
+                      <button
+                        key={ord.id}
+                        onClick={() => setSelectedOrderId(ord.id)}
+                        className={`w-full text-left p-4 rounded-2xl border transition-all flex flex-col gap-2 cursor-pointer ${
+                          isSelected 
+                            ? 'bg-indigo-600/15 border-indigo-500/50 text-white' 
+                            : 'bg-slate-950/60 border-white/5 hover:bg-slate-950/95 text-slate-300'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start">
+                          <span className="text-[10px] font-mono font-black text-slate-400 uppercase">
+                            #{ord.id.slice(0, 8).toUpperCase()}
+                          </span>
+                          <span className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-full ${
+                            ord.status === 'Pending' ? 'bg-amber-500/10 text-amber-400' :
+                            ord.status === 'Delivered' ? 'bg-emerald-500/10 text-emerald-400' :
+                            ord.status === 'Cancelled' ? 'bg-rose-500/10 text-rose-400' :
+                            'bg-indigo-500/10 text-indigo-400'
+                          }`}>
+                            {ord.status}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-end">
+                          <div>
+                            <p className="text-xs font-bold text-white uppercase">{ord.customerName || ord.userName || 'Guest User'}</p>
+                            <p className="text-[9px] text-slate-500 mt-0.5 font-medium">{ord.vendorName || 'General Hub'}</p>
+                          </div>
+                          <p className="text-xs font-black text-indigo-300">₹{ord.total || ord.totalPrice || 0}</p>
+                        </div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Order Details: 7 cols */}
+            <div className="lg:col-span-7">
+              {(() => {
+                const activeOrd = getBranchOrders().find(o => o.id === selectedOrderId);
+                if (!activeOrd) {
+                  return (
+                    <div className="bg-slate-900 border border-white/5 p-8 rounded-[2.5rem] text-center min-h-[200px] flex flex-col items-center justify-center">
+                      <ShoppingBag className="w-8 h-8 text-slate-650 mb-2 animate-pulse" />
+                      <h3 className="text-[11px] font-black uppercase tracking-widest text-slate-400">Order Telemetry Standby</h3>
+                      <p className="text-[9.5px] text-slate-500 max-w-xs mx-auto leading-normal font-semibold mt-1">
+                        Select an order from the list stream to view real-time operations, manage dispatching, or edit item lists.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-6">
+                    <div className="flex justify-between items-center border-b border-white/5 pb-4">
+                      <div>
+                        <span className="text-[9px] font-black text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                          Active Branch Workspace
+                        </span>
+                        <h3 className="text-base font-black uppercase text-white mt-2">
+                          Order #{activeOrd.id.slice(0, 8).toUpperCase()}
+                        </h3>
+                      </div>
+                      
+                      <div className="text-right">
+                        <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Total Transaction Value</span>
+                        <p className="text-lg font-black text-emerald-400">₹{activeOrd.total || activeOrd.totalPrice || 0}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-2">
+                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Merchant / Restaurant</h4>
+                        <p className="text-xs font-bold text-white">{activeOrd.vendorName || 'Central Hub'}</p>
+                        <p className="text-[10px] text-slate-400 font-semibold">{activeOrd.vendorAddress || 'Main branch'}</p>
+                      </div>
+                      <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-2">
+                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Customer Delivery Address</h4>
+                        <p className="text-xs font-bold text-white">{activeOrd.customerName || activeOrd.userName || 'Anonymous Customer'}</p>
+                        <p className="text-[10px] text-slate-300 font-medium">{activeOrd.address || 'Standard Handover'}</p>
+                        {(activeOrd.phone || activeOrd.userPhone) && (
+                          <p className="text-[10px] font-mono text-slate-500 mt-1">📞 {activeOrd.phone || activeOrd.userPhone}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-950/70 p-4 rounded-2xl border border-white/5 space-y-2">
+                      <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Line Items</h4>
+                        <button
+                          onClick={() => {
+                            setEditingOrder(JSON.parse(JSON.stringify(activeOrd)));
+                            setShowOrderModal(true);
+                          }}
+                          className="px-2.5 py-1 bg-indigo-500/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all"
+                        >
+                          ✏️ Edit Order Details
+                        </button>
+                      </div>
+                      <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+                        {(activeOrd.orderItems || []).length === 0 ? (
+                          <div className="text-[11px] text-slate-500 italic">No direct line items found.</div>
+                        ) : (
+                          (activeOrd.orderItems || []).map((item: any, idx: number) => (
+                            <div key={idx} className="flex justify-between items-center text-xs">
+                              <span className="font-bold text-white">
+                                {item.name} <span className="text-indigo-400 text-[10px] ml-1">x{item.quantity}</span>
+                              </span>
+                              <span className="font-bold text-slate-400">₹{(item.price || 0) * (item.quantity || 1)}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      {activeOrd.status === 'Pending' && (
+                        <button
+                          onClick={() => handleLocalAcceptOrder(activeOrd.id)}
+                          className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg"
+                        >
+                          Accept & Approve Order
+                        </button>
+                      )}
+
+                      {activeOrd.status !== 'Cancelled' && activeOrd.status !== 'Delivered' && (
+                        <button
+                          onClick={() => handleLocalCancelOrder(activeOrd.id)}
+                          className="px-4 py-3 bg-rose-500/15 hover:bg-rose-600 text-rose-500 hover:text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer"
+                        >
+                          Cancel Order
+                        </button>
+                      )}
+
+                      <div className="w-full flex items-center gap-2 mt-2 bg-slate-950 p-3 rounded-2xl border border-white/5">
+                        <span className="text-[9px] font-black uppercase text-slate-400 whitespace-nowrap">Status Override:</span>
+                        <div className="flex gap-1 flex-wrap">
+                          {['Accepted', 'Preparing', 'OutForDelivery', 'Delivered'].map(st => (
+                            <button
+                              key={st}
+                              onClick={() => handleLocalUpdateOrderStatus(activeOrd.id, st)}
+                              className={`px-2.5 py-1.5 rounded-lg text-[8.5px] font-black uppercase transition-all cursor-pointer ${activeOrd.status === st ? 'bg-indigo-600 text-white' : 'bg-slate-900 hover:bg-slate-850 text-slate-400'}`}
+                            >
+                              {st}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* VIEW 6: MARRIAGE BUREAU */}
+        {activeTab === 'marriage' && (
+          <div className="space-y-4 text-left">
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-tight">Marriage Bureau Profile Registry</h3>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                Approve newly submitted profiles before they become public.
+              </p>
+            </div>
+
+            {marriageProfiles.length === 0 ? (
+              <div className="p-12 text-center bg-slate-900/60 rounded-[2rem] border border-white/5">
+                <Heart className="w-8 h-8 text-slate-600 mx-auto mb-2 animate-pulse" />
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">No marriage profiles found.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {marriageProfiles.map((p) => (
+                  <div key={p.id} className="bg-slate-900 border border-white/5 p-5 rounded-[2rem] flex flex-col justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      {p.image && (
+                        <img src={p.image} className="w-14 h-14 object-cover rounded-xl border border-white/10" referrerPolicy="no-referrer" />
+                      )}
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-black uppercase tracking-tight text-white">{p.fullName || 'Anonymous'}</h4>
+                          <span className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-full ${
+                            p.isApproved ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
+                          }`}>
+                            {p.isApproved ? 'Approved' : 'Pending'}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-indigo-400 font-bold">{p.religion} • {p.caste}</p>
+                        <p className="text-[9.5px] text-slate-400 font-medium">Age/Height: {p.age} yrs / {p.height}</p>
+                        <p className="text-[9.5px] text-slate-400 font-medium">Education: {p.education} • {p.occupation}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      {!p.isApproved ? (
+                        <button
+                          onClick={() => handleLocalUpdateMarriageProfileStatus(p.id, true)}
+                          className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer"
+                        >
+                          Approve Profile
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleLocalUpdateMarriageProfileStatus(p.id, false)}
+                          className="flex-1 py-2.5 bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-400 rounded-xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer"
+                        >
+                          Suspend Profile
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* VIEW 7: REAL ESTATE */}
+        {activeTab === 'real_estate' && (
+          <div className="space-y-4 text-left">
+            <div>
+              <h3 className="text-sm font-black uppercase tracking-tight">Real Estate Listing Catalogs</h3>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                Review and approve local property listings.
+              </p>
+            </div>
+
+            {properties.length === 0 ? (
+              <div className="p-12 text-center bg-slate-900/60 rounded-[2rem] border border-white/5">
+                <Home className="w-8 h-8 text-slate-600 mx-auto mb-2 animate-pulse" />
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">No property listings found.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {properties.map((p) => (
+                  <div key={p.id} className="bg-slate-900 border border-white/5 p-5 rounded-[2rem] flex flex-col justify-between gap-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <span className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-full ${
+                          p.isApproved ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
+                        }`}>
+                          {p.isApproved ? 'Approved' : 'Pending'}
+                        </span>
+                        <span className="text-emerald-400 font-black text-xs">₹{p.price}</span>
+                      </div>
+                      <h4 className="text-xs font-black uppercase tracking-tight text-white">{p.title}</h4>
+                      <p className="text-[10px] text-slate-400 font-medium line-clamp-2">{p.description}</p>
+                      <p className="text-[9.5px] text-indigo-400 font-mono">📍 {p.location?.area || 'Khammam'}</p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      {!p.isApproved ? (
+                        <button
+                          onClick={() => handleLocalUpdatePropertyStatus(p.id, true)}
+                          className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer"
+                        >
+                          Approve Listing
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleLocalUpdatePropertyStatus(p.id, false)}
+                          className="flex-1 py-2.5 bg-rose-500/10 hover:bg-rose-600 hover:text-white text-rose-400 rounded-xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer"
+                        >
+                          Suspend Listing
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* VIEW 8: HOSPITAL OP BOOKINGS */}
+        {activeTab === 'hospital' && (
+          <div className="space-y-8 text-left">
+            {/* REGISTER LOCAL CLINIC / HOSPITAL OFFICE FORM */}
+            <div className="bg-slate-900 border border-white/5 p-6 rounded-[2rem] space-y-4">
+              <div className="border-b border-white/5 pb-3">
+                <h3 className="text-sm font-black uppercase tracking-tight">Register & Verify Local Clinical Branch Office</h3>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                  Add and instantly verify local hospitals/clinics within your regional territory.
+                </p>
+              </div>
+
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                const form = e.currentTarget;
+                const name = form.hospitalName.value.trim();
+                const price = Number(form.hospitalPrice.value || 0);
+                const desc = form.hospitalDesc.value.trim();
+                const phone = form.hospitalPhone.value.trim();
+                if (!name || !price) {
+                  alert('Please enter a valid Hospital Name and OP Price.');
+                  return;
+                }
+                await handleSaveLocalHospital(name, {
+                  opPrice: price,
+                  description: desc,
+                  phone: phone,
+                  branchId: activeBranch.id,
+                  isApproved: true, // auto-verified since added by local admin
+                  updatedAt: new Date().toISOString()
+                });
+                form.reset();
+              }} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[8px] font-black uppercase tracking-wider text-slate-400">Hospital Name</label>
+                  <input name="hospitalName" type="text" placeholder="e.g. Apollo Clinic" required className="w-full bg-slate-950 border border-white/5 rounded-xl px-3 py-2 text-xs text-white" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[8px] font-black uppercase tracking-wider text-slate-400">OP Registration Fee (₹)</label>
+                  <input name="hospitalPrice" type="number" placeholder="e.g. 150" required className="w-full bg-slate-950 border border-white/5 rounded-xl px-3 py-2 text-xs text-white" />
+                </div>
+                <div className="space-y-1 col-span-1 md:col-span-2">
+                  <label className="text-[8px] font-black uppercase tracking-wider text-slate-400">Contact / Doctor Details & Phone</label>
+                  <div className="flex gap-2">
+                    <input name="hospitalDesc" type="text" placeholder="e.g. Gen Physician, Dr. Ravi" className="flex-1 bg-slate-950 border border-white/5 rounded-xl px-3 py-2 text-xs text-white" />
+                    <input name="hospitalPhone" type="text" placeholder="Phone Number" className="w-1/3 bg-slate-950 border border-white/5 rounded-xl px-3 py-2 text-xs text-white" />
+                    <button type="submit" className="bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[9px] uppercase tracking-widest px-4 rounded-xl cursor-pointer">Register</button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            {/* LOCAL REGISTRY LIST & VERIFICATION */}
+            <div className="space-y-3">
+              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-300">Local Clinic registries ({
+                Object.keys(hospitalPrices).filter(k => hospitalPrices[k].branchId === activeBranch.id).length
+              })</h4>
+
+              {Object.keys(hospitalPrices).filter(k => hospitalPrices[k].branchId === activeBranch.id).length === 0 ? (
+                <div className="p-8 text-center bg-slate-900/40 rounded-3xl border border-white/5">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">No clinical branch offices registered in this branch territory yet.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {Object.keys(hospitalPrices).filter(k => hospitalPrices[k].branchId === activeBranch.id).map((name) => {
+                    const h = hospitalPrices[name];
+                    return (
+                      <div key={name} className="bg-slate-900 border border-white/5 p-4 rounded-2xl flex flex-col justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <h5 className="text-xs font-black uppercase tracking-tight text-white">{name}</h5>
+                            <span className={`text-[7px] font-black px-1.5 py-0.5 rounded uppercase ${
+                              h.isApproved ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            }`}>
+                              {h.isApproved ? 'Verified/Approved' : 'Pending Verification'}
+                            </span>
+                          </div>
+                          <p className="text-[9px] text-slate-400 uppercase tracking-widest">OP Fee: <span className="font-mono text-white">₹{h.opPrice}</span></p>
+                          <p className="text-[9px] text-slate-400 leading-normal italic">{h.description || 'No Description listed'}</p>
+                          {h.phone && <p className="text-[9px] text-slate-500 font-mono">☎ {h.phone}</p>}
+                        </div>
+
+                        <div className="flex gap-2">
+                          {!h.isApproved ? (
+                            <button
+                              onClick={() => handleLocalUpdateHospitalOfficeVerification(name, true)}
+                              className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[8.5px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                            >
+                              Verify
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleLocalUpdateHospitalOfficeVerification(name, false)}
+                              className="flex-1 py-1.5 bg-amber-500/10 hover:bg-amber-500 hover:text-white text-amber-500 rounded-lg text-[8.5px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                            >
+                              Suspend
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-white/5 pt-6 space-y-3">
+              <h3 className="text-sm font-black uppercase tracking-tight">Hospital Outpatient Booking Queue</h3>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                Approve and coordinate newly submitted hospital appointment bookings.
+              </p>
+
+              {hospitalBookings.length === 0 ? (
+                <div className="p-12 text-center bg-slate-900/60 rounded-[2rem] border border-white/5">
+                  <Activity className="w-8 h-8 text-slate-600 mx-auto mb-2 animate-pulse" />
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">No hospital OP bookings found in this branch.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {hospitalBookings.map((b) => (
+                    <div key={b.id} className="bg-slate-900 border border-white/5 p-5 rounded-[2rem] flex flex-col justify-between gap-4">
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between items-start">
+                          <span className={`px-2.5 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-full ${
+                            b.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-400' :
+                            b.status === 'Rejected' ? 'bg-rose-500/10 text-rose-400' :
+                            'bg-amber-500/10 text-amber-400'
+                          }`}>
+                            {b.status}
+                          </span>
+                          <span className="px-2.5 py-0.5 bg-rose-500/10 text-rose-400 text-[9px] font-black uppercase tracking-widest rounded-full">{b.hospital || 'Hospital'}</span>
+                        </div>
+                        <h4 className="text-xs font-black text-white uppercase tracking-tight">{b.patientName || 'Anonymous'}</h4>
+                        <p className="text-[10px] text-slate-400">Slot: {b.slot || 'N/A'}</p>
+                        <p className="text-[10px] text-slate-400">Age/Gender: {b.age || 'N/A'} yrs / {b.gender || 'N/A'}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">Phone: {b.phone}</p>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleLocalUpdateHospitalBookingStatus(b.id, 'Approved')}
+                          className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer"
+                        >
+                          Approve OP
+                        </button>
+                        <button
+                          onClick={() => handleLocalUpdateHospitalBookingStatus(b.id, 'Rejected')}
+                          className="px-4 py-2 bg-rose-600/15 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
@@ -1384,6 +2218,160 @@ export default function FranchisePortal() {
                     className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-950/40"
                   >
                     Onboard Area Partner
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT ORDER DETAILS MODAL */}
+      <AnimatePresence>
+        {showOrderModal && editingOrder && (
+          <div className="fixed inset-0 z-[10001] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 border border-white/10 p-6 rounded-[2.5rem] max-w-md w-full space-y-4 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                <h4 className="text-xs font-black uppercase tracking-wider">✏️ Edit Order Details</h4>
+                <button onClick={() => { setShowOrderModal(false); setEditingOrder(null); }} className="text-slate-400 hover:text-white cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleLocalUpdateOrderDetails} className="space-y-4 text-left">
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Customer Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingOrder.customerName || editingOrder.userName || ''}
+                    onChange={(e) => setEditingOrder({ ...editingOrder, customerName: e.target.value, userName: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    required
+                    value={editingOrder.phone || editingOrder.userPhone || ''}
+                    onChange={(e) => setEditingOrder({ ...editingOrder, phone: e.target.value, userPhone: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Delivery Address</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingOrder.address || ''}
+                    onChange={(e) => setEditingOrder({ ...editingOrder, address: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Total Price (₹)</label>
+                  <input
+                    type="number"
+                    required
+                    value={editingOrder.total || editingOrder.totalPrice || 0}
+                    onChange={(e) => setEditingOrder({ ...editingOrder, total: Number(e.target.value), totalPrice: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                {/* Items Editor */}
+                <div className="space-y-2 border-t border-white/5 pt-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Edit Order Items</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newItems = [...(editingOrder.orderItems || [])];
+                        newItems.push({ id: Date.now().toString(), name: 'New Item', price: 100, quantity: 1 });
+                        setEditingOrder({ ...editingOrder, orderItems: newItems });
+                      }}
+                      className="px-2 py-1 bg-indigo-600/25 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded text-[8px] font-black uppercase tracking-wider"
+                    >
+                      + Add Item
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                    {(editingOrder.orderItems || []).map((item: any, idx: number) => (
+                      <div key={idx} className="bg-slate-950 p-2.5 rounded-xl border border-white/5 flex gap-2 items-center">
+                        <input
+                          type="text"
+                          required
+                          placeholder="Item Name"
+                          value={item.name || ''}
+                          onChange={(e) => {
+                            const newItems = [...editingOrder.orderItems];
+                            newItems[idx].name = e.target.value;
+                            setEditingOrder({ ...editingOrder, orderItems: newItems });
+                          }}
+                          className="flex-1 bg-slate-900 border border-white/10 px-2 py-1.5 rounded text-[10.5px] font-bold text-white outline-none"
+                        />
+                        <input
+                          type="number"
+                          required
+                          placeholder="Price"
+                          value={item.price || 0}
+                          onChange={(e) => {
+                            const newItems = [...editingOrder.orderItems];
+                            newItems[idx].price = Number(e.target.value);
+                            setEditingOrder({ ...editingOrder, orderItems: newItems });
+                          }}
+                          className="w-14 bg-slate-900 border border-white/10 px-2 py-1.5 rounded text-[10.5px] font-bold text-white outline-none"
+                        />
+                        <input
+                          type="number"
+                          required
+                          placeholder="Qty"
+                          value={item.quantity || 1}
+                          onChange={(e) => {
+                            const newItems = [...editingOrder.orderItems];
+                            newItems[idx].quantity = Number(e.target.value);
+                            setEditingOrder({ ...editingOrder, orderItems: newItems });
+                          }}
+                          className="w-10 bg-slate-900 border border-white/10 px-2 py-1.5 rounded text-[10.5px] font-bold text-white outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newItems = (editingOrder.orderItems || []).filter((_: any, i: number) => i !== idx);
+                            setEditingOrder({ ...editingOrder, orderItems: newItems });
+                          }}
+                          className="text-rose-500 hover:text-rose-400 p-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-2.5 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => { setShowOrderModal(false); setEditingOrder(null); }}
+                    className="flex-1 py-3 bg-slate-950 hover:bg-slate-900 border border-white/5 text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-950/40"
+                  >
+                    Save Changes
                   </button>
                 </div>
               </form>

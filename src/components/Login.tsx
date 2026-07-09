@@ -40,6 +40,13 @@ export default function Login({ onLogin }: LoginProps) {
   }, [resendTimer]);
 
   useEffect(() => {
+    if (localStorage.getItem('deactivated_login_attempt') === 'true') {
+      setError('This account has been deactivated. Please contact support to reactivate your account.');
+      localStorage.removeItem('deactivated_login_attempt');
+    }
+  }, []);
+
+  useEffect(() => {
     // Automatically detect location on mount
     if (navigator.geolocation) {
       setDetectingLocation(true);

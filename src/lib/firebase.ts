@@ -14,7 +14,8 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 // Initialize Firestore with forced long-polling for robust connectivity in iframes
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId);
+  useFetchStreams: false,
+} as any, firebaseConfig.firestoreDatabaseId);
 
 export const auth = getAuth(app);
 

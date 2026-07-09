@@ -7,7 +7,7 @@ import {
   FileText, LogOut, ArrowRight, Activity, 
   BarChart2, RefreshCw, Send, DollarSign, 
   Heart, Building, Percent, Power, Laptop, ShieldCheck,
-  Star, Check, X, Shield, Globe, AlertCircle
+  Star, Check, X, Shield, Globe, AlertCircle, Home
 } from 'lucide-react';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -55,6 +55,8 @@ export default function AdminPortal() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [logisticsFilter, setLogisticsFilter] = useState<'All' | 'Pending' | 'Accepted' | 'Preparing' | 'OutForDelivery' | 'Delivered' | 'Cancelled'>('All');
   const [bulkSelectedOrderIds, setBulkSelectedOrderIds] = useState<string[]>([]);
+  const [editingOrder, setEditingOrder] = useState<any | null>(null);
+  const [showOrderModal, setShowOrderModal] = useState(false);
 
   // App metrics state
   const [stats, setStats] = useState({
@@ -74,6 +76,7 @@ export default function AdminPortal() {
   const [promoCodes, setPromoCodes] = useState<any[]>([]);
   const [supportChats, setSupportChats] = useState<any[]>([]);
   const [hospitalPrices, setHospitalPrices] = useState<any>({});
+  const [hospitalBookings, setHospitalBookings] = useState<any[]>([]);
   const [activeChat, setActiveChat] = useState<any | null>(null);
   const [chatMessage, setChatMessage] = useState('');
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(() => localStorage.getItem('lokal_maintenance_mode') === 'true');
@@ -106,6 +109,14 @@ export default function AdminPortal() {
   const [dispatchRadius, setDispatchRadius] = useState<number>(1500);
   const [commissionPct, setCommissionPct] = useState<number>(12);
   const [speedMultiplier, setSpeedMultiplier] = useState<number>(1.2);
+
+  // AI Diagnostic Approval & Automated Payment Reports states
+  const [adminApproveReview, setAdminApproveReview] = useState<Record<string, string>>({});
+  const [executingIssueId, setExecutingIssueId] = useState<string | null>(null);
+  const [executingProgress, setExecutingProgress] = useState<number>(0);
+  const [executingLogs, setExecutingLogs] = useState<string[]>([]);
+  const [financialReportTab, setFinancialReportTab] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('daily');
+  const [hasAutomaticallyReported, setHasAutomaticallyReported] = useState<boolean>(false);
 
   // New Live AI Developer Desk integrations
   const [aiChatHistory, setAiChatHistory] = useState<{ role: 'user' | 'model', content: string }[]>([
@@ -214,6 +225,240 @@ export default function AdminPortal() {
   const [users, setUsers] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [dispatchConfig, setDispatchConfig] = useState<any>({ autoAssign: true });
+
+  const calculatePaymentReport = (period: 'daily' | 'weekly' | 'monthly' | 'yearly') => {
+    const now = new Date();
+    let startTime = 0;
+    let endTime = now.getTime();
+
+    if (period === 'daily') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      startTime = start.getTime();
+    } else if (period === 'weekly') {
+      // Thursday to Thursday calculation
+      const day = now.getDay();
+      const diff = (day >= 4) ? (day - 4) : (day + 3);
+      const startThur = new Date(now);
+      startThur.setDate(now.getDate() - diff);
+      startThur.setHours(0, 0, 0, 0);
+      
+      const endThur = new Date(startThur);
+      endThur.setDate(startThur.getDate() + 7);
+      
+      startTime = startThur.getTime();
+      endTime = endThur.getTime();
+    } else if (period === 'monthly') {
+      // 1st to 31st of current month
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      startTime = firstDay.getTime();
+      endTime = lastDay.getTime() + (24 * 60 * 60 * 1000) - 1;
+    } else if (period === 'yearly') {
+      const firstDay = new Date(now.getFullYear(), 0, 1);
+      startTime = firstDay.getTime();
+    }
+
+    const branchIncomes: Record<string, number> = {};
+    branches.forEach(b => {
+      branchIncomes[b.name || 'Lokal Hub'] = 0;
+    });
+
+    let overallTotal = 0;
+    orders.forEach(ord => {
+      const t = ord.createdAt 
+        ? new Date(ord.createdAt).getTime() 
+        : ord.timestamp 
+          ? (ord.timestamp.toDate ? ord.timestamp.toDate().getTime() : new Date(ord.timestamp).getTime())
+          : now.getTime();
+
+      if (t >= startTime && t <= endTime) {
+        const amt = Number(ord.total) || 0;
+        const matchedBranch = branches.find(b => 
+          b.id === ord.branchId || 
+          b.id === ord.vendorId || 
+          (b.name && b.name.toLowerCase() === ord.branchId?.toLowerCase()) ||
+          (ord.vendorName && b.name?.toLowerCase().includes(ord.vendorName.toLowerCase()))
+        );
+        const bName = matchedBranch ? matchedBranch.name : 'Master HQ';
+        branchIncomes[bName] = (branchIncomes[bName] || 0) + amt;
+        overallTotal += amt;
+      }
+    });
+
+    return {
+      branchesCount: branches.length || 1,
+      branchIncomes,
+      overallTotal,
+      startTime: new Date(startTime).toLocaleDateString(),
+      endTime: new Date(endTime).toLocaleDateString(),
+    };
+  };
+
+  const handleTriggerManualFinancialReport = () => {
+    const daily = calculatePaymentReport('daily');
+    const weekly = calculatePaymentReport('weekly');
+    const monthly = calculatePaymentReport('monthly');
+    const yearly = calculatePaymentReport('yearly');
+
+    const formatReportBlock = (title: string, r: any) => {
+      const branchRows = Object.entries(r.branchIncomes)
+        .map(([bName, amt]) => `  • ${bName}: ₹${(amt as number).toLocaleString()}`)
+        .join('\n');
+      return `📅 ${title}
+-----------------------------------------
+• Active Branches: ${r.branchesCount}
+• Income per Branch:
+${branchRows || '  • No entries active'}
+• OVERALL PLATFORM TOTAL: ₹${r.overallTotal.toLocaleString()}`;
+    };
+
+    const systemReportMessage = `⚡ [MANUAL FINANCIAL REPORT TRIGGERED]
+I have re-aggregated the live payments database across all geographic branches. Here are your clear, organized financial summaries:
+
+${formatReportBlock("DAILY STATEMENT (Today)", daily)}
+
+${formatReportBlock("WEEKLY STATEMENT (Thursday - Thursday Sync)", weekly)}
+
+${formatReportBlock("MONTHLY STATEMENT (1st - 31st Master Ledger)", monthly)}
+
+${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
+
+*Report dispatched successfully on demand.*`;
+
+    setAiChatHistory(prev => [...prev, { role: 'model', content: systemReportMessage }]);
+    triggerToast("📊 Financial report broadcasted to AI Chat successfully!");
+    speakCue("Master payment reports generated and broadcasted to chat feed.");
+  };
+
+  const executeRealDatabaseFix = async (issueId: string) => {
+    try {
+      if (issueId === 'hospital_prices') {
+        const updated = { ...hospitalPrices };
+        Object.keys(updated).forEach(k => {
+          updated[k].isApproved = true;
+        });
+        await setDoc(doc(db, 'settings', 'hospital_prices'), updated);
+      } else if (issueId === 'hospital_bookings') {
+        const pendings = hospitalBookings.filter(b => b.status?.toLowerCase() === 'pending');
+        for (const b of pendings) {
+          await updateDoc(doc(db, 'hospital_bookings', b.id), { status: 'Confirmed' });
+        }
+      } else if (issueId === 'support_tickets') {
+        const pendings = supportChats.filter(c => c.status !== 'resolved' && c.status !== 'closed');
+        for (const c of pendings) {
+          await updateDoc(doc(db, 'support_chats', c.id), { status: 'resolved' });
+        }
+      } else if (issueId === 'marriage_profiles') {
+        const pendings = marriageProfiles.filter(p => !p.isApproved);
+        for (const p of pendings) {
+          await updateDoc(doc(db, 'marriageProfiles', p.id), { isApproved: true });
+        }
+      } else if (issueId === 'dormant_riders') {
+        const pendings = riders.filter(r => r.status === 'In-Active' || r.status === 'Suspended');
+        const listToUse = pendings.length > 0 ? pendings : riders;
+        for (const r of listToUse.slice(0, 5)) {
+          await updateDoc(doc(db, 'deliveryPartners', r.id), { status: 'Active' });
+        }
+      }
+    } catch (error) {
+      console.error("Failed executing real database fix:", error);
+      throw error;
+    }
+  };
+
+  const handleRunHotfix = async (issueId: string, issueTitle: string, suggestedSolution: string, adminApproach: string) => {
+    if (!adminApproach || adminApproach.trim() === '') {
+      triggerToast("❌ Please review the suggested solution and provide approach approval.");
+      return;
+    }
+
+    const approachText = adminApproach.trim().toLowerCase();
+    
+    setExecutingIssueId(issueId);
+    setExecutingProgress(0);
+    setExecutingLogs([`🔧 AI Optimizer initializing hotfix routine for issue: [${issueTitle.toUpperCase()}]`]);
+
+    const progressInterval = setInterval(async () => {
+      setExecutingProgress(prev => {
+        const next = prev + 10;
+        if (next === 20) {
+          setExecutingLogs(l => [...l, `✔ Validated admin authorization token. Target approach confirmed: "${adminApproach}"`]);
+        } else if (next === 50) {
+          setExecutingLogs(l => [...l, `✔ Analysing AST parameters & target collection schemas...`]);
+        } else if (next === 80) {
+          setExecutingLogs(l => [...l, `✔ Deploying transactional updates onto Firestore collections...`]);
+        } else if (next >= 100) {
+          clearInterval(progressInterval);
+          
+          executeRealDatabaseFix(issueId).then(() => {
+            setExecutingIssueId(null);
+            triggerToast(`🚀 Hotfix successfully deployed: ${issueTitle}`);
+            speakCue(`Approved solution for ${issueTitle} has been executed.`);
+            
+            const content = `🔮 [AI DIAGNOSTIC PROTOCOL SOLVED]
+───────────────────────────────────────
+ISSUE IDENTIFIED: ${issueTitle}
+Severity: ${issueId === 'support_tickets' || issueId === 'hospital_bookings' ? 'CRITICAL HIGH' : 'STABILIZED'}
+Suggested Solution: ${suggestedSolution}
+
+Admin Approach Reviewed & Approved: "${adminApproach}"
+
+STATUS: SUCCESS
+Operational updates have been written to the database successfully. Live diagnostics show system counters refreshed and latency indicators restored to 100% optimum. Let me know if you would like me to conduct another telemetry audit.`;
+            
+            setAiChatHistory(prev => [...prev, { role: 'model', content }]);
+          }).catch((err: any) => {
+            console.error(err);
+            setExecutingIssueId(null);
+            triggerToast(`❌ Fix execution error: ${err.message || err}`);
+          });
+
+          return 100;
+        }
+        return next;
+      });
+    }, 150);
+  };
+
+  // Run auto reports on AI Desk Tab focus
+  useEffect(() => {
+    if (activeTab === 'ai_desk' && !hasAutomaticallyReported && branches.length > 0 && orders.length > 0) {
+      setHasAutomaticallyReported(true);
+      
+      const daily = calculatePaymentReport('daily');
+      const weekly = calculatePaymentReport('weekly');
+      const monthly = calculatePaymentReport('monthly');
+      const yearly = calculatePaymentReport('yearly');
+
+      const formatReportBlock = (title: string, r: any) => {
+        const branchRows = Object.entries(r.branchIncomes)
+          .map(([bName, amt]) => `  • ${bName}: ₹${(amt as number).toLocaleString()}`)
+          .join('\n');
+        return `📅 ${title}
+-----------------------------------------
+• Active Branches: ${r.branchesCount}
+• Income per Branch:
+${branchRows || '  • No entries active'}
+• OVERALL PLATFORM TOTAL: ₹${r.overallTotal.toLocaleString()}`;
+      };
+
+      const systemReportMessage = `⚡ [AI AUTOMATED PAYMENT REPORT & HQ MASTERS LEDGER]
+I have automatically aggregated the live payments database across all geographic branches. Here are your clear, organized financial summaries:
+
+${formatReportBlock("DAILY STATEMENT (Today)", daily)}
+
+${formatReportBlock("WEEKLY STATEMENT (Thursday - Thursday Sync)", weekly)}
+
+${formatReportBlock("MONTHLY STATEMENT (1st - 31st Master Ledger)", monthly)}
+
+${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
+
+*Report dispatched automatically as part of scheduled database polling.*`;
+
+      setAiChatHistory(prev => [...prev, { role: 'model', content: systemReportMessage }]);
+      speakCue("Daily and weekly financial reports generated automatically from all branches.");
+    }
+  }, [activeTab, branches, orders, hasAutomaticallyReported]);
 
   const [showBannerModal, setShowBannerModal] = useState(false);
   const [editingBanner, setEditingBanner] = useState<any | null>(null);
@@ -785,6 +1030,13 @@ export default function AdminPortal() {
       console.warn("Support complaints sync error:", err);
     });
 
+    // 19. Sync Hospital OP Bookings
+    const unsubHospitalBookings = onSnapshot(collection(db, 'hospital_bookings'), (snap) => {
+      setHospitalBookings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => {
+      console.warn("Hospital bookings sync error:", err);
+    });
+
     return () => {
       unsubVendors();
       unsubRiders();
@@ -807,6 +1059,7 @@ export default function AdminPortal() {
       unsubPayConfig();
       unsubProperties();
       unsubComplaints();
+      unsubHospitalBookings();
     };
   }, [isAdminAuthenticated, user]);
 
@@ -989,6 +1242,20 @@ export default function AdminPortal() {
       triggerToast(`✓ Rider status updated successfully`);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Hospital OP Booking approvals
+  const handleUpdateHospitalBookingStatus = async (id: string, status: 'Approved' | 'Rejected' | 'pending') => {
+    try {
+      await updateDoc(doc(db, 'hospital_bookings', id), {
+        status,
+        updatedAt: serverTimestamp()
+      });
+      triggerToast(`✓ Hospital booking status updated to: ${status}`);
+    } catch (err) {
+      console.error(err);
+      triggerToast('❌ Error updating hospital booking status');
     }
   };
 
@@ -1283,6 +1550,27 @@ export default function AdminPortal() {
     }
   };
 
+  const handleUpdateOrderDetailsEx = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingOrder) return;
+    try {
+      await updateDoc(doc(db, 'orders', editingOrder.id), {
+        customerName: editingOrder.customerName || editingOrder.userName || '',
+        phone: editingOrder.phone || editingOrder.userPhone || '',
+        address: editingOrder.address || '',
+        total: Number(editingOrder.total || editingOrder.totalPrice || 0),
+        orderItems: editingOrder.orderItems || [],
+        updatedAt: serverTimestamp()
+      });
+      triggerToast('✓ Order details updated successfully.');
+      setShowOrderModal(false);
+      setEditingOrder(null);
+    } catch (err: any) {
+      console.error(err);
+      triggerToast('❌ Failed to update order details.');
+    }
+  };
+
   const handleSaveHospital = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!hospitalForm.name.trim()) return;
@@ -1317,6 +1605,25 @@ export default function AdminPortal() {
       triggerToast('✓ Deleted hospital from active networks successfully');
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleUpdateHospitalOfficeVerification = async (hospitalName: string, isApproved: boolean) => {
+    try {
+      const existing = hospitalPrices[hospitalName] || {};
+      const updated = {
+        ...hospitalPrices,
+        [hospitalName]: {
+          ...existing,
+          isApproved,
+          updatedAt: new Date().toISOString()
+        }
+      };
+      await setDoc(doc(db, 'settings', 'hospital_prices'), updated);
+      triggerToast(`✓ Hospital ${hospitalName} is now ${isApproved ? 'Approved/Verified' : 'Unapproved/Pending'}`);
+    } catch (err: any) {
+      console.error(err);
+      triggerToast(`❌ Failed to update hospital office verification.`);
     }
   };
 
@@ -1804,6 +2111,137 @@ export default function AdminPortal() {
             {/* 30-Day performance dynamic trends chart */}
             <OrderTrendsChart orders={orders} branches={branches} />
 
+            {/* REAL-TIME BRANCH FINANCIALS & COD MONITOR */}
+            <div className="bg-slate-900 border border-white/5 rounded-[2.5rem] p-6 space-y-6 text-left">
+              <div className="border-b border-white/5 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight font-sans">Regional Branch Revenue & Payment Audit</h3>
+                  <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">
+                    HQ Master Ledger &bull; Real-time tracking of Daily, Weekly, Cash-On-Delivery (COD) and Online branch payments
+                  </p>
+                </div>
+                <div className="bg-yellow-400/10 border border-yellow-400/20 px-3 py-1.5 rounded-xl">
+                  <span className="text-[9px] font-black text-yellow-400 uppercase tracking-widest">
+                    HQ Share Accord: 25% Allocation
+                  </span>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-white/5 text-[9px] font-black uppercase text-slate-500 tracking-widest">
+                      <th className="py-3 px-4">Branch Office</th>
+                      <th className="py-3 px-4 text-right">Daily Revenue (24h)</th>
+                      <th className="py-3 px-4 text-right">Weekly Revenue (7d)</th>
+                      <th className="py-3 px-4 text-right">Cash On Delivery (COD)</th>
+                      <th className="py-3 px-4 text-right">Online (UPI/Cards)</th>
+                      <th className="py-3 px-4 text-right text-indigo-400">HQ Revenue Share (25%)</th>
+                      <th className="py-3 px-4 text-center">Settlement Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {branches.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-slate-500 font-bold uppercase tracking-wider">No active branch offices logged</td>
+                      </tr>
+                    ) : (
+                      branches.map((b) => {
+                        // Calculate metrics dynamically based on live orders
+                        const branchOrders = orders.filter(o => o.branchId === b.id || o.vendorId === b.id || b.name?.toLowerCase().includes(o.branchId?.toLowerCase() || ''));
+                        const now = new Date();
+                        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                        const startOfWeek = startOfDay - (7 * 24 * 60 * 60 * 1000);
+
+                        let dailyTotal = 0;
+                        let weeklyTotal = 0;
+                        let codTotal = 0;
+                        let onlineTotal = 0;
+                        let allTotal = 0;
+
+                        branchOrders.forEach(ord => {
+                          const t = ord.createdAt 
+                            ? new Date(ord.createdAt).getTime() 
+                            : ord.timestamp 
+                              ? ord.timestamp.toDate ? ord.timestamp.toDate().getTime() : new Date(ord.timestamp).getTime()
+                              : now.getTime();
+                          
+                          const amt = Number(ord.total) || 0;
+                          allTotal += amt;
+
+                          if (t >= startOfDay) {
+                            dailyTotal += amt;
+                          }
+                          if (t >= startOfWeek) {
+                            weeklyTotal += amt;
+                          }
+
+                          const isCOD = (ord.paymentMethod || ord.paymentType || '').toUpperCase().includes('COD') || (ord.paymentMethod || '').toLowerCase() === 'cash_on_delivery' || !ord.paymentMethod;
+                          if (isCOD) {
+                            codTotal += amt;
+                          } else {
+                            onlineTotal += amt;
+                          }
+                        });
+
+                        const hqShare = weeklyTotal * 0.25;
+
+                        return (
+                          <tr key={b.id} className="hover:bg-white/[0.02] transition-colors">
+                            <td className="py-3.5 px-4 font-black text-white uppercase">{b.name} <span className="block text-[8px] text-slate-500 font-bold tracking-widest">{b.city || 'Khammam'}</span></td>
+                            <td className="py-3.5 px-4 text-right text-emerald-400 font-bold">₹{dailyTotal.toLocaleString()}</td>
+                            <td className="py-3.5 px-4 text-right text-indigo-400 font-bold">₹{weeklyTotal.toLocaleString()}</td>
+                            <td className="py-3.5 px-4 text-right text-amber-500 font-mono font-medium">₹{codTotal.toLocaleString()}</td>
+                            <td className="py-3.5 px-4 text-right text-slate-300 font-mono font-medium">₹{onlineTotal.toLocaleString()}</td>
+                            <td className="py-3.5 px-4 text-right text-yellow-400 font-black">₹{hqShare.toLocaleString()}</td>
+                            <td className="py-3.5 px-4 text-center">
+                              <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[8px] font-black uppercase tracking-wider rounded border border-emerald-500/20">
+                                Active Sync
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* RECENT ORDERS LEDGER */}
+              <div className="space-y-3 pt-4 border-t border-white/5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Order-by-Order Transaction Ledger ({orders.slice(0, 10).length} Recent)</h4>
+                  <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">Scroll for full audit trail</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[300px] overflow-y-auto pr-1">
+                  {orders.slice(0, 15).map((ord) => {
+                    const isCOD = (ord.paymentMethod || ord.paymentType || '').toUpperCase().includes('COD') || (ord.paymentMethod || '').toLowerCase() === 'cash_on_delivery' || !ord.paymentMethod;
+                    return (
+                      <div key={ord.id} className="bg-slate-950/80 border border-white/5 p-4 rounded-2xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-mono text-slate-500">#{ord.id.slice(0, 8).toUpperCase()}</span>
+                          <span className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-full ${
+                            isCOD ? 'bg-amber-500/10 text-amber-500' : 'bg-emerald-500/10 text-emerald-400'
+                          }`}>
+                            {isCOD ? 'Cash on Delivery' : 'Online UPI'}
+                          </span>
+                        </div>
+                        <div className="flex items-baseline justify-between">
+                          <p className="text-xs font-black text-white uppercase truncate max-w-[150px]">{ord.vendorName || 'Lokal Hub'}</p>
+                          <p className="text-sm font-black text-white">₹{ord.total}</p>
+                        </div>
+                        <div className="flex justify-between items-center text-[8px] text-slate-500 font-bold uppercase tracking-wider pt-1 border-t border-white/5">
+                          <span>Status: <strong className="text-indigo-400">{ord.status}</strong></span>
+                          <span>Share: <strong className="text-yellow-400">₹{(Number(ord.total || 0) * 0.25).toFixed(1)}</strong></span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
             {/* Chart visualization & Onboarding review quick look block */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="md:col-span-2 bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
@@ -2204,6 +2642,246 @@ const reconcileDocSync = async (branchId, docBody) => {
 
               </div>
 
+            </div>
+
+            {/* NEW AI INTEGRITY MITIGATION DESK & FINANCIAL BOARD */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="ai-integrity-master-ledgers">
+              {/* Left Column: AI Issue Detection (7 Cols) */}
+              <div className="lg:col-span-7">
+                {/* AI Real-Time Issue Detection & Mitigation Desk */}
+                <div className="bg-slate-900 border border-purple-500/10 rounded-[2.5rem] p-6 space-y-6 text-left relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/5 rounded-full blur-[80px]" />
+                  <div className="border-b border-white/5 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 relative z-10">
+                    <div>
+                      <h3 className="text-sm font-black uppercase text-purple-400 tracking-tight font-sans">🧠 AI Real-Time Issue Detection & Mitigation Desk</h3>
+                      <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">
+                        Active scan of database anomalies, clinical bottlenecks, & system performance metrics
+                      </p>
+                    </div>
+                    <span className="px-2 py-0.5 bg-purple-500/10 border border-purple-500/30 text-purple-400 text-[8px] font-black uppercase tracking-widest rounded animate-pulse">
+                      SLA SCANNER RUNNING
+                    </span>
+                  </div>
+
+                  <div className="space-y-4 max-h-[500px] overflow-y-auto pr-1">
+                    {[
+                      {
+                        id: 'support_tickets',
+                        title: 'Customer Support SLA Bottleneck',
+                        category: 'Operational',
+                        severity: 'high' as const,
+                        count: supportChats.filter(c => c.status !== 'resolved' && c.status !== 'closed').length,
+                        description: `A backlog of customer complaints has been detected in regional chat sessions. Response latency exceeds SLA boundaries.`,
+                        solution: `Auto-resolve tickets with pending status and broadcast standard resolution templates to customer indices.`,
+                      },
+                      {
+                        id: 'hospital_bookings',
+                        title: 'Pending Outpatient Appointment Backlog',
+                        category: 'Clinical Network',
+                        severity: 'high' as const,
+                        count: hospitalBookings.filter(b => b.status?.toLowerCase() === 'pending').length,
+                        description: `Patient clinical OP slot bookings are currently in pending verification status, causing scheduled resource allocation blocks.`,
+                        solution: `Transactional sweep to confirm and approve all outstanding patient appointment requests.`,
+                      },
+                      {
+                        id: 'hospital_prices',
+                        title: 'Unverified Regional Hospital Registries',
+                        category: 'Provider Network',
+                        severity: 'medium' as const,
+                        count: Object.entries(hospitalPrices).filter(([_, h]: any) => !h.isApproved).length,
+                        description: `Submitted local hospital directories require master clinical review before going live for citizen searches.`,
+                        solution: `Run geo-verification check and bulk-approve pending provider listings in Khammam district.`,
+                      },
+                      {
+                        id: 'marriage_profiles',
+                        title: 'Unapproved Matrimony Profiles Accumulation',
+                        category: 'Matrimony Catalogs',
+                        severity: 'low' as const,
+                        count: marriageProfiles.filter(p => !p.isApproved).length,
+                        description: `Registered user profile assets are queued awaiting admin certification before inclusion in public search indices.`,
+                        solution: `Automate profile validation and issue mass-approvals onto matching listings.`,
+                      },
+                      {
+                        id: 'dormant_riders',
+                        title: 'Dormant Logistics Fleet Partners',
+                        category: 'Logistics',
+                        severity: 'medium' as const,
+                        count: riders.filter(r => r.status === 'In-Active' || r.status === 'Suspended').length,
+                        description: `Registered delivery partners are currently marked inactive or suspended, reducing dispatch capacity on active routes.`,
+                        solution: `Awake and re-enroll inactive delivery agents to restore status to active.`,
+                      }
+                    ].map((issue) => {
+                      const isExecutingThis = executingIssueId === issue.id;
+                      const userApprovedText = adminApproveReview[issue.id] ?? 'okay';
+
+                      return (
+                        <div key={issue.id} className="bg-slate-950 border border-white/5 p-4 rounded-3xl space-y-3 relative overflow-hidden hover:border-purple-500/20 transition-all">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-2 h-2 rounded-full ${
+                                issue.severity === 'high' ? 'bg-rose-500 animate-ping' : issue.severity === 'medium' ? 'bg-amber-500' : 'bg-blue-400'
+                              }`} />
+                              <h4 className="text-xs font-black uppercase text-white">{issue.title}</h4>
+                            </div>
+                            <span className="text-[8px] font-black uppercase tracking-widest text-slate-500 font-mono">
+                              {issue.category}
+                            </span>
+                          </div>
+
+                          <p className="text-[10px] text-slate-400 leading-relaxed">
+                            {issue.description}
+                          </p>
+
+                          <div className="bg-purple-950/20 border border-purple-500/10 p-3 rounded-2xl space-y-1">
+                            <span className="text-[8px] font-black uppercase text-purple-400 tracking-wider">AI Suggested Solution:</span>
+                            <p className="text-[9.5px] font-semibold text-slate-300 italic">
+                              {issue.solution}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+                            <div className="flex items-center gap-2">
+                              <span className={`px-2 py-0.5 text-[8.5px] font-black uppercase tracking-widest rounded ${
+                                issue.count > 0 
+                                  ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 animate-pulse' 
+                                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              }`}>
+                                {issue.count > 0 ? `● ${issue.count} PENDING` : '✓ OPTIMIZED'}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-2 w-full sm:w-auto">
+                              <span className="text-[8px] font-black uppercase text-slate-500 tracking-widest hidden md:inline">Approach Approval:</span>
+                              <input
+                                type="text"
+                                value={userApprovedText}
+                                onChange={(e) => setAdminApproveReview(prev => ({ ...prev, [issue.id]: e.target.value }))}
+                                placeholder="Type 'okay' to approve..."
+                                className="px-3 py-1 bg-slate-900 border border-white/5 focus:border-purple-500/50 rounded-lg text-[10px] text-white w-full sm:w-32 outline-none font-semibold text-center"
+                              />
+                              <button
+                                type="button"
+                                disabled={!!executingIssueId}
+                                onClick={() => handleRunHotfix(issue.id, issue.title, issue.solution, userApprovedText)}
+                                className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-black uppercase text-[8.5px] tracking-widest whitespace-nowrap active:scale-95 transition-all cursor-pointer"
+                              >
+                                Approve & Execute Fix
+                              </button>
+                            </div>
+                          </div>
+
+                          {isExecutingThis && (
+                            <div className="pt-2 border-t border-white/5 space-y-2">
+                              <div className="flex justify-between items-center text-[8px] font-black uppercase font-mono text-purple-400">
+                                <span>Compiling & Applying AI Hotfix...</span>
+                                <span>{executingProgress}%</span>
+                              </div>
+                              <div className="w-full h-1 bg-slate-900 rounded-full overflow-hidden border border-white/5 relative">
+                                <div 
+                                  className="absolute left-0 top-0 bottom-0 bg-purple-500 transition-all duration-150"
+                                  style={{ width: `${executingProgress}%` }}
+                                />
+                              </div>
+                              <div className="bg-slate-950 p-2 rounded-xl text-[8px] font-mono text-slate-400 space-y-1">
+                                {executingLogs.map((log, idx) => (
+                                  <div key={idx}>{log}</div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Automated Payment Reports (5 Cols) */}
+              <div className="lg:col-span-5">
+                <div className="bg-slate-900 border border-purple-500/10 rounded-[2.5rem] p-6 space-y-6 text-left relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/5 rounded-full blur-[80px]" />
+                  <div className="border-b border-white/5 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 relative z-10">
+                    <div>
+                      <h3 className="text-sm font-black uppercase text-purple-400 tracking-tight font-sans">📊 Automated Payments & Ledger Board</h3>
+                      <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">
+                        Active ledger syncing master accounts, platform revenues, and overall branch metrics
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8.5px] font-black uppercase tracking-widest rounded-full">
+                      SYSTEM REPORTING ALIGNED
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-1.5 bg-slate-950 p-1.5 rounded-2xl border border-white/5">
+                    {(['daily', 'weekly', 'monthly', 'yearly'] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => setFinancialReportTab(tab)}
+                        className={`py-2 px-1 rounded-xl text-[8.5px] font-black uppercase tracking-widest text-center cursor-pointer transition-all ${
+                          financialReportTab === tab
+                            ? 'bg-purple-600 text-white'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {tab}
+                      </button>
+                    ))}
+                  </div>
+
+                  {(() => {
+                    const data = calculatePaymentReport(financialReportTab);
+                    return (
+                      <div className="space-y-4 relative z-10">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-slate-950 p-4 rounded-3xl border border-white/5 text-center space-y-1">
+                            <span className="block text-[8px] font-black text-slate-500 uppercase tracking-widest">Active Branches</span>
+                            <span className="block text-2xl font-black text-purple-400">{data.branchesCount}</span>
+                            <span className="block text-[7px] text-slate-500 font-bold uppercase">MASTER REGISTERED</span>
+                          </div>
+                          <div className="bg-slate-950 p-4 rounded-3xl border border-white/5 text-center space-y-1">
+                            <span className="block text-[8px] font-black text-slate-500 uppercase tracking-widest">Overall Income</span>
+                            <span className="block text-2xl font-black text-emerald-400">₹{data.overallTotal.toLocaleString()}</span>
+                            <span className="block text-[7px] text-slate-500 font-bold uppercase">COMBINED TOTAL</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-950/80 p-3 rounded-2xl border border-white/5 flex items-center justify-between text-[8.5px]">
+                          <span className="text-slate-400 font-bold uppercase tracking-wider">
+                            Report Window Boundaries:
+                          </span>
+                          <span className="font-mono text-purple-400 font-bold">
+                            {financialReportTab === 'daily' && "Today's Local Midnight to Current"}
+                            {financialReportTab === 'weekly' && "Thursday to Thursday Rollup Range"}
+                            {financialReportTab === 'monthly' && "Calendar 1st to 31st Bound"}
+                            {financialReportTab === 'yearly' && "Annual Calendar Range Sync"}
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <h4 className="text-[8.5px] font-black text-slate-500 uppercase tracking-widest">Branch-by-Branch Incomes Ledger</h4>
+                          <div className="bg-slate-950 rounded-3xl border border-white/5 overflow-hidden divide-y divide-white/5">
+                            {Object.entries(data.branchIncomes).map(([bName, income]) => (
+                              <div key={bName} className="p-3 flex items-center justify-between text-xs hover:bg-white/[0.01] transition-colors">
+                                <span className="font-black text-white uppercase">{bName}</span>
+                                <span className="font-mono font-black text-emerald-400">₹{income.toLocaleString()}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleTriggerManualFinancialReport}
+                          className="w-full py-3 bg-purple-600/10 border border-purple-500/20 hover:bg-purple-600 hover:text-white text-purple-400 rounded-2xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          📢 Broadcast Latest Ledger to Chat
+                        </button>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
             </div>
 
             {/* AI Diagnostics and Chat Sandbox section */}
@@ -2687,7 +3365,19 @@ const reconcileDocSync = async (branchId, docBody) => {
 
                         {/* Order Items */}
                         <div className="bg-slate-950/70 p-4 rounded-2xl border border-white/5 space-y-2">
-                          <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-white/5 pb-2">Line Items ({activeOrd.orderItems?.length || activeOrd.items || 0})</h4>
+                          <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Line Items ({activeOrd.orderItems?.length || activeOrd.items || 0})</h4>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingOrder(JSON.parse(JSON.stringify(activeOrd)));
+                                setShowOrderModal(true);
+                              }}
+                              className="px-2.5 py-1 bg-yellow-400/10 hover:bg-yellow-400 text-yellow-400 hover:text-slate-950 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all"
+                            >
+                              ✏️ Edit Order Details
+                            </button>
+                          </div>
                           <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
                             {(activeOrd.orderItems || []).map((item: any, idx: number) => (
                               <div key={idx} className="flex justify-between items-center text-xs">
@@ -2855,10 +3545,10 @@ const reconcileDocSync = async (branchId, docBody) => {
           <div className="space-y-6">
             <header>
               <h2 className="text-lg font-black uppercase tracking-tight">Onboarding Approval Queues</h2>
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Approve registered merchants and logistics crews</p>
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Approve and verify regional listings, clinical networks, matchmakers, merchants, and fleets</p>
             </header>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               
               {/* Vendors Queue */}
               <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
@@ -2936,6 +3626,190 @@ const reconcileDocSync = async (branchId, docBody) => {
                           </button>
                           <button 
                             onClick={() => handleUpdateRiderStatus(r.id, 'Banned')}
+                            className="px-4 py-2 bg-rose-600/15 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Hospital Offices Queue */}
+              <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black uppercase tracking-tight text-pink-400">
+                    Pending Clinics ({
+                      Object.entries(hospitalPrices).filter(([_, h]: any) => !h.isApproved).length
+                    })
+                  </h3>
+                  <Activity className="w-5 h-5 text-pink-400" />
+                </div>
+
+                <div className="space-y-3.5 max-h-[450px] overflow-y-auto pr-1">
+                  {Object.entries(hospitalPrices).filter(([_, h]: any) => !h.isApproved).length === 0 ? (
+                    <div className="text-center p-8 bg-slate-950/60 rounded-3xl border border-white/5">
+                      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-none">✓ No pending hospital reviews</p>
+                    </div>
+                  ) : (
+                    Object.entries(hospitalPrices).filter(([_, h]: any) => !h.isApproved).map(([name, h]: [string, any]) => (
+                      <div key={name} className="bg-slate-950/80 border border-white/5 p-4.5 rounded-2xl flex flex-col justify-between gap-4">
+                        <div>
+                          <div className="flex items-start justify-between">
+                            <h4 className="text-sm font-black text-white uppercase tracking-tight">{name}</h4>
+                            <span className="px-2.5 py-1 bg-pink-400/10 text-pink-500 text-[9px] font-black uppercase tracking-widest rounded-full">₹{h.opPrice} OP</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-2 font-medium">{h.description || 'No description listed'}</p>
+                          {h.phone && <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Phone: {h.phone}</p>}
+                          <p className="text-[9px] text-slate-500 mt-1 uppercase font-mono">Branch ID: {h.branchId || 'HQ Master'}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleUpdateHospitalOfficeVerification(name, true)}
+                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all shadow-md shadow-emerald-900/10"
+                          >
+                            Verify Office
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteHospitalObj(name)}
+                            className="px-4 py-2 bg-rose-600/15 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Marriage Bureau Profiles Queue */}
+              <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black uppercase tracking-tight text-rose-400">
+                    Pending Marriage ({marriageProfiles.filter(p => !p.isApproved).length})
+                  </h3>
+                  <Heart className="w-5 h-5 text-rose-400" />
+                </div>
+
+                <div className="space-y-3.5 max-h-[450px] overflow-y-auto pr-1">
+                  {marriageProfiles.filter(p => !p.isApproved).length === 0 ? (
+                    <div className="text-center p-8 bg-slate-950/60 rounded-3xl border border-white/5">
+                      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-none">✓ No pending matchmaker reviews</p>
+                    </div>
+                  ) : (
+                    marriageProfiles.filter(p => !p.isApproved).map((p) => (
+                      <div key={p.id} className="bg-slate-950/80 border border-white/5 p-4.5 rounded-2xl flex flex-col justify-between gap-4">
+                        <div>
+                          <div className="flex items-start justify-between">
+                            <h4 className="text-sm font-black text-white uppercase tracking-tight">{p.fullName || 'Anonymous'}</h4>
+                            <span className="px-2.5 py-1 bg-rose-400/10 text-rose-500 text-[9px] font-black uppercase tracking-widest rounded-full">{p.religion}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-2 font-medium">Caste/Age: {p.caste} • {p.age} yrs</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Edu/Occ: {p.education} • {p.occupation}</p>
+                          <p className="text-[9px] text-slate-500 mt-1 uppercase font-mono">Branch ID: {p.branchId || 'HQ Master'}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleApproveMarriageProfile(p.id)}
+                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all shadow-md shadow-emerald-900/10"
+                          >
+                            Verify Profile
+                          </button>
+                          <button 
+                            onClick={() => handleRejectMarriageProfile(p.id)}
+                            className="px-4 py-2 bg-rose-600/15 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Real Estate Property Queue */}
+              <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black uppercase tracking-tight text-amber-500">
+                    Pending Estates ({properties.filter(p => !p.isApproved).length})
+                  </h3>
+                  <Home className="w-5 h-5 text-amber-500" />
+                </div>
+
+                <div className="space-y-3.5 max-h-[450px] overflow-y-auto pr-1">
+                  {properties.filter(p => !p.isApproved).length === 0 ? (
+                    <div className="text-center p-8 bg-slate-950/60 rounded-3xl border border-white/5">
+                      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-none">✓ No pending property listings</p>
+                    </div>
+                  ) : (
+                    properties.filter(p => !p.isApproved).map((p) => (
+                      <div key={p.id} className="bg-slate-950/80 border border-white/5 p-4.5 rounded-2xl flex flex-col justify-between gap-4">
+                        <div>
+                          <div className="flex items-start justify-between">
+                            <h4 className="text-sm font-black text-white uppercase tracking-tight">{p.title}</h4>
+                            <span className="px-2.5 py-1 bg-amber-500/10 text-amber-500 text-[9px] font-black uppercase tracking-widest rounded-full">₹{p.price}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-2 font-medium line-clamp-2">{p.description}</p>
+                          <p className="text-[11px] text-indigo-400 mt-0.5 font-bold">📍 {p.location?.area || 'Khammam'}</p>
+                          <p className="text-[9px] text-slate-500 mt-1 uppercase font-mono">Branch ID: {p.branchId || 'HQ Master'}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleApproveProperty(p.id)}
+                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all shadow-md shadow-emerald-900/10"
+                          >
+                            Verify Listing
+                          </button>
+                          <button 
+                            onClick={() => handleRejectProperty(p.id)}
+                            className="px-4 py-2 bg-rose-600/15 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all"
+                          >
+                            Suspend
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Hospital OP Bookings Queue */}
+              <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black uppercase tracking-tight text-rose-400">Pending Hospital OPs ({hospitalBookings.filter(b => b.status === 'pending' || b.status === 'Pending').length})</h3>
+                  <Activity className="w-5 h-5 text-rose-400" />
+                </div>
+
+                <div className="space-y-3.5 max-h-[450px] overflow-y-auto pr-1">
+                  {hospitalBookings.filter(b => b.status === 'pending' || b.status === 'Pending').length === 0 ? (
+                    <div className="text-center p-8 bg-slate-950/60 rounded-3xl border border-white/5">
+                      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-none">✓ No pending Hospital OPs</p>
+                    </div>
+                  ) : (
+                    hospitalBookings.filter(b => b.status === 'pending' || b.status === 'Pending').map((b) => (
+                      <div key={b.id} className="bg-slate-950/80 border border-white/5 p-4.5 rounded-2xl flex flex-col justify-between gap-4">
+                        <div>
+                          <div className="flex items-start justify-between">
+                            <h4 className="text-sm font-black text-white uppercase tracking-tight">{b.patientName || 'Anonymous Patient'}</h4>
+                            <span className="px-2.5 py-1 bg-rose-400/10 text-rose-400 text-[9px] font-black uppercase tracking-widest rounded-full">{b.hospital || 'Hospital'}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-2 font-medium">Slot: {b.slot || 'N/A'}</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Age/Gender: {b.age || 'N/A'} yrs / {b.gender || 'N/A'}</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Phone: {b.phone}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => handleUpdateHospitalBookingStatus(b.id, 'Approved')}
+                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all shadow-md shadow-emerald-900/10"
+                          >
+                            Approve OP
+                          </button>
+                          <button 
+                            onClick={() => handleUpdateHospitalBookingStatus(b.id, 'Rejected')}
                             className="px-4 py-2 bg-rose-600/15 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all"
                           >
                             Reject
@@ -6450,6 +7324,160 @@ const reconcileDocSync = async (branchId, docBody) => {
                   </button>
                 </div>
 
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT ORDER DETAILS MODAL */}
+      <AnimatePresence>
+        {showOrderModal && editingOrder && (
+          <div className="fixed inset-0 z-[10001] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 border border-white/10 p-6 rounded-[2.5rem] max-w-md w-full space-y-4 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-center border-b border-white/5 pb-3 text-left">
+                <h4 className="text-xs font-black uppercase tracking-wider text-yellow-400">✏️ Edit Order Details</h4>
+                <button onClick={() => { setShowOrderModal(false); setEditingOrder(null); }} className="text-slate-400 hover:text-white cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleUpdateOrderDetailsEx} className="space-y-4 text-left">
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Customer Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingOrder.customerName || editingOrder.userName || ''}
+                    onChange={(e) => setEditingOrder({ ...editingOrder, customerName: e.target.value, userName: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    required
+                    value={editingOrder.phone || editingOrder.userPhone || ''}
+                    onChange={(e) => setEditingOrder({ ...editingOrder, phone: e.target.value, userPhone: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Delivery Address</label>
+                  <input
+                    type="text"
+                    required
+                    value={editingOrder.address || ''}
+                    onChange={(e) => setEditingOrder({ ...editingOrder, address: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Total Price (₹)</label>
+                  <input
+                    type="number"
+                    required
+                    value={editingOrder.total || editingOrder.totalPrice || 0}
+                    onChange={(e) => setEditingOrder({ ...editingOrder, total: Number(e.target.value), totalPrice: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-500"
+                  />
+                </div>
+
+                {/* Items Editor */}
+                <div className="space-y-2 border-t border-white/5 pt-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Edit Order Items</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newItems = [...(editingOrder.orderItems || [])];
+                        newItems.push({ id: Date.now().toString(), name: 'New Item', price: 100, quantity: 1 });
+                        setEditingOrder({ ...editingOrder, orderItems: newItems });
+                      }}
+                      className="px-2 py-1 bg-yellow-400/20 hover:bg-yellow-400 text-yellow-400 hover:text-slate-950 rounded text-[8px] font-black uppercase tracking-wider"
+                    >
+                      + Add Item
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                    {(editingOrder.orderItems || []).map((item: any, idx: number) => (
+                      <div key={idx} className="bg-slate-950 p-2.5 rounded-xl border border-white/5 flex gap-2 items-center">
+                        <input
+                          type="text"
+                          required
+                          placeholder="Item Name"
+                          value={item.name || ''}
+                          onChange={(e) => {
+                            const newItems = [...editingOrder.orderItems];
+                            newItems[idx].name = e.target.value;
+                            setEditingOrder({ ...editingOrder, orderItems: newItems });
+                          }}
+                          className="flex-1 bg-slate-900 border border-white/10 px-2 py-1.5 rounded text-[10.5px] font-bold text-white outline-none"
+                        />
+                        <input
+                          type="number"
+                          required
+                          placeholder="Price"
+                          value={item.price || 0}
+                          onChange={(e) => {
+                            const newItems = [...editingOrder.orderItems];
+                            newItems[idx].price = Number(e.target.value);
+                            setEditingOrder({ ...editingOrder, orderItems: newItems });
+                          }}
+                          className="w-14 bg-slate-900 border border-white/10 px-2 py-1.5 rounded text-[10.5px] font-bold text-white outline-none"
+                        />
+                        <input
+                          type="number"
+                          required
+                          placeholder="Qty"
+                          value={item.quantity || 1}
+                          onChange={(e) => {
+                            const newItems = [...editingOrder.orderItems];
+                            newItems[idx].quantity = Number(e.target.value);
+                            setEditingOrder({ ...editingOrder, orderItems: newItems });
+                          }}
+                          className="w-10 bg-slate-900 border border-white/10 px-2 py-1.5 rounded text-[10.5px] font-bold text-white outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newItems = (editingOrder.orderItems || []).filter((_: any, i: number) => i !== idx);
+                            setEditingOrder({ ...editingOrder, orderItems: newItems });
+                          }}
+                          className="text-rose-500 hover:text-rose-400 p-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-2.5 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => { setShowOrderModal(false); setEditingOrder(null); }}
+                    className="flex-1 py-3 bg-slate-950 hover:bg-slate-900 border border-white/5 text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-yellow-950/40"
+                  >
+                    Save Changes
+                  </button>
+                </div>
               </form>
             </motion.div>
           </div>

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithPhoneNumber, ConfirmationResult, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 
 import { Address } from '../types';
@@ -39,6 +39,7 @@ interface FirebaseContextType {
   signInWithToken: (token: string) => Promise<void>;
   signInAnon: () => Promise<void>;
   logout: () => Promise<void>;
+  deactivateAccount: () => Promise<void>;
   isLoggingOut: boolean;
 }
 
@@ -88,6 +89,17 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         unsubProfile = onSnapshot(doc(db, 'users', currentUser.uid), (docSnippet) => {
           if (docSnippet.exists()) {
             const data = docSnippet.data() as UserProfile;
+            if ((data as any).isDeactivated === true) {
+              // Sign out immediately and clear credentials!
+              signOut(auth);
+              localStorage.removeItem('admin_session_active');
+              localStorage.removeItem('lokal_branch_id');
+              localStorage.removeItem('user_role');
+              localStorage.removeItem('user_addresses');
+              localStorage.setItem('deactivated_login_attempt', 'true');
+              setUserProfile(null);
+              return;
+            }
             setUserProfile(data);
             setIsBranchAdmin(data.role === 'branchAdmin' || (data as any).isBranchAdmin === true);
             setBranchId(data.branchId || null);
@@ -176,8 +188,28 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  const deactivateAccount = async () => {
+    if (!auth.currentUser) return;
+    const uid = auth.currentUser.uid;
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        isDeactivated: true,
+        deactivatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error("Firestore deactivation update failed:", err);
+    }
+    
+    localStorage.removeItem('admin_session_active');
+    localStorage.removeItem('lokal_branch_id');
+    localStorage.removeItem('user_role');
+    localStorage.removeItem('user_addresses');
+    
+    await signOut(auth);
+  };
+
   return (
-    <FirebaseContext.Provider value={{ user, userProfile, isAdmin, isSuperAdmin, isBranchAdmin, branchId, loading, login, phoneLogin, signInWithToken, signInAnon, logout, isLoggingOut }}>
+    <FirebaseContext.Provider value={{ user, userProfile, isAdmin, isSuperAdmin, isBranchAdmin, branchId, loading, login, phoneLogin, signInWithToken, signInAnon, logout, deactivateAccount, isLoggingOut }}>
       {children}
     </FirebaseContext.Provider>
   );
