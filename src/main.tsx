@@ -4,6 +4,7 @@ import React, { useEffect } from 'react';
 import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import { FirebaseProvider } from './contexts/FirebaseContext.tsx';
+import { LanguageProvider } from './i18n.ts';
 import './index.css';
 
 // MSG91 OTP Widget Configuration & Initialization
@@ -49,7 +50,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
       <FirebaseProvider>
-        <App />
+        <LanguageProvider>
+          <App />
+        </LanguageProvider>
       </FirebaseProvider>
     </ErrorBoundary>
   </StrictMode>,

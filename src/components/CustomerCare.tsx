@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Phone, User, Briefcase, Bike, ChevronRight, MessageSquare, ShieldCheck, HeartHandshake, Clock, HelpCircle, Send, Search, CheckCheck, Camera, ShieldAlert } from 'lucide-react';
+import { X, Phone, User, Briefcase, Bike, ChevronRight, MessageSquare, ShieldCheck, HeartHandshake, Clock, HelpCircle, Send, Search, CheckCheck, Camera, ShieldAlert, Globe } from 'lucide-react';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, updateDoc, setDoc } from 'firebase/firestore';
-import { SupportMessage } from '../types';
+import { SupportMessage, LanguageCode } from '../types';
+import { LANGUAGES } from '../constants';
+import { useTranslation } from '../i18n';
+import LanguageSelectorModal from './common/LanguageSelectorModal';
+import { getLocalizedCustomerCareContent } from '../utils/localizedContent';
 
 interface FAQItem {
   q: string;
@@ -17,6 +21,7 @@ interface CustomerCareProps {
   secondaryPhone?: string;
   initialType?: 'user' | 'vendor' | 'delivery' | 'marriage';
   branchId: string;
+  language?: LanguageCode;
 }
 
 const CUSTOMER_CARE_QA: Record<'user' | 'vendor' | 'delivery' | 'marriage', FAQItem[]> = {
@@ -56,7 +61,11 @@ const CUSTOMER_CARE_QA: Record<'user' | 'vendor' | 'delivery' | 'marriage', FAQI
   ]
 };
 
-export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryPhone, initialType = 'user', branchId }: CustomerCareProps) {
+export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryPhone, initialType = 'user', branchId, language = 'en-IN' }: CustomerCareProps) {
+  const { language: currentLanguage, setLanguage: setCurrentLanguage } = useTranslation();
+  const [showLangModal, setShowLangModal] = useState(false);
+  const t = getLocalizedCustomerCareContent(currentLanguage);
+
   const [careType, setCareType] = useState<'user' | 'vendor' | 'delivery' | 'marriage'>(initialType);
   const [view, setView] = useState<'faq' | 'chat' | 'complaints'>('faq');
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
@@ -255,7 +264,7 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
     if (!textToSend.trim() && !imageToSend) return;
 
     // Check for keywords but don't show number immediately anymore
-    const lowerText = textToSend.toLowerCase();
+    const lowerText = (textToSend || '').toLowerCase();
     const isDirectCallRequest = lowerText.includes('call') || 
                                 lowerText.includes('phone') || 
                                 lowerText.includes('number');
@@ -400,9 +409,11 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
     setSearchQuery('');
   };
 
-  const filteredFaqs = CUSTOMER_CARE_QA[careType].filter(item => 
-    item.q.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    item.a.toLowerCase().includes(searchQuery.toLowerCase())
+  const sq = (searchQuery || '').toLowerCase();
+  const filteredFaqs = (CUSTOMER_CARE_QA[careType] || []).filter(item => 
+    !sq ||
+    (item.q || '').toLowerCase().includes(sq) || 
+    (item.a || '').toLowerCase().includes(sq)
   );
 
   return (
@@ -438,8 +449,19 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                 </div>
               </div>
 
-              {/* View Tabs */}
-              <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-2xl self-center">
+              <div className="flex items-center gap-2 self-center">
+                <button
+                  type="button"
+                  onClick={() => setShowLangModal(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 bg-yellow-400/20 hover:bg-yellow-400/30 text-yellow-800 dark:text-yellow-300 border border-yellow-300 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all shrink-0 active:scale-95 shadow-sm cursor-pointer"
+                  title="Select App Language / 24 Languages"
+                >
+                  <Globe className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+                  <span>{LANGUAGES.find(l => l.code === currentLanguage)?.native || 'Language'}</span>
+                </button>
+
+                {/* View Tabs */}
+                <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-2xl">
                 <button
                   type="button"
                   onClick={() => setView('faq')}
@@ -474,6 +496,7 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                   Order Complaints
                 </button>
               </div>
+            </div>
 
               <button 
                 type="button"
@@ -1039,6 +1062,16 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                 </div>
               </div>
             )}
+
+            <LanguageSelectorModal
+              isOpen={showLangModal}
+              onClose={() => setShowLangModal(false)}
+              selectedLanguage={currentLanguage}
+              onSelectLanguage={(code) => {
+                setCurrentLanguage(code);
+                localStorage.setItem('lokal_app_language', code);
+              }}
+            />
           </motion.div>
         </div>
       )}

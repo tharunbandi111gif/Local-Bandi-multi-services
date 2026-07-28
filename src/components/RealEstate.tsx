@@ -177,8 +177,10 @@ export default function RealEstate({ onClose }: RealEstateProps) {
   const filteredProperties = React.useMemo(() => 
     properties.filter(p => {
       const matchesTab = activeTab === 'All' || p.category === activeTab;
-      const matchesSearch = p.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           p.location.area.toLowerCase().includes(searchTerm.toLowerCase());
+      const st = (searchTerm || '').toLowerCase();
+      const title = (p.title || '').toLowerCase();
+      const area = (p.location?.area || '').toLowerCase();
+      const matchesSearch = !st || title.includes(st) || area.includes(st);
       return matchesTab && matchesSearch;
     }),
   [properties, activeTab, searchTerm]);

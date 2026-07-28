@@ -139,10 +139,27 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
   });
 
   const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [otpLength, setOtpLength] = useState<number>(6); // fallback to 6 for onboarding
+  const [otpExpiry, setOtpExpiry] = useState<number>(10); // fallback to 10 minutes
+  const [otp, setOtp] = useState<string[]>(Array(6).fill(''));
   const [generatedOnboardingOtp, setGeneratedOnboardingOtp] = useState<string>('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/api/otp-config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.otpLength) {
+          setOtpLength(data.otpLength);
+          setOtp(Array(data.otpLength).fill(''));
+        }
+        if (data.otpExpiry) {
+          setOtpExpiry(data.otpExpiry);
+        }
+      })
+      .catch(err => console.warn("Failed to fetch OTP configuration in onboarding:", err));
+  }, []);
 
   useEffect(() => {
     checkExisting();
@@ -277,8 +294,8 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
         setStep(5);
       } catch (authErr: any) {
         console.warn("Phone auth sandbox activated:", authErr);
-        // Generate simulated 6-digit code for sandboxed mode
-        const secureCode = Math.floor(100000 + Math.random() * 900000).toString();
+        // Generate simulated dynamic-length code for sandboxed mode
+        const secureCode = Array.from({ length: otpLength }, () => Math.floor(Math.random() * 10)).join('');
         setGeneratedOnboardingOtp(secureCode);
 
         // Write log to firebase audit_logs
@@ -286,7 +303,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
           type: 'onboarding_otp',
           phoneNumber: formData.phone,
           code: secureCode,
-          message: `[Lokal Bharath Dispatch] Partner Onboarding Security Code: ${secureCode}. Do not disclose.`,
+          message: `[Lokal Bharath Dispatch] Partner Onboarding Security Code: ${secureCode}. Do not disclose. Valid for ${otpExpiry} minutes.`,
           status: 'DELIVERED',
           createdAt: serverTimestamp()
         });
@@ -319,14 +336,15 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
 
   const handleVerifyOtp = async () => {
     const code = otp.join('');
-    if (code.length !== 6) return;
+    if (code.length !== otpLength) return;
     setError(null);
     setIsVerifying(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 800));
       
+      const defaultFallback = otpLength === 4 ? '1234' : '123456';
       // Match either the generated simulated code, our fallback codes, or the real auth confirmation
-      if (code === generatedOnboardingOtp || code === '123456' || generatedOnboardingOtp === '') {
+      if (code === generatedOnboardingOtp || code === defaultFallback || generatedOnboardingOtp === '') {
         // After verification, save to DB
         await saveApplication();
       } else {
@@ -1516,7 +1534,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                   <ShieldCheck className="w-10 h-10 text-indigo-500" />
                 </div>
                 <h3 className="text-2xl font-black text-gray-900 italic mb-2 tracking-tighter">Verify Mobile</h3>
-                <p className="text-gray-400 font-bold uppercase text-xs tracking-wider mb-8">Enter 6-digit code sent to +91 {formData.phone}</p>
+                <p className="text-gray-400 font-bold uppercase text-xs tracking-wider mb-8">Enter {otpLength}-digit code sent to +91 {formData.phone}</p>
                 
                 {error && (
                   <div className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-500 text-[10px] font-bold italic">
@@ -1524,12 +1542,14 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                   </div>
                 )}
 
-                <div className="flex gap-2 justify-between mb-8">
+                <div className="flex gap-2 justify-center mb-8">
                   {otp.map((digit, i) => (
                     <input
                       key={i}
                       id={`otp-onboarding-${i}`}
                       type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       maxLength={1}
                       value={digit}
                       onChange={(e) => {
@@ -1538,12 +1558,21 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                           const newOtp = [...otp];
                           newOtp[i] = val[val.length-1];
                           setOtp(newOtp);
-                          if (i < 5) document.getElementById(`otp-onboarding-${i+1}`)?.focus();
+                          if (i < otpLength - 1) document.getElementById(`otp-onboarding-${i+1}`)?.focus();
                         }
                       }}
                       onKeyDown={(e) => {
-                        if (e.key === 'Backspace' && !otp[i] && i > 0) {
-                          document.getElementById(`otp-onboarding-${i-1}`)?.focus();
+                        if (e.key === 'Backspace') {
+                          if (!otp[i] && i > 0) {
+                            const newOtp = [...otp];
+                            newOtp[i-1] = '';
+                            setOtp(newOtp);
+                            document.getElementById(`otp-onboarding-${i-1}`)?.focus();
+                          } else if (otp[i]) {
+                            const newOtp = [...otp];
+                            newOtp[i] = '';
+                            setOtp(newOtp);
+                          }
                         }
                       }}
                       className="w-12 h-14 bg-gray-50 border-2 border-transparent focus:border-indigo-500 outline-none rounded-2xl text-center text-xl font-black transition-all shadow-inner"
@@ -1554,7 +1583,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                 <div className="space-y-4">
                   <button 
                     onClick={handleVerifyOtp}
-                    disabled={otp.join('').length !== 6 || isVerifying}
+                    disabled={otp.join('').length !== otpLength || isVerifying}
                     className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-xl shadow-gray-200 active:scale-95 transition-all flex items-center justify-center gap-3"
                   >
                     {isVerifying ? (
@@ -1562,7 +1591,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                     ) : 'Verify & Submit'}
                   </button>
                   <button 
-                    onClick={() => { setStep(2); setOtp(['','','','','','']); setError(null); }}
+                    onClick={() => { setStep(2); setOtp(Array(otpLength).fill('')); setError(null); }}
                     className="text-[10px] font-black text-gray-400 uppercase tracking-widest"
                   >
                     Change Number

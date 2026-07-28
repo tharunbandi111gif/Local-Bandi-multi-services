@@ -1536,6 +1536,22 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     }
   };
 
+  const handleDeleteOrderEx = async (orderId: string) => {
+    if (!window.confirm(`PERMANENTLY DELETE order #${orderId.slice(-6)}? This cannot be undone.`)) return;
+    try {
+      await deleteDoc(doc(db, 'orders', orderId));
+      triggerToast(`✓ Order permanently deleted.`);
+      if (selectedOrderId === orderId) setSelectedOrderId(null);
+      if (editingOrder?.id === orderId) {
+        setShowOrderModal(false);
+        setEditingOrder(null);
+      }
+    } catch (e) {
+      console.error(e);
+      triggerToast(`❌ Failed to delete order.`);
+    }
+  };
+
   const handleUpdateOrderStatusEx = async (orderId: string, newStatus: string) => {
     try {
       await updateDoc(doc(db, 'orders', orderId), {
@@ -7466,14 +7482,23 @@ const reconcileDocSync = async (branchId, docBody) => {
                 <div className="flex gap-2.5 pt-3">
                   <button
                     type="button"
+                    onClick={() => handleDeleteOrderEx(editingOrder.id)}
+                    className="py-3 px-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1 cursor-pointer"
+                    title="Delete Order"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => { setShowOrderModal(false); setEditingOrder(null); }}
-                    className="flex-1 py-3 bg-slate-950 hover:bg-slate-900 border border-white/5 text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest"
+                    className="flex-1 py-3 bg-slate-950 hover:bg-slate-900 border border-white/5 text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-yellow-950/40"
+                    className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-yellow-950/40 cursor-pointer"
                   >
                     Save Changes
                   </button>

@@ -37,13 +37,16 @@ import { referralService } from './lib/referral';
 import { PRODUCTS, SERVICES, REWARDS } from './constants';
 import { VendorProfile } from './types';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
+import { useTranslation } from './i18n';
 import { serverTimestamp, collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, getDocs, addDoc, orderBy, limit } from 'firebase/firestore';
+import { resetSandbox } from './lib/firestore-wrapper';
 
 import { useFirebase } from './contexts/FirebaseContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AlertCircle, Power, RefreshCw, Users, Truck, ArrowRight, ShieldCheck, ShieldAlert, Bike } from 'lucide-react';
 import BranchManager from './components/BranchManager';
 import { Branch } from './types';
+import { isPointInBranchBoundaries, getCoordsFromAddress } from './lib/geofencing';
 
 import { SafeZone } from './components/common/SafeZone';
 import FloatingAppSwitcher from './components/common/FloatingAppSwitcher';
@@ -223,10 +226,15 @@ function AppContent() {
     return localStorage.getItem('admin_session_active') === 'true';
   });
 
-  // Overridden to route ALL logged-in profiles/users as administrators with complete permissions
-  const isAdmin = user ? true : false;
-  const isSuperAdmin = user ? true : false;
-  const isBranchAdmin = user ? true : false;
+  // Segregated roles: Tarun (master admin) has absolute Super Admin control over all portals.
+  // Logged-in testers are routed as branch/general admins by default to keep offline testing simple.
+  const isSuperAdmin = isFirebaseSuperAdmin || 
+                       user?.email === 'tharunbandi111@gmail.com' || 
+                       user?.email === 'tarunbandi111@gmail.com' ||
+                       user?.phoneNumber === '+918790729816' ||
+                       user?.phoneNumber === '+917416574197';
+  const isBranchAdmin = isFirebaseBranchAdmin || isSuperAdmin || (user ? true : false);
+  const isAdmin = isFirebaseAdmin || isSuperAdmin || (user ? true : false);
 
   const [passcode, setPasscode] = useState('');
   const [passcodeError, setPasscodeError] = useState('');
@@ -317,6 +325,17 @@ function AppContent() {
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
+  const [coverageZones, setCoverageZones] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!db) return;
+    const unsub = onSnapshot(collection(db, 'coverage_zones'), (snap) => {
+      setCoverageZones(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => {
+      console.warn("Failed to subscribe to coverage_zones:", err);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const selected = branches.find(b => b.id === currentBranchId);
@@ -324,7 +343,7 @@ function AppContent() {
   }, [branches, currentBranchId]);
 
   const isBranchOffline = currentBranch?.status === 'Offline';
-  const [selectedLanguage, setSelectedLanguage] = useState<LanguageCode>('en-IN');
+  const { language: selectedLanguage, setLanguage: setSelectedLanguage } = useTranslation();
   const [promoCodes, setPromoCodes] = useState<any[]>([]);
 
   useEffect(() => {
@@ -335,6 +354,28 @@ function AppContent() {
       
       // If we are in "Select Location" or newly selecting, we might need to update branchId
     }, (err) => {
+      console.warn("Failed to subscribe to branches (likely quota hit). Fallback to default branch.");
+      setBranches([
+        {
+          id: 'khammam_main',
+          name: 'Khammam Main Branch',
+          location: 'Khammam Center',
+          city: 'Khammam',
+          district: 'Khammam',
+          state: 'Telangana',
+          pincodes: ['507001', '507002', '507003'],
+          status: 'Active',
+          adminId: 'default_admin',
+          adminName: 'Tharun Bandi',
+          contactPhone: '8790729816',
+          vendorsCount: 15,
+          ordersCount: 120,
+          revenue: 45000,
+          profitShare: 10,
+          joinDate: new Date(),
+          agreementExpiry: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+        }
+      ]);
       handleFirestoreError(err, OperationType.LIST, 'branches');
     });
     return () => unsub();
@@ -343,17 +384,17 @@ function AppContent() {
   useEffect(() => {
     if (location !== 'Select Location' && branches.length > 0 && !isBranchAdmin) {
       // Find matching branch
-      const lowerLoc = location.toLowerCase();
-      const pincodeMatch = location.match(/\d{6}/);
+      const lowerLoc = (location || '').toLowerCase();
+      const pincodeMatch = (location || '').match(/\d{6}/);
       const pincode = pincodeMatch ? pincodeMatch[0] : null;
 
       // Score-based matching for better accuracy
       const scoredBranches = branches.map(b => {
         let score = 0;
-        const branchName = b.name.toLowerCase();
-        const branchLoc = b.location.toLowerCase();
-        const branchCity = b.city?.toLowerCase() || '';
-        const branchDistrict = b.district?.toLowerCase() || '';
+        const branchName = (b.name || '').toLowerCase();
+        const branchLoc = (b.location || '').toLowerCase();
+        const branchCity = (b.city || '').toLowerCase();
+        const branchDistrict = (b.district || '').toLowerCase();
 
         // Highest Priority: Pincode match
         if (pincode && b.pincodes?.includes(pincode)) score += 100;
@@ -395,6 +436,12 @@ function AppContent() {
     const unsub = onSnapshot(q, (snap) => {
       setPromoCodes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     }, (err) => {
+      console.warn("Failed to subscribe to promo codes (likely quota hit). Fallback to defaults.");
+      setPromoCodes([
+        { id: 'WELCOME100', code: 'WELCOME100', discountType: 'Flat', discountValue: 100, minOrderValue: 300, status: 'Active', description: 'Flat ₹100 off on orders above ₹300' },
+        { id: 'LOKALFREE', code: 'LOKALFREE', discountType: 'FreeDelivery', discountValue: 0, minOrderValue: 150, status: 'Active', description: 'Free Delivery on orders above ₹150' },
+        { id: 'FESTIVE50', code: 'FESTIVE50', discountType: 'Percentage', discountValue: 15, minOrderValue: 200, status: 'Active', description: '15% off on all products/services up to ₹100' }
+      ]);
       handleFirestoreError(err, OperationType.LIST, 'promoCodes');
     });
     return () => unsub();
@@ -450,11 +497,35 @@ function AppContent() {
     }
   }, [location]);
 
-  const handleLocationSelect = React.useCallback((newLoc: string) => {
+  const handleLocationSelect = React.useCallback(async (newLoc: string) => {
     setLocation(newLoc);
     localStorage.setItem('lokal_user_location', newLoc);
+    
+    // Clear old coords first
+    localStorage.removeItem('lokal_user_lat');
+    localStorage.removeItem('lokal_user_lng');
+
+    try {
+      const coords = await getCoordsFromAddress(newLoc);
+      if (coords) {
+        localStorage.setItem('lokal_user_lat', String(coords.lat));
+        localStorage.setItem('lokal_user_lng', String(coords.lng));
+        
+        // Also update user profile if authenticated
+        if (user) {
+          await updateDoc(doc(db, 'users', user.uid), {
+            latitude: coords.lat,
+            longitude: coords.lng,
+            fullAddress: newLoc
+          }).catch(err => console.warn("Failed to update profile coordinates:", err));
+        }
+      }
+    } catch (err) {
+      console.warn("Could not geocode selected address:", err);
+    }
+
     setCurrentScreen('home');
-  }, []);
+  }, [user]);
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(() => localStorage.getItem('lokal_maintenance_mode') === 'true');
   const [hospitalPrices, setHospitalPrices] = useState<Record<string, { price: number; isActive: boolean }>>({
     'Govt Hospital': { price: 0, isActive: true },
@@ -488,6 +559,8 @@ function AppContent() {
         setHospitalPrices({ ...basePrices });
       }
     }, (err) => {
+      console.warn("Failed to subscribe to hospital_prices (likely quota hit). Using default prices.");
+      setHospitalPrices({ ...basePrices });
       handleFirestoreError(err, OperationType.GET, 'settings/hospital_prices');
     });
 
@@ -511,6 +584,18 @@ function AppContent() {
         }));
       },
       (err) => {
+        console.warn("Failed to subscribe to hospital vendors (likely quota hit). Using default hospitals.");
+        const defaultVendorPrices: Record<string, { price: number; isActive: boolean }> = {
+          'Khammam General Hospital': { price: 50, isActive: true },
+          'Sanjeevani Children Hospital': { price: 150, isActive: true },
+          'Lotus Hospital': { price: 200, isActive: true },
+          'Care Hospital': { price: 180, isActive: true }
+        };
+        setHospitalPrices(prev => ({
+          ...basePrices,
+          ...prev,
+          ...defaultVendorPrices
+        }));
         handleFirestoreError(err, OperationType.LIST, 'vendors');
       }
     );
@@ -524,7 +609,34 @@ function AppContent() {
   const [adminSessionActive, setAdminSessionActive] = useState(() => localStorage.getItem('admin_session_active') === 'true');
   const [showCustomerCare, setShowCustomerCare] = useState(false);
   const [supportCareType, setSupportCareType] = useState<'user' | 'vendor' | 'delivery' | 'marriage'>('user');
+
+  useEffect(() => {
+    const handleOpenSupport = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      const initialMessage = customEvent.detail?.message || '';
+      
+      setSupportCareType('user');
+      setShowCustomerCare(true);
+      
+      if (initialMessage) {
+        localStorage.setItem('support_prefilled_complaint', initialMessage);
+      }
+    };
+    window.addEventListener('open_customer_care', handleOpenSupport);
+    return () => window.removeEventListener('open_customer_care', handleOpenSupport);
+  }, []);
+
   const [globalError, setGlobalError] = useState<{message: string, recovery: string} | null>(null);
+  const [sandboxActive, setSandboxActive] = useState(() => localStorage.getItem('quota_exceeded_sandbox') === 'true');
+
+  useEffect(() => {
+    const handleStatus = (e: Event) => {
+      const ce = e as CustomEvent;
+      setSandboxActive(ce.detail.active);
+    };
+    window.addEventListener('sandbox_status_changed', handleStatus as any);
+    return () => window.removeEventListener('sandbox_status_changed', handleStatus as any);
+  }, []);
   const [supportInfo] = useState(() => {
     const saved = localStorage.getItem('supportInfo');
     return saved ? JSON.parse(saved) : { 
@@ -551,6 +663,26 @@ function AppContent() {
         }
       }
     }, (err) => {
+      console.warn("Failed to subscribe to active vendor profile. Fallback to localStorage.");
+      const vendors = JSON.parse(localStorage.getItem('approvedVendors') || '[]');
+      if (vendors.length > 0) {
+        setActiveVendorProfile(vendors[0]);
+      } else {
+        const role = localStorage.getItem('user_role');
+        if (role === 'vendor') {
+          setActiveVendorProfile({
+            id: 'mock_vendor_id',
+            userId: user.uid,
+            businessName: 'Lokal Vendor Shop',
+            ownerName: 'Tharun Bandi',
+            type: 'Groceries',
+            phone: '8790729816',
+            status: 'Approved',
+            isOnline: true,
+            branchId: currentBranchId || 'khammam_main'
+          } as any);
+        }
+      }
       handleFirestoreError(err, OperationType.LIST, 'vendors');
     });
     return () => unsub();
@@ -764,7 +896,7 @@ function AppContent() {
     localStorage.setItem('lokal_user_location', newLoc);
     
     // Quick branch check for Khammam
-    if (newLoc.toLowerCase().includes('khammam')) {
+    if (newLoc && typeof newLoc === 'string' && newLoc.toLowerCase().includes('khammam')) {
       setCurrentBranchId('khammam_main');
       localStorage.setItem('lokal_branch_id', 'khammam_main');
     }
@@ -806,6 +938,70 @@ function AppContent() {
       alert("Please login to place an order");
       navigateTo('login');
       return;
+    }
+
+    // Enforce strict branch-address coupling
+    const checkMatchedBranch = () => {
+      if (!location || location === 'Select Location' || branches.length === 0) return null;
+      const lowerLoc = (location || '').toLowerCase();
+      const pincodeMatch = (location || '').match(/\d{6}/);
+      const pincode = pincodeMatch ? pincodeMatch[0] : null;
+
+      const scoredBranches = branches.map(b => {
+        let score = 0;
+        const branchName = (b.name || '').toLowerCase();
+        const branchLoc = (b.location || '').toLowerCase();
+        const branchCity = (b.city || '').toLowerCase();
+        const branchDistrict = (b.district || '').toLowerCase();
+
+        if (pincode && b.pincodes?.includes(pincode)) score += 100;
+        if (lowerLoc === branchLoc || lowerLoc === branchName) score += 80;
+        else if (lowerLoc.includes(branchLoc) || lowerLoc.includes(branchName)) score += 50;
+        if (branchCity && lowerLoc.includes(branchCity)) score += 30;
+        if (branchDistrict && lowerLoc.includes(branchDistrict)) score += 20;
+        if (branchLoc.includes(lowerLoc) || branchName.includes(lowerLoc)) score += 40;
+
+        return { branch: b, score };
+      });
+
+      const matched = scoredBranches
+        .filter(sb => sb.score > 0)
+        .sort((a, b) => b.score - a.score)[0]?.branch;
+
+      return matched || null;
+    };
+
+    const matchedBranch = checkMatchedBranch();
+    if (!matchedBranch || matchedBranch.id !== currentBranchId) {
+      alert("⚠️ Delivery Error: Branch and Address Mismatch!\n\nDelivery is not available in this area yet. It is only active in other regions. Please contact customer care, as delivery is not available in this area yet. Let customer care know for further assistance.");
+      window.dispatchEvent(new CustomEvent('open_customer_care', {
+        detail: {
+          message: `Delivery issue: Customer location "${location}" is unserviceable for current franchise branch "${currentBranchId}".`
+        }
+      }));
+      return;
+    }
+
+    // Geofencing boundary check
+    try {
+      const coords = await getCoordsFromAddress(location, userProfile);
+      if (coords) {
+        const { lat, lng } = coords;
+        const { inside, hasZones } = isPointInBranchBoundaries(lat, lng, matchedBranch.id, coverageZones);
+        if (hasZones && !inside) {
+          alert("⚠️ Delivery Unavailable:\n\nDelivery is not available in this area, as that area is still under development. Please contact customer care, so they can assist you. The app only provides delivery within the set map area defined by the branch manager.");
+          window.dispatchEvent(new CustomEvent('open_customer_care', {
+            detail: {
+              message: `Geofencing failure: Delivery address "${location}" [lat: ${lat.toFixed(4)}, lng: ${lng.toFixed(4)}] lies outside the designated delivery boundary for branch "${matchedBranch.name}".`
+            }
+          }));
+          return;
+        }
+      } else {
+        console.warn("Could not resolve coordinates for address:", location);
+      }
+    } catch (err) {
+      console.error("Geofencing check error during checkout:", err);
     }
 
     const subtotal = cart.reduce((acc, i) => {
@@ -1129,7 +1325,7 @@ function AppContent() {
           currentBranch={currentBranch}
         /></SafeZone>;
       case 'branchManager':
-        if (!isSuperAdmin) return <SafeZone name="Home"><Home 
+        if (!isSuperAdmin && !isBranchAdmin) return <SafeZone name="Home"><Home 
           location={location}
           language={selectedLanguage}
           onCategoryClick={viewCategory}
@@ -1671,6 +1867,7 @@ function AppContent() {
           </motion.div>
         </AnimatePresence>
         {(isMaintenanceMode && !adminSessionActive && !isAdmin) && <MaintenanceScreen />}
+
       </div>
       <CustomerCare 
         isOpen={showCustomerCare} 
@@ -1679,6 +1876,7 @@ function AppContent() {
         secondaryPhone={supportInfo.secondaryPhone}
         initialType={supportCareType}
         branchId={currentBranchId}
+        language={selectedLanguage}
       />
 
       <AnimatePresence>

@@ -5,9 +5,14 @@ import {
   Plus, Edit, Trash2, Users, Bike, Store, ShoppingBag, 
   TrendingUp, Loader2, LogOut, ArrowRight, Check, X,
   Clock, AlertCircle, RefreshCw, FileText, Sparkles,
-  Heart, Home, Activity
+  Heart, Home, Activity, Globe
 } from 'lucide-react';
+import { LanguageCode } from '../types';
+import { LANGUAGES } from '../constants';
+import LanguageSelectorModal from './common/LanguageSelectorModal';
+import { getLocalizedFranchiseContent } from '../utils/localizedContent';
 import { useFirebase } from '../contexts/FirebaseContext';
+import { useTranslation } from '../i18n';
 import { db, auth } from '../lib/firebase';
 import { 
   collection, 
@@ -37,6 +42,10 @@ const AVAILABLE_COLORS = [
 export default function FranchisePortal() {
   const { user, logout, signInAnon, isSuperAdmin } = useFirebase();
   const [loading, setLoading] = useState(true);
+
+  const { language: currentLanguage, setLanguage: setCurrentLanguage } = useTranslation();
+  const [showLangModal, setShowLangModal] = useState(false);
+  const t = getLocalizedFranchiseContent(currentLanguage);
   
   // App view state
   const [screen, setScreen] = useState<'login' | 'signup' | 'dashboard'>('login');
@@ -1067,13 +1076,23 @@ export default function FranchisePortal() {
           </div>
         </div>
 
-        <button
-          onClick={handleLogout}
-          className="flex items-center gap-2 bg-white/5 hover:bg-rose-950/20 hover:text-rose-400 border border-white/5 py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Logout</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowLangModal(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-yellow-400/20 hover:bg-yellow-400/30 text-yellow-300 border border-yellow-400/30 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all shrink-0 active:scale-95"
+            title="Select App Language / 24 Languages"
+          >
+            <Globe className="w-3.5 h-3.5 text-yellow-400" />
+            <span>{LANGUAGES.find(l => l.code === currentLanguage)?.native || 'Language'}</span>
+          </button>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 bg-white/5 hover:bg-rose-950/20 hover:text-rose-400 border border-white/5 py-2 px-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Logout</span>
+          </button>
+        </div>
       </header>
 
       {/* DASHBOARD SWITCHER TABS */}
@@ -2379,6 +2398,16 @@ export default function FranchisePortal() {
           </div>
         )}
       </AnimatePresence>
+
+      <LanguageSelectorModal
+        isOpen={showLangModal}
+        onClose={() => setShowLangModal(false)}
+        selectedLanguage={currentLanguage}
+        onSelectLanguage={(code) => {
+          setCurrentLanguage(code);
+          localStorage.setItem('franchise_app_language', code);
+        }}
+      />
     </div>
   );
 }

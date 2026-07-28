@@ -74,15 +74,23 @@ export type { ConfirmationResult };
 async function testConnection() {
   const check = async () => {
     try {
-      await getDocFromServer(doc(db, 'test', 'connection'));
+      const connPromise = getDocFromServer(doc(db, 'test', 'connection'));
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Connection check timeout')), 4000)
+      );
+      await Promise.race([connPromise, timeoutPromise]);
       console.log("Firebase connection established.");
     } catch (error) {
       if (error instanceof Error) {
-        if (error.message.includes('the client is offline') || error.message.includes('unavailable')) {
-          console.warn("Cloud Firestore is operating in offline mode or unavailable. Waiting for connection...");
-          setTimeout(check, 5000);
+        if (
+          error.message.includes('the client is offline') || 
+          error.message.includes('unavailable') ||
+          error.message.includes('didn\'t respond') ||
+          error.message.includes('Could not reach Cloud Firestore backend') ||
+          error.message.includes('timeout')
+        ) {
+          console.warn("Cloud Firestore initial probe note: Client is operating in cached/offline-resilient mode.");
         } else if (error.message.includes('insufficient permissions')) {
-          // This actually means we connected! Just that we can't read 'test' collection, which is fine.
           console.log("Firebase connectivity verified.");
         }
       }
@@ -170,7 +178,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   }
   
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota limit exceeded')) {
+    console.warn('Firestore Quota Exceeded (Gracefully Handled Fallback): ', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
   
   if (operationType === OperationType.GET || operationType === OperationType.LIST) {
     shouldThrow = false;

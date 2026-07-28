@@ -49,8 +49,9 @@ export default function Wishlist({ wishlistIds, language, onBack, onProductClick
   const allItems = [...PRODUCTS, ...SERVICES];
   const items = allItems.filter(item => wishlistIds.includes(item.id));
   
+  const sq = (searchQuery || '').toLowerCase();
   const filteredItems = items.filter(item => 
-    item.name.toLowerCase().includes(searchQuery.toLowerCase())
+    !sq || (item.name || '').toLowerCase().includes(sq)
   );
 
   if (items.length === 0) {

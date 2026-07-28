@@ -1505,9 +1505,12 @@ export default function PartnerPortal() {
   }
 
   // Filter lists based on admin search query and Franchise Admin scopes
+  const searchLower = (adminSearch || '').toLowerCase();
+  const branchNameLower = (localFranchiseBranchName || '').toLowerCase();
+
   const filteredPendingApps = pendingApplications.filter(app => {
     if (isFranchiseAdminActive && localFranchiseBranchId !== 'offline_fallback') {
-      return app.branchId === localFranchiseBranchId || app.city?.toLowerCase() === localFranchiseBranchName.toLowerCase();
+      return app.branchId === localFranchiseBranchId || (app.city?.toLowerCase() === branchNameLower && branchNameLower !== '');
     }
     return true;
   });
@@ -1517,9 +1520,10 @@ export default function PartnerPortal() {
       const matchBranch = r.branchId === localFranchiseBranchId;
       if (!matchBranch) return false;
     }
-    return r.name?.toLowerCase().includes(adminSearch.toLowerCase()) || 
-      r.phone?.includes(adminSearch) ||
-      r.vehicleNumber?.toLowerCase().includes(adminSearch.toLowerCase());
+    return !searchLower || 
+      (r.name || '').toLowerCase().includes(searchLower) || 
+      (r.phone || '').includes(adminSearch || '') ||
+      (r.vehicleNumber || '').toLowerCase().includes(searchLower);
   });
 
   const filteredVendors = allVendors.filter(v => {
@@ -1528,9 +1532,10 @@ export default function PartnerPortal() {
       if (!matchBranch) return false;
     }
     return v.type !== 'RealEstateSeller' && v.service !== 'RealEstateSeller' && (
-      v.businessName?.toLowerCase().includes(adminSearch.toLowerCase()) || 
-      v.ownerName?.toLowerCase().includes(adminSearch.toLowerCase()) ||
-      v.phone?.includes(adminSearch)
+      !searchLower ||
+      (v.businessName || '').toLowerCase().includes(searchLower) || 
+      (v.ownerName || '').toLowerCase().includes(searchLower) ||
+      (v.phone || '').includes(adminSearch || '')
     );
   });
 
@@ -1540,9 +1545,10 @@ export default function PartnerPortal() {
       if (!matchBranch) return false;
     }
     return (v.type === 'RealEstateSeller' || v.service === 'RealEstateSeller') && (
-      v.businessName?.toLowerCase().includes(adminSearch.toLowerCase()) || 
-      v.ownerName?.toLowerCase().includes(adminSearch.toLowerCase()) ||
-      v.phone?.includes(adminSearch)
+      !searchLower ||
+      (v.businessName || '').toLowerCase().includes(searchLower) || 
+      (v.ownerName || '').toLowerCase().includes(searchLower) ||
+      (v.phone || '').includes(adminSearch || '')
     );
   });
 

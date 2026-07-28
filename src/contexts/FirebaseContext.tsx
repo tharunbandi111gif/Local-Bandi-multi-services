@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInWithPhoneNumber, ConfirmationResult, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
-import { doc, onSnapshot, getDoc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, setDoc, serverTimestamp, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 
 import { Address } from '../types';
 
-interface UserProfile {
+export interface UserProfile {
   id: string;
   email: string;
   phone?: string;
@@ -15,6 +15,7 @@ interface UserProfile {
   vendorId?: string;
   deliveryPartnerId?: string;
   branchId?: string | null;
+  branchName?: string;
   isApproved?: boolean;
   hasPaidMB?: boolean;
   mbPlanId?: string;
@@ -116,7 +117,104 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             setUserProfile(newProfile);
             setIsBranchAdmin(false);
             setBranchId(null);
-            setDoc(doc(db, 'users', currentUser.uid), newProfile).catch(console.error);
+            
+            // Non-blocking auto location capture on first-time sign-up
+            const autoCaptureAndSaveLocation = async (uid: string, profileObj: any) => {
+              let capturedAddress = 'Khammam Center, Khammam, Telangana, 507001';
+              let matchedBranchId = 'khammam_main';
+              let matchedBranchName = 'Khammam Main Branch';
+              let lat = 17.2473;
+              let lng = 80.1514;
+
+              try {
+                if (navigator.geolocation) {
+                  const position = await new Promise<any>((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, { 
+                      enableHighAccuracy: true, 
+                      timeout: 5000, 
+                      maximumAge: 0 
+                    });
+                  });
+                  const { latitude, longitude } = position.coords;
+                  lat = latitude;
+                  lng = longitude;
+                  const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1`);
+                  const data = await response.json();
+                  if (data && data.display_name) {
+                    capturedAddress = data.display_name;
+                  }
+                }
+              } catch (err) {
+                console.warn("Auto geocode on signup failed/denied. Using fallback location.", err);
+              }
+
+              try {
+                const branchesSnap = await getDocs(collection(db, 'branches'));
+                const branchesList = branchesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                
+                if (branchesList.length > 0) {
+                  const lowerLoc = capturedAddress.toLowerCase();
+                  const pincodeMatch = capturedAddress.match(/\d{6}/);
+                  const pincode = pincodeMatch ? pincodeMatch[0] : null;
+
+                  const scored = branchesList.map((b: any) => {
+                    let score = 0;
+                    const bName = (b.name || '').toLowerCase();
+                    const bLoc = (b.location || '').toLowerCase();
+                    const bCity = (b.city || '').toLowerCase();
+                    const bDist = (b.district || '').toLowerCase();
+
+                    if (pincode && b.pincodes?.includes(pincode)) score += 100;
+                    if (lowerLoc === bLoc || lowerLoc === bName) score += 80;
+                    else if (lowerLoc.includes(bLoc) || lowerLoc.includes(bName)) score += 50;
+                    if (bCity && lowerLoc.includes(bCity)) score += 30;
+                    if (bDist && lowerLoc.includes(bDist)) score += 20;
+                    if (bLoc.includes(lowerLoc) || bName.includes(lowerLoc)) score += 40;
+
+                    return { branch: b, score };
+                  });
+
+                  const bestMatch = scored
+                    .filter(s => s.score > 0)
+                    .sort((a, b) => b.score - a.score)[0]?.branch;
+
+                  if (bestMatch) {
+                    matchedBranchId = bestMatch.id;
+                    matchedBranchName = bestMatch.name;
+                  }
+                }
+              } catch (err) {
+                console.warn("Branch lookup failed during auto-capture signup. Using Khammam defaults.", err);
+              }
+
+              try {
+                const finalData = {
+                  ...profileObj,
+                  fullAddress: capturedAddress,
+                  latitude: lat,
+                  longitude: lng,
+                  branchId: matchedBranchId,
+                  branchName: matchedBranchName,
+                  addresses: [{
+                    id: 'default',
+                    label: 'Home',
+                    address: capturedAddress,
+                    isDefault: true,
+                    latitude: lat,
+                    longitude: lng
+                  }]
+                };
+                await setDoc(doc(db, 'users', uid), finalData);
+                localStorage.setItem('lokal_user_location', capturedAddress);
+                localStorage.setItem('lokal_user_lat', String(lat));
+                localStorage.setItem('lokal_user_lng', String(lng));
+                localStorage.setItem('lokal_branch_id', matchedBranchId);
+              } catch (err) {
+                console.error("Failed to save auto-captured location profile on signup", err);
+              }
+            };
+
+            autoCaptureAndSaveLocation(currentUser.uid, newProfile).catch(console.error);
           }
         }, (error) => {
           console.warn("User profile sync error:", error);

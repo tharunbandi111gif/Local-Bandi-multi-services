@@ -13,7 +13,9 @@ interface LoginProps {
 export default function Login({ onLogin }: LoginProps) {
   const { login, phoneLogin, signInWithToken } = useFirebase();
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '']); // MSG91 standard 4 digits
+  const [otpLength, setOtpLength] = useState<number>(4); // MSG91 standard 4 digits
+  const [otpExpiry, setOtpExpiry] = useState<number>(10);
+  const [otp, setOtp] = useState<string[]>(Array(4).fill(''));
   const [showOtp, setShowOtp] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'otp' | 'password'>('otp');
   const [password, setPassword] = useState('');
@@ -28,6 +30,21 @@ export default function Login({ onLogin }: LoginProps) {
   const [resendTimer, setResendTimer] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [detectingLocation, setDetectingLocation] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/otp-config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.otpLength) {
+          setOtpLength(data.otpLength);
+          setOtp(Array(data.otpLength).fill(''));
+        }
+        if (data.otpExpiry) {
+          setOtpExpiry(data.otpExpiry);
+        }
+      })
+      .catch(err => console.warn("Failed to fetch OTP configuration in login:", err));
+  }, []);
   
   useEffect(() => {
     let timer: any;
@@ -75,7 +92,7 @@ export default function Login({ onLogin }: LoginProps) {
     setError(null);
     setIsSending(true);
     try {
-      const code = Math.floor(1000 + Math.random() * 9000).toString();
+      const code = Array.from({ length: otpLength }, () => Math.floor(Math.random() * 10)).join('');
       setGeneratedCode(code);
       
       // Write log to firebase audit_logs
@@ -83,7 +100,7 @@ export default function Login({ onLogin }: LoginProps) {
         type: 'sms_otp',
         phoneNumber: phoneNumber,
         code: code,
-        message: `[Lokal Bharath OTP] Access Code: ${code}. Verify within 5 minutes.`,
+        message: `[Lokal Bharath OTP] Access Code: ${code}. Verify within ${otpExpiry} minutes.`,
         status: 'DELIVERED',
         createdAt: serverTimestamp()
       });
@@ -113,7 +130,7 @@ export default function Login({ onLogin }: LoginProps) {
     } catch (err: any) {
       console.error(err);
       setError('SMS transmitter error. Fallback verification active.');
-      setGeneratedCode('1234');
+      setGeneratedCode(otpLength === 4 ? '1234' : '123456');
       setShowOtp(true);
     } finally {
       setIsSending(false);
@@ -122,14 +139,15 @@ export default function Login({ onLogin }: LoginProps) {
 
   const handleVerifyOtp = async () => {
     const code = otp.filter(Boolean).join('');
-    if (code.length < 4) return;
+    if (code.length < otpLength) return;
     setError(null);
     setIsVerifying(true);
     try {
       await new Promise(resolve => setTimeout(resolve, 800));
       
-      // Verify against either generated code, or the common fallback 1234 for development
-      if (code === generatedCode || code === '1234' || generatedCode === '1234') {
+      const defaultFallback = otpLength === 4 ? '1234' : '123456';
+      // Verify against either generated code, or the common fallback based on length
+      if (code === generatedCode || code === defaultFallback || generatedCode === defaultFallback) {
         onLogin();
       } else {
         setError('Incorrect security verification code. Please check your SMS and try again.');
@@ -148,13 +166,13 @@ export default function Login({ onLogin }: LoginProps) {
     setOtp(newOtp);
 
     // Auto-focus next
-    if (value && index < 3) {
+    if (value && index < otpLength - 1) {
       const nextInput = document.getElementById(`otp-${index + 1}`);
       nextInput?.focus();
     }
 
     // Auto-verify if all fields filled
-    if (newOtp.every(d => d !== '') && index === 3) {
+    if (newOtp.every(d => d !== '') && index === otpLength - 1) {
       setTimeout(() => {
         handleVerifyOtp();
       }, 500);
@@ -162,9 +180,15 @@ export default function Login({ onLogin }: LoginProps) {
   };
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      const prevInput = document.getElementById(`otp-${index - 1}`);
-      prevInput?.focus();
+    if (e.key === 'Backspace') {
+      if (!otp[index] && index > 0) {
+        const prevInput = document.getElementById(`otp-${index - 1}`);
+        prevInput?.focus();
+      } else if (otp[index]) {
+        const newOtp = [...otp];
+        newOtp[index] = '';
+        setOtp(newOtp);
+      }
     }
   };
 
@@ -322,9 +346,9 @@ export default function Login({ onLogin }: LoginProps) {
 
               <button
                 onClick={handleVerifyOtp}
-                disabled={otp.filter(Boolean).length < 4 || isVerifying}
+                disabled={otp.filter(Boolean).length < otpLength || isVerifying}
                 className={`w-full py-5 rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-xl transition-all flex items-center justify-center gap-3 ${
-                  otp.filter(Boolean).length >= 4 && !isVerifying
+                  otp.filter(Boolean).length >= otpLength && !isVerifying
                   ? 'bg-yellow-400 text-gray-900 shadow-yellow-100 active:scale-95'
                   : 'bg-gray-100 text-gray-400'
                 }`}

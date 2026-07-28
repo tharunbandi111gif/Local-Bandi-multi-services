@@ -101,16 +101,21 @@ import {
   Headphones,
   SlidersHorizontal,
   Filter,
-  Pencil
+  Pencil,
+  Globe
 } from 'lucide-react';
+import LanguageSelectorModal from './common/LanguageSelectorModal';
 import LiveMap from './LiveMap';
 import PartnerOnboarding from './PartnerOnboarding';
 import JoiningLetter from './JoiningLetter';
 import { downloadCSV } from '../lib/exportUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Product, Screen, Service, LanguageCode, VendorProfile, DeliveryPartnerProfile, SupportChat, SupportMessage, MarriageProfile, PlatformSettings, PartnerApplicationType } from '../types';
-import { CATEGORIES, PRODUCTS, SERVICES } from '../constants';
+import { CATEGORIES, PRODUCTS, SERVICES, LANGUAGES } from '../constants';
 import { translations } from '../translations';
+import { useTranslation } from '../i18n';
+import { getLocalizedCategoryName, getLocalizedSubcategoryName, getLocalizedBannerTitle, getLocalizedBannerSub } from '../utils/localizedContent';
+import { performSmartSearch } from '../utils/smartSearch';
 import { HospitalOPForm } from './HospitalOPForm';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, auth, handleFirestoreError, OperationType, setupRecaptcha } from '../lib/firebase';
@@ -214,7 +219,7 @@ const Skeleton = ({ className, ...props }: { className: string; [key: string]: a
 
 export default function Home({ 
   location, 
-  language, 
+  language: propLanguage, 
   onCategoryClick, 
   onProductClick, 
   cartCount, 
@@ -235,6 +240,9 @@ export default function Home({
   currentBranch,
   branches = []
 }: HomeProps) {
+  const { language: activeLang, setLanguage: setGlobalLanguage, t: translateKey } = useTranslation();
+  const language = activeLang || propLanguage || 'en-IN';
+  const [showLangModal, setShowLangModal] = useState(false);
   const { phoneLogin, logout } = useFirebase();
   const [activeBanner, setActiveBanner] = useState(0);
   const [showHospitalOP, setShowHospitalOP] = useState(false);
@@ -2711,24 +2719,23 @@ export default function Home({
 
   const t = translations[language].home;
 
-  const filteredCategories = React.useMemo(() => 
-    categories.filter(cat => 
-      cat.name.toLowerCase().includes(searchQuery.toLowerCase())
-    ), [searchQuery, categories]);
+  const smartSearchResult = React.useMemo(() => {
+    if (!searchQuery.trim()) {
+      return { filteredProducts: localInventory, filteredCategories: categories, didYouMean: undefined };
+    }
+    return performSmartSearch(searchQuery, localInventory, categories, language);
+  }, [searchQuery, localInventory, categories, language]);
+
+  const filteredCategories = smartSearchResult.filteredCategories;
 
   const NATIONAL_CATEGORIES = ['marriage', 'realestate', 'hospital_op'];
 
   const filteredProducts = React.useMemo(() => 
-    localInventory.filter(item => {
+    smartSearchResult.filteredProducts.filter(item => {
       const isNational = NATIONAL_CATEGORIES.includes(item.category);
       
       // Hyperlocal restriction: Filter by branchId if not a national category
       if (!isNational && item.branchId && item.branchId !== currentBranchId) return false;
-
-      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          item.description.toLowerCase().includes(searchQuery.toLowerCase());
-      
-      if (!matchesSearch) return false;
 
       // Apply Filters
       const itemRating = (item as any).rating || 0;
@@ -2740,7 +2747,7 @@ export default function Home({
       if (filterAvailability && !(item as any).isOnline) return false;
 
       return true;
-    }), [searchQuery, localInventory, filterRating, filterPriceRange, filterAvailability, currentBranchId]);
+    }), [smartSearchResult, filterRating, filterPriceRange, filterAvailability, currentBranchId]);
 
   const handicraftsItems = React.useMemo(() => 
     localInventory.filter(p => p.category === 'handicrafts'),
@@ -3527,6 +3534,25 @@ export default function Home({
                                   Direct Deliver
                                 </button>
                               )}
+                              {isSuperAdmin && (
+                                <button 
+                                  onClick={async () => {
+                                    if (confirm(`PERMANENTLY DELETE order #${order.id.slice(-6)}? This cannot be undone.`)) {
+                                      try {
+                                        await deleteDoc(doc(db, 'orders', order.id));
+                                        alert("Order permanently deleted!");
+                                      } catch (err) {
+                                        handleFirestoreError(err, OperationType.DELETE, `orders/${order.id}`);
+                                      }
+                                    }
+                                  }}
+                                  className="h-10 px-3 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all flex items-center gap-1 cursor-pointer"
+                                  title="Delete Order"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Delete
+                                </button>
+                              )}
                               
                           </div>
                         </div>
@@ -3827,7 +3853,7 @@ export default function Home({
                   Config
                 </button>
               )}
-              {isSuperAdmin && (
+              {(isSuperAdmin || userProfile?.role === 'branchAdmin') && (
                 <button 
                   onClick={() => {
                     setIsAdminOpen(false);
@@ -4320,7 +4346,7 @@ export default function Home({
                     </div>
                   </header>
 
-                    {isSuperAdmin && (
+                    {(isSuperAdmin || userProfile?.role === 'branchAdmin') && (
                       <motion.div 
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
@@ -9276,6 +9302,20 @@ export default function Home({
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.9 }}
             className="relative"
+            onClick={() => setShowLangModal(true)}
+            title="Change Language (24 Languages)"
+          >
+            <div className="bg-amber-50 dark:bg-amber-900/20 p-2.5 rounded-2xl relative border border-amber-200/60 dark:border-amber-800/40 cursor-pointer flex items-center gap-1">
+              <Globe className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              <span className="text-[9px] font-black uppercase text-amber-700 dark:text-amber-300 tracking-tight">
+                {LANGUAGES.find(l => l.code === language)?.native?.substring(0, 3) || 'EN'}
+              </span>
+            </div>
+          </motion.div>
+          <motion.div 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.9 }}
+            className="relative"
             onClick={() => setShowCustomerCare(true)}
           >
             <div className="bg-indigo-50 dark:bg-slate-800 p-3 rounded-2xl relative border border-indigo-100 dark:border-slate-700 cursor-pointer">
@@ -9299,7 +9339,7 @@ export default function Home({
               )}
             </div>
           </motion.div>
-          {isSuperAdmin && (
+          {(isSuperAdmin || userProfile?.role === 'branchAdmin') && (
             <motion.div 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.9 }}
@@ -9424,8 +9464,8 @@ export default function Home({
                     <div className="absolute inset-0 opacity-20 bg-cover bg-center" style={{ backgroundImage: `url(${banner.img})` }}></div>
                   )}
                   <div className="relative z-10 flex-1">
-                    <h3 className="text-xl font-black text-white mb-0.5 leading-tight">{banner.title}</h3>
-                    <p className="text-white/90 font-bold text-xs uppercase tracking-wider">{banner.sub}</p>
+                    <h3 className="text-xl font-black text-white mb-0.5 leading-tight">{getLocalizedBannerTitle(banner.title, language)}</h3>
+                    <p className="text-white/90 font-bold text-xs uppercase tracking-wider">{getLocalizedBannerSub(banner.sub, language)}</p>
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
@@ -9547,6 +9587,20 @@ export default function Home({
               >
                 {searchQuery ? (
                   <div className="p-4 space-y-6 max-h-[400px] overflow-y-auto scrollbar-hide">
+                    {smartSearchResult.didYouMean && (
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-3 flex items-center justify-between text-xs">
+                        <span className="font-medium text-yellow-900">
+                          Did you mean <strong className="font-black underline">{smartSearchResult.didYouMean}</strong>?
+                        </span>
+                        <button
+                          onClick={() => setSearchQuery(smartSearchResult.didYouMean!)}
+                          className="px-3 py-1 bg-yellow-400 text-gray-900 rounded-xl font-bold text-[10px] uppercase tracking-wider shadow-sm"
+                        >
+                          Correct
+                        </button>
+                      </div>
+                    )}
+
                     {filteredCategories.length > 0 && (
                       <div>
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-2">Recommended Categories</p>
@@ -9562,7 +9616,7 @@ export default function Home({
                               className="px-4 py-2 bg-gray-50 hover:bg-yellow-50 rounded-xl text-xs font-bold text-gray-700 hover:text-yellow-700 transition-colors flex items-center gap-2"
                             >
                               <div className={`w-2 h-2 rounded-full ${cat.color}`}></div>
-                              {cat.name}
+                              {getLocalizedCategoryName(cat, language)}
                             </button>
                           ))}
                         </div>
@@ -9762,7 +9816,7 @@ export default function Home({
                         </div>
                       </div>
                       <span className="text-[10px] font-black text-center leading-tight uppercase tracking-widest text-gray-900 group-hover:text-indigo-600 transition-colors px-1 h-6 flex items-center">
-                        {cat.name.split(' & ')[0]}
+                        {getLocalizedCategoryName(cat, language)}
                       </span>
                     </motion.div>
                   );
@@ -9816,6 +9870,20 @@ export default function Home({
 
         {searchQuery ? (
           <div className="space-y-8 animate-in fade-in duration-300">
+            {smartSearchResult.didYouMean && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-4 flex items-center justify-between text-xs">
+                <span className="font-medium text-yellow-900">
+                  Showing results for spelling correction: <strong className="font-black underline">{smartSearchResult.didYouMean}</strong>
+                </span>
+                <button
+                  onClick={() => setSearchQuery(smartSearchResult.didYouMean!)}
+                  className="px-4 py-1.5 bg-yellow-400 text-gray-900 rounded-xl font-bold text-xs uppercase tracking-wider shadow-sm"
+                >
+                  Search Corrected
+                </button>
+              </div>
+            )}
+
             {filteredCategories.length > 0 && (
               <section>
                 <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4">Categories Found</h3>
@@ -9836,7 +9904,7 @@ export default function Home({
                           )}
                         </div>
                         <span className="text-[10px] font-black text-center leading-tight uppercase tracking-wide text-gray-500 line-clamp-1">
-                          {cat.name}
+                          {getLocalizedCategoryName(cat, language)}
                         </span>
                       </div>
                     );
@@ -10021,11 +10089,12 @@ export default function Home({
                   return itemsToRender.map((deal) => {
                     const handleDealClick = () => {
                       // Attempt to find existing product in localInventory
-                      const match = localInventory.find(item => 
-                        item.name.toLowerCase() === deal.title.toLowerCase() ||
-                        deal.title.toLowerCase().includes(item.name.toLowerCase()) ||
-                        item.name.toLowerCase().includes(deal.title.toLowerCase())
-                      );
+                      const match = localInventory.find(item => {
+                        const iName = (item.name || '').toLowerCase();
+                        const dTitle = (deal.title || '').toLowerCase();
+                        if (!iName || !dTitle) return false;
+                        return iName === dTitle || dTitle.includes(iName) || iName.includes(dTitle);
+                      });
                       if (match) {
                         onProductClick(match);
                       } else {
@@ -10548,15 +10617,15 @@ export default function Home({
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 px-4 pt-4 pb-10 flex items-center justify-between z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
         <button onClick={() => onNavigate('home')} className="flex flex-col items-center gap-1.5 text-amber-600 active:scale-95 transition-transform">
           <HomeIcon className="w-6 h-6" strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider">Home</span>
+          <span className="text-[10px] font-black uppercase tracking-wider">{translateKey('home', 'Home')}</span>
         </button>
         <button onClick={() => onNavigate('realEstate')} className="flex flex-col items-center gap-1.5 text-sky-600 active:scale-95 transition-transform">
           <Building2 className="w-6 h-6" strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">Real Estate</span>
+          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">{getLocalizedCategoryName('realestate', language)}</span>
         </button>
         <button onClick={() => onNavigate('wishlist')} className="flex flex-col items-center gap-1.5 text-rose-600 relative active:scale-95 transition-transform">
           <Heart className={`w-6 h-6 ${wishlistCount > 0 ? 'fill-rose-600' : ''}`} strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider">Wishlist</span>
+          <span className="text-[10px] font-black uppercase tracking-wider">{translateKey('wishlist', 'Wishlist')}</span>
           {wishlistCount > 0 && (
             <div className="absolute top-0 right-1 bg-rose-600 w-2.5 h-2.5 rounded-full border-2 border-white"></div>
           )}
@@ -10573,11 +10642,11 @@ export default function Home({
         </button>
         <button onClick={() => onNavigate('marriageBureau')} className="flex flex-col items-center gap-1.5 text-indigo-600 active:scale-95 transition-transform">
           <HeartHandshake className="w-6 h-6" strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">Marriage</span>
+          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">{getLocalizedCategoryName('marriage', language)}</span>
         </button>
         <button onClick={() => setShowHospitalOP(true)} className="flex flex-col items-center gap-1.5 text-emerald-600 active:scale-95 transition-transform">
           <Stethoscope className="w-6 h-6" strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">Hospital OP</span>
+          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">{getLocalizedCategoryName('hospital_op', language)}</span>
         </button>
       </nav>
 
@@ -10696,8 +10765,14 @@ export default function Home({
         <JoiningLetter 
           partner={selectedLetterPartner} 
           onClose={() => setSelectedLetterPartner(null)} 
+          language={language}
         />
       )}
+
+      <LanguageSelectorModal 
+        isOpen={showLangModal} 
+        onClose={() => setShowLangModal(false)} 
+      />
 
       <HospitalOPModal 
         isOpen={showHospitalOP} 

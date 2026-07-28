@@ -15,6 +15,7 @@ export default defineConfig(({mode}) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
         '@msg91comm/sendotp-react-native': path.resolve(__dirname, './src/lib/sendotp-react-native-stub.tsx'),
+        'firebase/firestore': path.resolve(__dirname, './src/lib/firestore-wrapper.ts'),
       },
     },
     build: {

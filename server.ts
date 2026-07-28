@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -34,7 +35,7 @@ const getDbAdmin = () => {
 
 // Helper to securely load SMS config with REST fallback to bypass any Server-side IAM limitations
 const getSmsConfig = async () => {
-  let apiKey = process.env.MSG91_AUTH_KEY || "514095TuKDjYZn2WUw69fde13eP1";
+  let apiKey = process.env.MSG91_AUTH_KEY || "514095Abx06TWyVGG6a2bc389P1";
   let senderId = process.env.MSG91_SENDER_ID || "LKLBND";
   let provider = "msg91";
 
@@ -308,6 +309,18 @@ Write the report in professional, developer-friendly markdown with clear section
     }
   });
 
+  app.get("/api/otp-config", (req, res) => {
+    let templateId = process.env.MSG91_TEMPLATE_ID;
+    if (!templateId || templateId === "Use Default Configuration" || !/^[a-fA-F0-9]+$/.test(templateId)) {
+      templateId = "36666c664e56353538383733";
+    }
+    return res.json({
+      templateId,
+      otpLength: parseInt(process.env.MSG91_OTP_LENGTH || "4", 10),
+      otpExpiry: parseInt(process.env.MSG91_OTP_EXPIRY || "10", 10)
+    });
+  });
+
   app.post("/api/send-otp", async (req, res) => {
     const { phoneNumber, code } = req.body;
     if (!phoneNumber || !code) {
@@ -315,12 +328,17 @@ Write the report in professional, developer-friendly markdown with clear section
     }
 
     const cleanPhone = phoneNumber.replace(/\D/g, "");
-    let templateId = process.env.MSG91_TEMPLATE_ID || "36666c664e56353538383733";
+    let templateId = process.env.MSG91_TEMPLATE_ID;
+    if (!templateId || templateId === "Use Default Configuration" || !/^[a-fA-F0-9]+$/.test(templateId)) {
+      templateId = "36666c664e56353538383733";
+    }
+    const otpLength = process.env.MSG91_OTP_LENGTH || "4";
+    const otpExpiry = process.env.MSG91_OTP_EXPIRY || "10";
     const { apiKey, senderId } = await getSmsConfig();
 
     try {
-      console.log(`[MSG91 Send OTP] Dispatching Custom OTP code ${code} to 91${cleanPhone}`);
-      const otpUrl = `https://control.msg91.com/api/v5/otp?template_id=${templateId}&mobile=91${cleanPhone}&authkey=${apiKey}&otp=${code}`;
+      console.log(`[MSG91 Send OTP] Dispatching Custom OTP code ${code} to 91${cleanPhone} using template ${templateId}`);
+      const otpUrl = `https://control.msg91.com/api/v5/otp?template_id=${templateId}&mobile=91${cleanPhone}&authkey=${apiKey}&otp=${code}&otp_length=${otpLength}&otp_expiry=${otpExpiry}`;
       
       const response = await fetch(otpUrl, {
         method: "POST",
@@ -332,7 +350,9 @@ Write the report in professional, developer-friendly markdown with clear section
           template_id: templateId,
           mobile: `91${cleanPhone}`,
           otp: code,
-          authkey: apiKey
+          authkey: apiKey,
+          otp_length: parseInt(otpLength, 10),
+          otp_expiry: parseInt(otpExpiry, 10)
         })
       });
 

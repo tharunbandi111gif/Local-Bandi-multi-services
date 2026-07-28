@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { LanguageCode } from '../types';
 import { LANGUAGES } from '../constants';
 import { translations } from '../translations';
+import LanguageSettings from './common/LanguageSettings';
 
 interface SettingsProps {
   onBack: () => void;
@@ -358,57 +359,15 @@ export default function Settings({
         )}
       </AnimatePresence>
 
-      {/* Language Selection Overlay */}
-      <AnimatePresence>
-        {showLanguages && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4 overflow-hidden"
-          >
-            <motion.div 
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="w-full max-w-md bg-white rounded-t-[3rem] sm:rounded-[3rem] p-8 pb-12 shadow-2xl flex flex-col max-h-[90vh]"
-            >
-              <div className="flex items-center justify-between mb-8 sticky top-0 bg-white z-10">
-                <h3 className="text-2xl font-black text-gray-900">Select Language</h3>
-                <button 
-                  onClick={() => setShowLanguages(false)}
-                  className="p-2 bg-gray-100 rounded-full text-gray-500 hover:bg-gray-200"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto scrollbar-hide">
-                <div className="grid grid-cols-2 gap-4 pb-4">
-                  {LANGUAGES.map((lang) => (
-                    <button
-                      key={lang.code}
-                      onClick={() => {
-                        onLanguageChange(lang.code);
-                        setShowLanguages(false);
-                      }}
-                      className={`p-6 rounded-[2rem] border-2 transition-all text-left flex flex-col gap-1 ${
-                        selectedLanguage === lang.code 
-                          ? 'border-yellow-400 bg-yellow-50' 
-                          : 'border-gray-100 bg-gray-50 hover:border-gray-200'
-                      }`}
-                    >
-                      <span className="text-lg font-black text-gray-900 line-clamp-1">{lang.native}</span>
-                      <span className="text-xs font-bold text-gray-500 line-clamp-1">{lang.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Language Selection Modal */}
+      <LanguageSettings
+        isOpen={showLanguages}
+        onClose={() => setShowLanguages(false)}
+        title="Select App Language"
+        onSelect={(code) => {
+          onLanguageChange(code);
+        }}
+      />
 
       {/* FAQ Modal */}
       <AnimatePresence>

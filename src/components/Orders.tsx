@@ -198,9 +198,10 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
       }
     }
 
-    const matchesSearch = searchQuery === '' || 
-      order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (order.items + ' items').toLowerCase().includes(searchQuery.toLowerCase());
+    const sq = (searchQuery || '').toLowerCase();
+    const orderIdStr = (order.id || '').toLowerCase();
+    const itemsStr = (order.items ? order.items + ' items' : '').toLowerCase();
+    const matchesSearch = !sq || orderIdStr.includes(sq) || itemsStr.includes(sq);
 
     return matchesStatus && matchesDate && matchesSearch;
   });

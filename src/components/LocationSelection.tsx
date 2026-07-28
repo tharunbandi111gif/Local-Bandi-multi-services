@@ -25,6 +25,26 @@ export default function LocationSelection({ onSelect, userProfile, currentLocati
     const unsub = onSnapshot(collection(db, 'branches'), (snap) => {
       const bList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setBranches(bList);
+    }, (err) => {
+      console.warn("Failed to subscribe to branches in LocationSelection (likely quota hit). Using default branch.");
+      setBranches([
+        {
+          id: 'khammam_main',
+          name: 'Khammam Main Branch',
+          location: 'Khammam Center',
+          city: 'Khammam',
+          district: 'Khammam',
+          state: 'Telangana',
+          pincodes: ['507001', '507002', '507003'],
+          status: 'Active',
+          adminName: 'Tharun Bandi',
+          contactPhone: '8790729816',
+          vendorsCount: 15,
+          ordersCount: 120,
+          revenue: 45000,
+          profitShare: 10
+        }
+      ]);
     });
     return () => unsub();
   }, []);

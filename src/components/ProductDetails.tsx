@@ -34,40 +34,43 @@ export default function ProductDetails({
   const [selectedSize, setSelectedSize] = useState(1);
   const stock = product.stock ?? 10;
 
+  const pName = (product?.name || '').toLowerCase();
+  const pUnit = (product?.unit || '').toLowerCase();
+
   const isWeightProduct = 
-    product.unit?.toLowerCase().includes('kg') || 
-    product.unit?.toLowerCase().includes('gram') ||
-    product.name.toLowerCase().includes('rice') || 
-    product.name.toLowerCase().includes('sugar') ||
-    product.name.toLowerCase().includes('atta') ||
-    product.name.toLowerCase().includes('daal') ||
-    product.name.toLowerCase().includes('dal') || 
-    product.name.toLowerCase().includes('pulse') ||
-    product.name.toLowerCase().includes('flour') ||
-    product.name.toLowerCase().includes('salt') ||
-    product.name.toLowerCase().includes('chicken') ||
-    product.name.toLowerCase().includes('mutton') ||
-    product.name.toLowerCase().includes('meat') ||
-    product.name.toLowerCase().includes('fish') ||
-    product.name.toLowerCase().includes('prawn') ||
-    product.name.toLowerCase().includes('vegetable') ||
-    product.name.toLowerCase().includes('fruit') ||
-    product.name.toLowerCase().includes('tomato') ||
-    product.name.toLowerCase().includes('onion') ||
-    product.name.toLowerCase().includes('potato');
+    pUnit.includes('kg') || 
+    pUnit.includes('gram') ||
+    pName.includes('rice') || 
+    pName.includes('sugar') ||
+    pName.includes('atta') ||
+    pName.includes('daal') ||
+    pName.includes('dal') || 
+    pName.includes('pulse') ||
+    pName.includes('flour') ||
+    pName.includes('salt') ||
+    pName.includes('chicken') ||
+    pName.includes('mutton') ||
+    pName.includes('meat') ||
+    pName.includes('fish') ||
+    pName.includes('prawn') ||
+    pName.includes('vegetable') ||
+    pName.includes('fruit') ||
+    pName.includes('tomato') ||
+    pName.includes('onion') ||
+    pName.includes('potato');
 
   const isVolumeProduct = 
-    product.unit?.toLowerCase().includes('l') || 
-    product.unit?.toLowerCase().includes('ltr') ||
-    product.name.toLowerCase().includes('milk') || 
-    product.name.toLowerCase().includes('oil') ||
-    product.name.toLowerCase().includes('juice') ||
-    product.name.toLowerCase().includes('water') ||
-    product.name.toLowerCase().includes('beverage') ||
-    product.name.toLowerCase().includes('drink') ||
-    product.name.toLowerCase().includes('petrol') ||
-    product.name.toLowerCase().includes('diesel') ||
-    product.name.toLowerCase().includes('ghee');
+    pUnit.includes('l') || 
+    pUnit.includes('ltr') ||
+    pName.includes('milk') || 
+    pName.includes('oil') ||
+    pName.includes('juice') ||
+    pName.includes('water') ||
+    pName.includes('beverage') ||
+    pName.includes('drink') ||
+    pName.includes('petrol') ||
+    pName.includes('diesel') ||
+    pName.includes('ghee');
 
   const sizes = isWeightProduct ? WEIGHT_SIZES : isVolumeProduct ? VOLUME_SIZES : null;
   const isSizable = sizes !== null;
@@ -292,7 +295,7 @@ export default function ProductDetails({
           {product.description}
         </p>
 
-        {(product.category === 'hospital_op' || product.hotelName?.toLowerCase().includes('hospital')) && hospitalPrices && onBookHospitalOP && (
+        {(product.category === 'hospital_op' || (product.hotelName || '').toLowerCase().includes('hospital')) && hospitalPrices && onBookHospitalOP && (
           <div className="pt-6 border-t border-gray-100">
              <HospitalOPForm 
                prices={hospitalPrices}

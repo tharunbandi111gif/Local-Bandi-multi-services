@@ -6,6 +6,8 @@ import { PRODUCTS, SERVICES } from '../constants';
 import MarriageBureau from './MarriageBureau';
 import { HospitalOPForm } from './HospitalOPForm';
 import { translations } from '../translations';
+import { getLocalizedCategoryName, getLocalizedSubcategoryName } from '../utils/localizedContent';
+import { performSmartSearch } from '../utils/smartSearch';
 import { AdminInput } from './common/AdminInput';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { deleteDoc, doc, updateDoc, setDoc } from 'firebase/firestore';
@@ -151,23 +153,27 @@ export default function CategoryListing({
     if (!category) return [];
     return localInventory.filter(p => p.category === category.id && (!p.branchId || p.branchId === currentBranchId));
   }, [localInventory, category?.id, currentBranchId]);
+
+  const searchResult = React.useMemo(() => {
+    if (!searchQuery.trim()) {
+      return { filteredProducts: itemsInCategory, didYouMean: undefined };
+    }
+    return performSmartSearch(searchQuery, itemsInCategory, [], language);
+  }, [searchQuery, itemsInCategory, language]);
   
   const subCategories = React.useMemo(() => 
     Array.from(new Set(itemsInCategory.map(item => (item as Product).subCategory).filter(Boolean))) as string[],
   [itemsInCategory]);
   
   const filteredItems = React.useMemo(() => 
-    itemsInCategory.filter(item => {
+    searchResult.filteredProducts.filter(item => {
       const matchesSubCat = selectedSubCat ? (item as Product).subCategory === selectedSubCat : true;
-      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            ((item as Product).hotelName?.toLowerCase().includes(searchQuery.toLowerCase()) || false) ||
-                            ((item as Product).subCategory?.toLowerCase().includes(searchQuery.toLowerCase()) || false);
       const matchesPrice = item.price >= priceRange[0] && item.price <= priceRange[1];
       const itemRating = (item as Service).rating || 0;
       const matchesRating = itemRating >= minRating;
-      return matchesSubCat && matchesSearch && matchesPrice && matchesRating;
+      return matchesSubCat && matchesPrice && matchesRating;
     }),
-  [itemsInCategory, selectedSubCat, searchQuery, priceRange, minRating]);
+  [searchResult.filteredProducts, selectedSubCat, priceRange, minRating]);
 
   const sortedItems = React.useMemo(() => 
     [...filteredItems].sort((a, b) => {
@@ -181,6 +187,8 @@ export default function CategoryListing({
   [filteredItems, sortBy]);
 
   const isServiceCategory = category ? ['services', 'travel', 'marriage', 'events', 'maids', 'mechanics', 'construction', 'care', 'jobs', 'driving_school', 'beauty_parlour'].includes(category.id) : false;
+
+  const categoryDisplayName = category ? getLocalizedCategoryName(category, language) : '';
 
   const isChitFund = category && (
     category.id === 'sri_krishna_chitfund' || 
@@ -208,7 +216,7 @@ export default function CategoryListing({
           <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
             <ArrowLeft className="w-6 h-6 text-gray-900" />
           </button>
-          <h2 className="text-xl font-black text-gray-900 flex-1">{category.name}</h2>
+          <h2 className="text-xl font-black text-gray-900 flex-1">{categoryDisplayName}</h2>
         </header>
         <MarriageBureau onBack={onBack} isAdmin={isAdmin} />
       </div>
@@ -227,7 +235,7 @@ export default function CategoryListing({
             <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
               <ArrowLeft className="w-6 h-6 text-gray-900" />
             </button>
-            <h2 className="text-xl font-black text-gray-900 flex-1">{category.name}</h2>
+            <h2 className="text-xl font-black text-gray-900 flex-1">{categoryDisplayName}</h2>
             <div className="flex items-center gap-1">
               <button 
                 onClick={handleVoiceSearch} 
@@ -249,7 +257,7 @@ export default function CategoryListing({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={`${t.search} in ${category.name}...`}
+                placeholder={`${t.search} in ${categoryDisplayName}...`}
                 className="w-full bg-gray-50 py-2.5 pl-10 pr-10 rounded-xl font-bold text-sm outline-none border-2 border-transparent focus:border-yellow-400"
               />
               <button
@@ -273,6 +281,20 @@ export default function CategoryListing({
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        {searchResult.didYouMean && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-3 flex items-center justify-between text-xs">
+            <span className="font-medium text-yellow-900">
+              Did you mean <strong className="font-black underline">{searchResult.didYouMean}</strong>?
+            </span>
+            <button
+              onClick={() => setSearchQuery(searchResult.didYouMean!)}
+              className="px-3 py-1 bg-yellow-400 text-gray-900 rounded-xl font-bold text-[10px] uppercase tracking-wider shadow-sm"
+            >
+              Search
+            </button>
+          </div>
+        )}
+
         {subCategories.length > 0 && (
           <div className="flex bg-gray-50 p-2 rounded-2xl gap-2 overflow-x-auto scrollbar-hide">
             <button 
@@ -291,7 +313,7 @@ export default function CategoryListing({
                   selectedSubCat === sub ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
                 }`}
               >
-                {sub}
+                {getLocalizedSubcategoryName(sub, language)}
               </button>
             ))}
           </div>
