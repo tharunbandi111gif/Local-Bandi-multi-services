@@ -79,6 +79,20 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
 
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [processingOrder, setProcessingOrder] = useState(false);
+
+  const executeComplete = async (method: string) => {
+    setProcessingOrder(true);
+    setLoading(true);
+    try {
+      await onComplete(method, tipSelection);
+    } catch (err: any) {
+      console.error("[Payment Error] Failed to complete order:", err);
+      setPaymentError(err?.message || "Failed to process order. Please try again.");
+      setProcessingOrder(false);
+      setLoading(false);
+    }
+  };
 
   const handlePayment = async () => {
     setPaymentError(null);
@@ -130,23 +144,27 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
       }
 
       setLoading(true);
+      setProcessingOrder(true);
       setTimeout(async () => {
         await logPaymentTxn('card');
-        setLoading(false);
-        onComplete('card', tipSelection);
+        await executeComplete('card');
       }, 1500);
       return;
     }
 
     // 2. UPI payment validation
     if (['gpay', 'phonepe', 'bhim', 'upi'].includes(selectedMethod)) {
-      if (!upiIdInput.trim()) {
-        setPaymentError("Please enter your UPI ID.");
-        return;
-      }
-      if (!upiIdInput.includes('@')) {
-        setPaymentError("UPI ID must contain '@' (e.g. username@upi).");
-        return;
+      let finalUpi = upiIdInput.trim();
+      if (!finalUpi) {
+        if (selectedMethod === 'upi') {
+          setPaymentError("Please enter your UPI ID.");
+          return;
+        } else {
+          // For GPay / PhonePe / BHIM app intent, fallback to phone handle or admin VPA
+          finalUpi = `${userProfile?.phone || '8790729816'}@${selectedMethod === 'gpay' ? 'okaxis' : selectedMethod === 'phonepe' ? 'ybl' : 'upi'}`;
+        }
+      } else if (!finalUpi.includes('@')) {
+        finalUpi = `${finalUpi}@${selectedMethod === 'gpay' ? 'okaxis' : selectedMethod === 'phonepe' ? 'ybl' : 'upi'}`;
       }
 
       // Using Direct UPI with the user's requested VPA
@@ -154,11 +172,11 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
       const holder = paymentConfig?.accountHolder || 'Local Bandi Multi Services';
       window.open(`upi://pay?pa=${upiId}&pn=${holder}&am=${finalAmountIncludingTip}&cu=INR`);
       setLoading(true);
+      setProcessingOrder(true);
       setTimeout(async () => {
         await logPaymentTxn(selectedMethod);
-        setLoading(false);
-        onComplete(selectedMethod, tipSelection);
-      }, 2500);
+        await executeComplete(selectedMethod);
+      }, 1500);
       return;
     }
 
@@ -169,10 +187,10 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
         return;
       }
       setLoading(true);
+      setProcessingOrder(true);
       setTimeout(async () => {
         await logPaymentTxn(`netbanking-${selectedBank}`);
-        setLoading(false);
-        onComplete('nb', tipSelection);
+        await executeComplete('nb');
       }, 1500);
       return;
     }
@@ -181,20 +199,20 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
     if (selectedMethod === 'cod') {
       // Small delay for realism
       setLoading(true);
+      setProcessingOrder(true);
       setTimeout(async () => {
         await logPaymentTxn('cod');
-        setLoading(false);
-        onComplete('cod', tipSelection);
+        await executeComplete('cod');
       }, 1000);
       return;
     }
 
     // Default fallback
     setLoading(true);
+    setProcessingOrder(true);
     setTimeout(async () => {
       await logPaymentTxn(selectedMethod);
-      setLoading(false);
-      onComplete(selectedMethod, tipSelection);
+      await executeComplete(selectedMethod);
     }, 1500);
   };
 
@@ -575,7 +593,9 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                           <div className="mt-4 p-4 border-t border-yellow-200/60 space-y-3 text-left">
                             <p className="text-[10px] font-black uppercase text-gray-500 tracking-wider">UPI Credentials</p>
                             <div className="grid grid-cols-1 gap-2">
-                              <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest ml-1">Enter your UPI ID</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest ml-1">
+                                {selectedMethod === 'upi' ? 'Enter your UPI ID' : 'Enter your UPI ID (Optional)'}
+                              </label>
                               <div className="relative">
                                 <input 
                                   type="text"
@@ -651,6 +671,23 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
         </AnimatePresence>
       </div>
       
+      <AnimatePresence>
+        {processingOrder && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[200] flex flex-col items-center justify-center p-6 text-white text-center"
+          >
+            <div className="w-16 h-16 border-4 border-yellow-400 border-t-transparent rounded-full animate-spin mb-4" />
+            <h3 className="text-xl font-black italic uppercase tracking-tight">Processing Payment & Confirming Order...</h3>
+            <p className="text-xs text-slate-300 font-medium max-w-xs mt-2">
+              Please wait while your order details are securely recorded and transmitted. Do not close or refresh this page.
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {showAddressPicker && (
           <motion.div 

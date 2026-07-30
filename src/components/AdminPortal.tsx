@@ -1472,6 +1472,54 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     }
   };
 
+  const handleApproveBranchRadius = async (branchId: string, requestedRadius: number) => {
+    try {
+      await updateDoc(doc(db, 'branches', branchId), {
+        deliveryRadius: requestedRadius,
+        pendingDeliveryRadius: null,
+        deliveryRadiusStatus: 'approved',
+        deliveryRadiusApprovedBy: 'Master Admin (Tarun Bandi)',
+        deliveryRadiusApprovedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      triggerToast(`✓ Approved delivery radius of ${requestedRadius} km for branch!`);
+    } catch (e: any) {
+      console.error(e);
+      alert('Failed to approve delivery radius: ' + e.message);
+    }
+  };
+
+  const handleRejectBranchRadius = async (branchId: string) => {
+    try {
+      await updateDoc(doc(db, 'branches', branchId), {
+        pendingDeliveryRadius: null,
+        deliveryRadiusStatus: 'rejected',
+        updatedAt: serverTimestamp()
+      });
+      triggerToast('❌ Delivery radius request rejected');
+    } catch (e: any) {
+      console.error(e);
+      alert('Failed to reject delivery radius: ' + e.message);
+    }
+  };
+
+  const handleOverrideBranchRadius = async (branchId: string, newRadiusKm: number) => {
+    try {
+      await updateDoc(doc(db, 'branches', branchId), {
+        deliveryRadius: newRadiusKm,
+        pendingDeliveryRadius: null,
+        deliveryRadiusStatus: 'approved',
+        deliveryRadiusUpdatedBy: 'Master Admin (Tarun Bandi)',
+        deliveryRadiusUpdatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      triggerToast(`⚡ Master Override: Delivery radius set to ${newRadiusKm} km!`);
+    } catch (e: any) {
+      console.error(e);
+      alert('Failed to override delivery radius: ' + e.message);
+    }
+  };
+
   const handleToggleAutoDispatch = async () => {
     try {
       const nextMode = !dispatchConfig.autoAssign;
@@ -5814,6 +5862,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                       <th className="py-3.5 px-4 font-normal">Branch Slug</th>
                       <th className="py-3.5 px-4 font-normal">Office Name</th>
                       <th className="py-3.5 px-4 font-normal">Region Metro</th>
+                      <th className="py-3.5 px-4 font-normal">Delivery Radius (KM)</th>
                       <th className="py-3.5 px-4 font-normal">Charter Principal Email</th>
                       <th className="py-3.5 px-4 text-right font-normal">Charter Capital</th>
                       <th className="py-3.5 px-4 text-right font-normal">Status</th>
@@ -5823,7 +5872,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                   <tbody className="divide-y divide-white/5">
                     {branches.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-slate-505 text-[10px] font-black uppercase">No physical hub franchises registered</td>
+                        <td colSpan={8} className="py-8 text-center text-slate-505 text-[10px] font-black uppercase">No physical hub franchises registered</td>
                       </tr>
                     ) : (
                       branches.map((b) => (
@@ -5831,6 +5880,36 @@ const reconcileDocSync = async (branchId, docBody) => {
                           <td className="py-3.5 px-4 font-mono text-indigo-400 font-extrabold">{b.id}</td>
                           <td className="py-3.5 px-4 text-white font-extrabold uppercase">{b.name}</td>
                           <td className="py-3.5 px-4 text-slate-300 font-extrabold">{b.city || 'Khammam'}</td>
+                          <td className="py-3.5 px-4 font-mono text-indigo-300 font-black">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs">{b.deliveryRadius || 5} KM</span>
+                              {b.pendingDeliveryRadius ? (
+                                <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 p-1 rounded-lg">
+                                  <span className="text-[8px] text-amber-400 font-bold uppercase animate-pulse">
+                                    Req: {b.pendingDeliveryRadius} KM
+                                  </span>
+                                  <button
+                                    onClick={() => handleApproveBranchRadius(b.id, b.pendingDeliveryRadius)}
+                                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[8px] font-black px-1.5 py-0.5 rounded cursor-pointer"
+                                    title="Approve Requested Radius"
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    onClick={() => handleRejectBranchRadius(b.id)}
+                                    className="bg-rose-500 hover:bg-rose-400 text-white text-[8px] font-black px-1.5 py-0.5 rounded cursor-pointer"
+                                    title="Reject Requested Radius"
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="text-[8px] text-emerald-400/80 font-bold uppercase">
+                                  ✓ Approved Bound
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="py-3.5 px-4 font-mono text-slate-400 font-medium">{b.adminEmail || 'admin@lokalbandi.com'}</td>
                           <td className="py-3.5 px-4 text-right text-emerald-400 font-black">₹{(b.revenue ?? 0).toLocaleString()}</td>
                           <td className="py-3.5 px-4 text-right">
@@ -5840,6 +5919,23 @@ const reconcileDocSync = async (branchId, docBody) => {
                           </td>
                           <td className="py-3.5 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => {
+                                  const customVal = prompt(`Enter custom delivery radius (in KM) for branch '${b.name}':`, String(b.deliveryRadius || 5));
+                                  if (customVal) {
+                                    const numKm = Number(customVal);
+                                    if (numKm >= 1 && numKm <= 50) {
+                                      handleOverrideBranchRadius(b.id, numKm);
+                                    } else {
+                                      alert("Please enter a valid radius between 1 and 50 KM.");
+                                    }
+                                  }
+                                }}
+                                className="px-2 py-1 bg-indigo-950 hover:bg-indigo-900 text-indigo-300 rounded border border-indigo-500/30 text-[8px] font-black uppercase tracking-wider cursor-pointer"
+                                title="Master Override Radius"
+                              >
+                                Set Radius
+                              </button>
                               <button
                                 onClick={() => {
                                   setEditingBranch(b);
@@ -5854,13 +5950,13 @@ const reconcileDocSync = async (branchId, docBody) => {
                                   });
                                   setShowBranchModal(true);
                                 }}
-                                className="p-1.5 bg-slate-950 hover:bg-slate-850 text-slate-300 rounded border border-white/5"
+                                className="p-1.5 bg-slate-950 hover:bg-slate-850 text-slate-300 rounded border border-white/5 cursor-pointer"
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 onClick={() => handleDeleteBranch(b.id)}
-                                className="p-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-500 hover:text-white rounded transition-all border border-rose-500/10"
+                                className="p-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-500 hover:text-white rounded transition-all border border-rose-500/10 cursor-pointer"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -5871,6 +5967,41 @@ const reconcileDocSync = async (branchId, docBody) => {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            {/* MASTER ADMIN DELIVERY RADIUS & AREA GOVERNANCE SUMMARY PANEL */}
+            <div className="bg-slate-900/90 border border-indigo-500/30 rounded-3xl p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-indigo-400" />
+                  <h3 className="text-xs font-black uppercase tracking-wider text-white">Master Admin Delivery Radius & Geofence Governance</h3>
+                </div>
+                <span className="text-[9px] font-extrabold text-indigo-300 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20 font-mono">
+                  Master Oversight Active
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-300 leading-relaxed font-sans">
+                As Master Admin Tarun Bandi, you maintain full real-time permission and approval authority over all delivery service boundaries and radius definitions across every franchise branch in Telangana and AP.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/5">
+                  <p className="text-[9px] font-black uppercase text-slate-400">Total Registered Branches</p>
+                  <p className="text-2xl font-black text-indigo-400 font-mono mt-1">{branches.length}</p>
+                </div>
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/5">
+                  <p className="text-[9px] font-black uppercase text-slate-400">Pending Radius Approval Requests</p>
+                  <p className="text-2xl font-black text-amber-400 font-mono mt-1">
+                    {branches.filter(b => b.pendingDeliveryRadius).length}
+                  </p>
+                </div>
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/5">
+                  <p className="text-[9px] font-black uppercase text-slate-400">Domain Master Sync Status</p>
+                  <p className="text-xs font-black text-emerald-400 uppercase tracking-wider mt-2 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    localbandimultiservices.in
+                  </p>
+                </div>
               </div>
             </div>
 

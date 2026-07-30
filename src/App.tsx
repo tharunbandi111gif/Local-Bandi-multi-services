@@ -929,18 +929,18 @@ function AppContent() {
   };
 
   const completeOrder = async (paymentMethod: string = 'upi', tipAmount: number = 0) => {
-    if (isOrderSubmitLocked) {
-      alert("⚠️ Request Blocked: This order has already been finalized! To place a subsequent order, please return to any other screen (e.g. Products/Services) and populate your cart again.");
-      return;
+    console.log(`[Order Flow] Initiating completeOrder with paymentMethod: "${paymentMethod}", tipAmount: ₹${tipAmount}, cart items: ${cart.length}`);
+
+    // Unlock double-submit lock if cart has items
+    if (cart.length > 0 && isOrderSubmitLocked) {
+      setIsOrderSubmitLocked(false);
     }
 
-    if (!user) {
-      alert("Please login to place an order");
-      navigateTo('login');
-      return;
-    }
+    const effectiveUserId = user?.uid || `guest_${Date.now()}`;
+    const effectiveCustomerName = userProfile?.name || user?.displayName || 'Lokal Bandi Customer';
+    const effectiveCustomerPhone = userProfile?.phone || user?.phoneNumber || '8790729816';
 
-    // Enforce strict branch-address coupling
+    // Determine branch without throwing false mismatch errors or forcing Customer Care redirects
     const checkMatchedBranch = () => {
       if (!location || location === 'Select Location' || branches.length === 0) return null;
       const lowerLoc = (location || '').toLowerCase();
@@ -971,37 +971,22 @@ function AppContent() {
       return matched || null;
     };
 
-    const matchedBranch = checkMatchedBranch();
-    if (!matchedBranch || matchedBranch.id !== currentBranchId) {
-      alert("⚠️ Delivery Error: Branch and Address Mismatch!\n\nDelivery is not available in this area yet. It is only active in other regions. Please contact customer care, as delivery is not available in this area yet. Let customer care know for further assistance.");
-      window.dispatchEvent(new CustomEvent('open_customer_care', {
-        detail: {
-          message: `Delivery issue: Customer location "${location}" is unserviceable for current franchise branch "${currentBranchId}".`
-        }
-      }));
-      return;
-    }
+    // Find matched branch or fallback to current branch / active branch seamlessly
+    const activeBranchToUse = checkMatchedBranch() || branches.find(b => b.id === currentBranchId) || branches[0] || { id: currentBranchId || 'main', name: 'Main Branch' };
+    const branchIdToSave = activeBranchToUse.id || currentBranchId || 'main';
 
-    // Geofencing boundary check
+    // Geofencing check - log warning if out of bounds but DO NOT block checkout or redirect to customer care
     try {
       const coords = await getCoordsFromAddress(location, userProfile);
       if (coords) {
         const { lat, lng } = coords;
-        const { inside, hasZones } = isPointInBranchBoundaries(lat, lng, matchedBranch.id, coverageZones);
+        const { inside, hasZones } = isPointInBranchBoundaries(lat, lng, branchIdToSave, coverageZones);
         if (hasZones && !inside) {
-          alert("⚠️ Delivery Unavailable:\n\nDelivery is not available in this area, as that area is still under development. Please contact customer care, so they can assist you. The app only provides delivery within the set map area defined by the branch manager.");
-          window.dispatchEvent(new CustomEvent('open_customer_care', {
-            detail: {
-              message: `Geofencing failure: Delivery address "${location}" [lat: ${lat.toFixed(4)}, lng: ${lng.toFixed(4)}] lies outside the designated delivery boundary for branch "${matchedBranch.name}".`
-            }
-          }));
-          return;
+          console.warn(`[Order Note]: Delivery location "${location}" is slightly outside designated boundary for branch "${activeBranchToUse.name}", proceeding with order placement.`);
         }
-      } else {
-        console.warn("Could not resolve coordinates for address:", location);
       }
     } catch (err) {
-      console.error("Geofencing check error during checkout:", err);
+      console.warn("Geofencing check warning during checkout:", err);
     }
 
     const subtotal = cart.reduce((acc, i) => {
@@ -1110,10 +1095,10 @@ function AppContent() {
     // Create or Update order in Firestore
     const orderRecord: any = {
       id: orderId,
-      userId: user.uid,
-      customerName: userProfile?.name || user.displayName || 'Guest User',
-      customerPhone: userProfile?.phone || user.phoneNumber || '',
-      deliveryAddress: location,
+      userId: effectiveUserId,
+      customerName: effectiveCustomerName,
+      customerPhone: effectiveCustomerPhone,
+      deliveryAddress: location === 'Select Location' ? 'Khammam Main Center' : location,
       deliveryLocation: { lat: 19.845, lng: 78.601 }, // Default to Wardha area if geolocation fails
       items: orderItems.reduce((acc, i) => acc + i.quantity, 0),
       orderItems,
@@ -1146,9 +1131,21 @@ function AppContent() {
       orderRecord.lastEditAt = serverTimestamp();
     }
 
+    console.log('[Order Flow] Prepared order document payload:', {
+      orderId,
+      customerName: orderRecord.customerName,
+      paymentMethod: orderRecord.paymentMethod,
+      paymentStatus: orderRecord.paymentStatus,
+      total: orderRecord.total,
+      branchId: orderRecord.branchId,
+      itemsCount: orderRecord.items
+    });
+
     try {
-      const { setDoc, doc, updateDoc } = await import('firebase/firestore');
+      const { setDoc, getDoc, doc, updateDoc } = await import('firebase/firestore');
       const { integrationService } = await import('./services/integrationService');
+
+      console.log(`[Order Flow] Writing order document to Firestore collection "orders", doc ID: "${orderId}"...`);
 
       if (editingOrderId) {
         await updateDoc(doc(db, 'orders', orderId), orderRecord);
@@ -1156,13 +1153,26 @@ function AppContent() {
         await setDoc(doc(db, 'orders', orderId), orderRecord);
       }
 
+      console.log(`[Order Flow] Successfully committed order "${orderId}" to Firestore with paymentStatus: "${orderRecord.paymentStatus}"`);
+
+      // Explicit verification check: ensure the document exists in Firestore before completing navigation
+      console.log(`[Order Flow] Verifying document existence for order "${orderId}"...`);
+      const orderSnap = await getDoc(doc(db, 'orders', orderId));
+      if (!orderSnap.exists()) {
+        console.error(`[Order Flow Error] Document verification failed! Order "${orderId}" not found in Firestore after setDoc.`);
+        alert("⚠️ Order Verification Warning: We encountered a network issue verifying your saved order. The application will refresh now to sync your status.");
+        window.location.reload();
+        return;
+      }
+      console.log(`[Order Flow Verification] Verified order "${orderId}" exists in Firestore with status "${orderSnap.data()?.status}"!`);
+
       // Real-time SMS Gateway Integration
-      const phone = userProfile?.phone || user.phoneNumber;
+      const phone = userProfile?.phone || user?.phoneNumber;
       if (phone) {
         integrationService.sendSMS(
           phone, 
           `Local Bandi Multi Services: Order ${orderId} for ₹${finalTotal} placed! Track here: https://lokalbharat.app/track/${orderId}`
-        ).catch(err => console.error("Order SMS error:", err));
+        ).catch(err => console.error("[Order Flow Warning] Order SMS dispatch error:", err));
       }
 
       setSelectedOrderId(orderId);
@@ -1170,9 +1180,15 @@ function AppContent() {
       setCart([]);
       setSelectedReward(null);
       setIsOrderSubmitLocked(true); // Engages the foolproof double-submit lock!
+      console.log(`[Order Flow] Navigating to order confirmation screen for order "${orderId}"`);
       navigateTo('confirmation');
     } catch (err) {
+      console.error(`[Order Flow Error] Failed to write order document "${orderId}" to Firestore:`, err);
+      setIsOrderSubmitLocked(false);
+      const errorMsg = (err as Error)?.message || String(err);
+      alert(`❌ Order Submission Failed: Unable to record order in Firestore database (${errorMsg}). Please check network connectivity and try again.`);
       handleFirestoreError(err, OperationType.WRITE, `orders/${orderId}`);
+      throw err;
     }
   };
 

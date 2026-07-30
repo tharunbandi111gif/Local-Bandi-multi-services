@@ -272,19 +272,140 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
       return;
     }
     try {
+      const isAutoApproved = isSuperAdmin;
       await addDoc(collection(db, 'coverage_zones'), {
         ...pendingZone,
         name: zoneName,
         branchId: zoneBranchId || null,
+        status: isAutoApproved ? 'approved' : 'pending',
+        requestedBy: userProfile?.email || 'Branch Manager',
         createdAt: serverTimestamp()
       });
-      await logAuditAction('Zone Creation', `Created custom coverage zone '${zoneName}'`);
+      await logAuditAction('Zone Creation', `Created custom coverage zone '${zoneName}' (${isAutoApproved ? 'Auto-Approved by Master Admin' : 'Pending Master Admin Approval'})`);
       setShowZoneModal(false);
       setPendingZone(null);
-      alert("Custom coverage zone saved successfully!");
+      alert(isAutoApproved ? "Custom coverage zone created & approved by Master Admin!" : "Custom coverage zone submitted for Master Admin approval!");
     } catch (err) {
       console.error(err);
       alert("Failed to save zone: " + (err as Error).message);
+    }
+  };
+
+  // --- Master Admin Delivery Radius & Area Approval & Override Handlers ---
+  const handleApproveRadiusRequest = async (branchId: string, requestedRadius: number) => {
+    if (!isSuperAdmin) {
+      alert("Permission Denied: Only Master Admin (Tarun Bandi) can approve delivery radius changes.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'branches', branchId), {
+        deliveryRadius: requestedRadius,
+        pendingDeliveryRadius: null,
+        deliveryRadiusStatus: 'approved',
+        deliveryRadiusApprovedBy: 'Tarun Bandi (Master Admin)',
+        deliveryRadiusApprovedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      await logAuditAction('Radius Approval', `Master Admin approved delivery radius of ${requestedRadius} km for branch '${branchId}'`);
+      alert(`✅ Approved delivery radius of ${requestedRadius} km!`);
+    } catch (err: any) {
+      alert("Failed to approve delivery radius: " + err.message);
+    }
+  };
+
+  const handleRejectRadiusRequest = async (branchId: string, reason?: string) => {
+    if (!isSuperAdmin) {
+      alert("Permission Denied: Only Master Admin (Tarun Bandi) can reject delivery radius changes.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'branches', branchId), {
+        pendingDeliveryRadius: null,
+        deliveryRadiusStatus: 'rejected',
+        deliveryRadiusRejectionReason: reason || 'Boundary expansion request rejected by Master Admin',
+        updatedAt: serverTimestamp()
+      });
+      await logAuditAction('Radius Rejection', `Master Admin rejected delivery radius request for branch '${branchId}'`);
+      alert("❌ Delivery radius request rejected.");
+    } catch (err: any) {
+      alert("Failed to reject delivery radius: " + err.message);
+    }
+  };
+
+  const handleMasterOverrideRadius = async (branchId: string, newRadiusKm: number) => {
+    if (!isSuperAdmin) {
+      alert("Permission Denied: Only Master Admin (Tarun Bandi) can set custom delivery radius.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'branches', branchId), {
+        deliveryRadius: newRadiusKm,
+        pendingDeliveryRadius: null,
+        deliveryRadiusStatus: 'approved',
+        deliveryRadiusUpdatedBy: 'Tarun Bandi (Master Admin)',
+        deliveryRadiusUpdatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      await logAuditAction('Master Radius Override', `Master Admin Tarun Bandi set delivery radius to ${newRadiusKm} km for branch '${branchId}'`);
+      alert(`⚡ Master Override Applied: Delivery radius set to ${newRadiusKm} km for branch!`);
+    } catch (err: any) {
+      alert("Failed to override delivery radius: " + err.message);
+    }
+  };
+
+  const handleRequestRadiusChange = async (branchId: string, requestedKm: number) => {
+    try {
+      if (isSuperAdmin) {
+        await handleMasterOverrideRadius(branchId, requestedKm);
+        return;
+      }
+      await updateDoc(doc(db, 'branches', branchId), {
+        pendingDeliveryRadius: requestedKm,
+        deliveryRadiusStatus: 'pending',
+        deliveryRadiusRequestedBy: userProfile?.email || 'Branch Manager',
+        deliveryRadiusRequestedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      await logAuditAction('Radius Request', `Branch manager requested delivery radius change to ${requestedKm} km for branch '${branchId}'`);
+      alert(`⏳ Delivery radius change request (${requestedKm} km) submitted to Master Admin Tarun Bandi for approval!`);
+    } catch (err: any) {
+      alert("Failed to submit radius request: " + err.message);
+    }
+  };
+
+  const handleApproveCoverageZone = async (zoneId: string, zoneName: string) => {
+    if (!isSuperAdmin) {
+      alert("Permission Denied: Only Master Admin (Tarun Bandi) can approve coverage zones.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'coverage_zones', zoneId), {
+        status: 'approved',
+        approvedBy: 'Master Admin (Tarun Bandi)',
+        approvedAt: serverTimestamp()
+      });
+      await logAuditAction('Zone Approval', `Master Admin approved coverage zone '${zoneName}'`);
+      alert(`✅ Coverage Zone '${zoneName}' is now APPROVED & ACTIVE!`);
+    } catch (err: any) {
+      alert("Failed to approve zone: " + err.message);
+    }
+  };
+
+  const handleRejectCoverageZone = async (zoneId: string, zoneName: string) => {
+    if (!isSuperAdmin) {
+      alert("Permission Denied: Only Master Admin (Tarun Bandi) can reject coverage zones.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'coverage_zones', zoneId), {
+        status: 'rejected',
+        rejectedBy: 'Master Admin (Tarun Bandi)',
+        rejectedAt: serverTimestamp()
+      });
+      await logAuditAction('Zone Rejection', `Master Admin rejected coverage zone '${zoneName}'`);
+      alert(`❌ Coverage Zone '${zoneName}' rejected.`);
+    } catch (err: any) {
+      alert("Failed to reject zone: " + err.message);
     }
   };
 
@@ -2629,38 +2750,74 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
 
                  {customZones.length > 0 && (
                    <div className="pt-2 border-t border-slate-200">
-                     <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-700 mb-3 ml-1">Custom Zones</h4>
+                     <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-700 mb-3 ml-1">Custom Coverage Zones</h4>
                      <div className="space-y-1.5">
                        {customZones.map((zone) => {
+                         const isPending = zone.status === 'pending';
                          return (
                            <div 
                              key={zone.id}
-                             className="p-3 bg-white hover:bg-slate-100/50 rounded-2xl border border-slate-200/60 flex items-center justify-between gap-2"
+                             className={`p-3 bg-white hover:bg-slate-100/50 rounded-2xl border flex flex-col gap-2 ${
+                               isPending ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200/60'
+                             }`}
                            >
-                             <div 
-                               onClick={() => {
-                                 let coords: [number, number] = [17.2473, 80.1514];
-                                 if (zone.type === 'circle') coords = zone.center;
-                                 else if (zone.type === 'rectangle') coords = zone.bounds[0];
-                                 else if (zone.type === 'polygon') coords = zone.positions[0];
-                                 setMapCenter(coords);
-                                 setMapZoom(12);
-                               }}
-                               className="flex-1 cursor-pointer min-w-0"
-                             >
-                               <p className="text-[11px] font-black truncate text-slate-800">{zone.name}</p>
-                               <span className="text-[8px] font-black bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 uppercase tracking-widest leading-none">{zone.type}</span>
+                             <div className="flex items-center justify-between gap-2">
+                               <div 
+                                 onClick={() => {
+                                   let coords: [number, number] = [17.2473, 80.1514];
+                                   if (zone.type === 'circle') coords = zone.center;
+                                   else if (zone.type === 'rectangle') coords = zone.bounds[0];
+                                   else if (zone.type === 'polygon') coords = zone.positions[0];
+                                   setMapCenter(coords);
+                                   setMapZoom(12);
+                                 }}
+                                 className="flex-1 cursor-pointer min-w-0"
+                               >
+                                 <p className="text-[11px] font-black truncate text-slate-800">{zone.name}</p>
+                                 <div className="flex items-center gap-1.5 mt-0.5">
+                                   <span className="text-[8px] font-black bg-slate-100 px-1.5 py-0.5 rounded text-slate-500 uppercase tracking-widest leading-none">{zone.type}</span>
+                                   {isPending ? (
+                                     <span className="text-[8px] font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase tracking-wider animate-pulse">
+                                       ⏳ Pending Approval
+                                     </span>
+                                   ) : (
+                                     <span className="text-[8px] font-black bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                       ✓ Approved
+                                     </span>
+                                   )}
+                                 </div>
+                               </div>
+                               <button 
+                                 type="button"
+                                 onClick={(el) => {
+                                   el.stopPropagation();
+                                   handleDeleteZone(zone.id, zone.name);
+                                 }}
+                                 className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg shrink-0 transition cursor-pointer"
+                                 title="Delete Zone"
+                               >
+                                 <Trash2 className="w-3.5 h-3.5" />
+                               </button>
                              </div>
-                             <button 
-                               type="button"
-                               onClick={(el) => {
-                                 el.stopPropagation();
-                                 handleDeleteZone(zone.id, zone.name);
-                               }}
-                               className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg shrink-0 transition"
-                             >
-                               <Trash2 className="w-3.5 h-3.5" />
-                             </button>
+
+                             {isSuperAdmin && isPending && (
+                               <div className="flex items-center gap-1.5 pt-1 border-t border-amber-200">
+                                 <button
+                                   type="button"
+                                   onClick={() => handleApproveCoverageZone(zone.id, zone.name)}
+                                   className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-black py-1 rounded-lg uppercase tracking-wider transition cursor-pointer"
+                                 >
+                                   Approve Zone
+                                 </button>
+                                 <button
+                                   type="button"
+                                   onClick={() => handleRejectCoverageZone(zone.id, zone.name)}
+                                   className="flex-1 bg-rose-600 hover:bg-rose-500 text-white text-[9px] font-black py-1 rounded-lg uppercase tracking-wider transition cursor-pointer"
+                                 >
+                                   Reject Zone
+                                 </button>
+                               </div>
+                             )}
                            </div>
                          );
                        })}

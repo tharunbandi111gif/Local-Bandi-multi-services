@@ -779,6 +779,34 @@ export default function FranchisePortal() {
     }
   };
 
+  const handleLocalRequestRadiusChange = async (newKm: number) => {
+    if (!activeBranch) return;
+    try {
+      if (isSuperAdmin) {
+        await updateDoc(doc(db, 'branches', activeBranch.id), {
+          deliveryRadius: newKm,
+          pendingDeliveryRadius: null,
+          deliveryRadiusStatus: 'approved',
+          deliveryRadiusUpdatedBy: 'Master Admin (Tarun Bandi)',
+          deliveryRadiusUpdatedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        alert(`⚡ Master Admin Override Applied: Delivery radius set to ${newKm} km!`);
+      } else {
+        await updateDoc(doc(db, 'branches', activeBranch.id), {
+          pendingDeliveryRadius: newKm,
+          deliveryRadiusStatus: 'pending',
+          deliveryRadiusRequestedBy: user?.email || 'Franchise Admin',
+          deliveryRadiusRequestedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        alert(`⏳ Delivery radius change request (${newKm} km) submitted to Master Admin Tarun Bandi for approval!`);
+      }
+    } catch (err: any) {
+      alert('Failed to update delivery radius: ' + err.message);
+    }
+  };
+
   const getBranchOrders = () => {
     const vendorIds = vendors.map(v => v.id);
     const riderIds = riders.map(r => r.id);
@@ -1297,6 +1325,109 @@ export default function FranchisePortal() {
                 >
                   {(activeBranch?.orderAcceptanceMode || 'manual') === 'automatic' ? 'Switch to Manual Accept' : 'Switch to Auto Accept'}
                 </button>
+              </div>
+            </div>
+
+            {/* BRANCH DELIVERY RADIUS AND AREA MANAGEMENT CARD */}
+            <div className="bg-slate-900 border border-indigo-500/20 rounded-3xl p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-white/5 pb-3 gap-2">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-5 h-5 text-indigo-400" />
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white">Branch Delivery Radius & Service Area</h3>
+                    <p className="text-[9px] text-slate-400 font-mono">Subject to Master Admin Tarun Bandi Approval & Oversight</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {activeBranch?.deliveryRadiusStatus === 'pending' ? (
+                    <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-wider animate-pulse flex items-center gap-1">
+                      <span>⏳ Request Pending Master Admin Approval</span>
+                      <span className="font-mono text-white">({activeBranch?.pendingDeliveryRadius} km)</span>
+                    </span>
+                  ) : activeBranch?.deliveryRadiusStatus === 'rejected' ? (
+                    <span className="bg-rose-500/10 text-rose-400 border border-rose-500/30 text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-wider">
+                      ❌ Request Rejected by Master Admin
+                    </span>
+                  ) : (
+                    <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-wider flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                      <span>Approved Active Radius: {activeBranch?.deliveryRadius || 5} km</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-3 bg-slate-950/50 p-4 rounded-2xl border border-white/5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-slate-300">
+                      Configure Service Radius (Kilometers)
+                    </p>
+                    <p className="text-[9px] text-slate-400 mt-0.5">
+                      Select or request a delivery service radius for this franchise branch. Changes submitted by branch managers require Master Admin verification before expanding live delivery bounds.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl font-black text-indigo-400 font-mono">
+                      {activeBranch?.deliveryRadius || 5} KM
+                    </span>
+                    <span className="text-[9px] text-slate-500 uppercase font-extrabold">Active Bound</span>
+                  </div>
+                </div>
+
+                {/* Radius Presets */}
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400 block">Select Service Radius Preset:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {[3, 5, 8, 10, 12, 15, 20, 25, 30].map((radiusKm) => {
+                      const isActive = (activeBranch?.deliveryRadius || 5) === radiusKm;
+                      const isPendingThis = activeBranch?.pendingDeliveryRadius === radiusKm;
+                      return (
+                        <button
+                          key={radiusKm}
+                          type="button"
+                          onClick={() => handleLocalRequestRadiusChange(radiusKm)}
+                          className={`px-3.5 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer active:scale-95 ${
+                            isActive
+                              ? 'bg-emerald-500 text-slate-950 shadow-lg font-extrabold'
+                              : isPendingThis
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                              : 'bg-slate-800 text-slate-300 hover:bg-indigo-600 hover:text-white border border-white/5'
+                          }`}
+                        >
+                          {radiusKm} KM {isActive ? '(Active)' : isPendingThis ? '(Pending)' : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Custom Radius Form */}
+                <div className="pt-3 border-t border-white/5 flex items-center gap-3">
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    placeholder="Custom Radius (e.g. 18)"
+                    id="input-custom-franchise-radius"
+                    className="bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white font-mono w-44 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const input = document.getElementById('input-custom-franchise-radius') as HTMLInputElement;
+                      const val = Number(input?.value);
+                      if (val && val >= 1 && val <= 50) {
+                        handleLocalRequestRadiusChange(val);
+                      } else {
+                        alert("Please enter a valid radius between 1 and 50 km.");
+                      }
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer shadow-md"
+                  >
+                    {isSuperAdmin ? '⚡ Set Radius (Master Override)' : 'Submit Radius Request'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

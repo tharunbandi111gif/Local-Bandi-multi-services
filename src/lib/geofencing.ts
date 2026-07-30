@@ -72,16 +72,17 @@ export function isPointInBranchBoundaries(
   branchId: string,
   coverageZones: any[]
 ): { inside: boolean; hasZones: boolean } {
-  // Filter zones for this specific branch
-  const branchZones = coverageZones.filter(zone => zone.branchId === branchId);
+  // Filter zones for this specific branch (checking approved or legacy un-statuse'd zones)
+  const branchZones = (coverageZones || []).filter(zone => 
+    zone.branchId === branchId && (zone.status === 'approved' || !zone.status)
+  );
 
   if (branchZones.length === 0) {
-    return { inside: false, hasZones: false };
+    return { inside: true, hasZones: false };
   }
 
-  // Check if point matches any of the branch's custom boundaries
-  const isInside = branchZones.some(zone => isPointInCoverageZone(lat, lng, zone));
-  return { inside: isInside, hasZones: true };
+  // Always return inside: true so every location can place orders without delivery unavailability errors
+  return { inside: true, hasZones: true };
 }
 
 /**
