@@ -3,6 +3,7 @@ import { ArrowLeft, Trash2, Minus, Plus, ShoppingBag, Truck, Receipt, Tag, Ticke
 import { motion, AnimatePresence } from 'motion/react';
 import { CartItem, LanguageCode } from '../types';
 import { translations } from '../translations';
+import { getLocalizedProductName } from '../utils/localizedContent';
 import { db } from '../lib/firebase';
 import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
 
@@ -34,6 +35,15 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
   const [appliedPromo, setAppliedPromo] = useState<{ id: string, type: 'percent' | 'flat' | 'shipping', value: number, label: string } | null>(null);
   const [promoError, setPromoError] = useState<string | null>(null);
   const [showMonthlyConfirm, setShowMonthlyConfirm] = useState(false);
+  const [selectedQuizTargetItemId, setSelectedQuizTargetItemId] = useState<string | null>(null);
+
+  const itemsUnder100 = items.filter(item => item.price < 100);
+
+  React.useEffect(() => {
+    if (itemsUnder100.length > 0 && !selectedQuizTargetItemId) {
+      setSelectedQuizTargetItemId(itemsUnder100[0].id);
+    }
+  }, [items, selectedQuizTargetItemId]);
 
   const isMonthlyPlanEligible = (item: CartItem) => {
     const category = (item.category || '').toLowerCase();
@@ -153,7 +163,13 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
   // Calculate discount
   let discount = 0;
   if (appliedPromo) {
-    if (appliedPromo.type === 'percent') {
+    if (appliedPromo.id.startsWith('QUIZ') || ['QUIZ25OFF', 'QUIZ15OFF', 'QUIZ08OFF'].includes(appliedPromo.id)) {
+      // Quiz Coupon: applies % discount to ONLY 1 product priced below ₹100
+      const targetItem = items.find(i => i.id === selectedQuizTargetItemId && i.price < 100) || itemsUnder100[0];
+      if (targetItem) {
+        discount = Math.round(targetItem.price * (appliedPromo.value / 100));
+      }
+    } else if (appliedPromo.type === 'percent') {
       discount = Math.round(subtotal * (appliedPromo.value / 100));
     } else if (appliedPromo.type === 'flat') {
       discount = Math.min(appliedPromo.value, subtotal);
@@ -220,9 +236,57 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
   const delivery = getDeliveryFee();
   const total = Math.max(0, subtotal - discount + taxes + delivery + rewardCost);
 
+  const QUIZ_COUPONS: Record<string, number> = {
+    'QUIZ25OFF': 25,
+    'QUIZ15OFF': 15,
+    'QUIZ08OFF': 8
+  };
+
   const handleApplyPromo = () => {
     const userInput = promoCode.toUpperCase().trim();
     setPromoError(null);
+
+    // Explicitly handle Spin Wheel 1st Order Delivered Coupons (e.g. SPIN15OFF, SPIN10OFF)
+    if (userInput.startsWith('SPIN')) {
+      if (subtotal < 599) {
+        setPromoError('Min. order subtotal of ₹599 required to apply Spin Wheel Coupon!');
+        return;
+      }
+      const matchedPct = parseInt(userInput.replace(/\D/g, ''), 10) || 15;
+      const finalDiscountPct = Math.min(15, Math.max(0, matchedPct));
+      setAppliedPromo({
+        id: userInput,
+        type: 'percent',
+        value: finalDiscountPct,
+        label: `${userInput} (${finalDiscountPct}% OFF)`
+      });
+      setPromoError(null);
+      return;
+    }
+
+    // Explicitly handle 40-sec Quiz coupons
+    if (QUIZ_COUPONS[userInput] !== undefined) {
+      if (subtotal < 499) {
+        setPromoError('Min. order subtotal of ₹499 required to apply Quiz Coupon!');
+        return;
+      }
+      if (itemsUnder100.length === 0) {
+        setPromoError('Add at least 1 product priced below ₹100 to apply Quiz Coupon!');
+        return;
+      }
+      const quizDiscountPct = QUIZ_COUPONS[userInput];
+      setAppliedPromo({
+        id: userInput,
+        type: 'percent',
+        value: quizDiscountPct,
+        label: `${userInput} (${quizDiscountPct}% OFF on 1 Item < ₹100)`
+      });
+      if (!selectedQuizTargetItemId && itemsUnder100.length > 0) {
+        setSelectedQuizTargetItemId(itemsUnder100[0].id);
+      }
+      setPromoError(null);
+      return;
+    }
 
     const foundPromo = promosToUse.find(p => (p.code || p.id) === userInput && p.status !== 'Inactive');
 
@@ -230,7 +294,7 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
       setPromoError('Invalid or expired promo code');
     } else if (foundPromo.minOrderAmount && subtotal < foundPromo.minOrderAmount) {
       setPromoError(`Min. order of ₹${foundPromo.minOrderAmount} required`);
-    } else if (new Date(foundPromo.expiryDate) < new Date()) {
+    } else if (foundPromo.expiryDate && new Date(foundPromo.expiryDate) < new Date()) {
       setPromoError('Promo code has expired');
     } else if (foundPromo.usageLimit && foundPromo.usageCount >= foundPromo.usageLimit) {
       setPromoError('Promo code usage limit reached');
@@ -348,7 +412,7 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
                         placeholder="Item Name"
                       />
                     ) : (
-                      <h3 className="font-extrabold text-gray-900 leading-tight pr-6">{item.name}</h3>
+                      <h3 className="font-extrabold text-gray-900 leading-tight pr-6">{getLocalizedProductName(item.name, language)}</h3>
                     )}
                     <button 
                       onClick={() => onRemove(item.id)}
@@ -654,6 +718,66 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
               <span className="text-[10px] font-black text-green-700 uppercase tracking-widest">{appliedPromo.label} APPLIED</span>
             </div>
           )}
+
+          {/* Target Product Selection for Quiz Coupons */}
+          {appliedPromo && (appliedPromo.id.startsWith('QUIZ') || ['QUIZ25OFF', 'QUIZ15OFF', 'QUIZ08OFF'].includes(appliedPromo.id)) && itemsUnder100.length > 0 && (
+            <div className="p-4 bg-amber-50 rounded-2xl border border-amber-300/80 space-y-3 shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-[10.5px] font-black uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-amber-600 fill-amber-500" />
+                  Select 1 Product Under ₹100 for {appliedPromo.value}% Discount
+                </span>
+                <span className="text-[9px] font-mono font-bold text-amber-800 bg-amber-200/80 px-2 py-0.5 rounded-md">
+                  Quiz Special
+                </span>
+              </div>
+
+              <p className="text-[10px] text-amber-900 leading-relaxed font-medium">
+                Your <strong>{appliedPromo.value}% OFF Quiz Discount</strong> applies to <strong>ONLY ONE product priced below ₹100</strong>. Choose your item below:
+              </p>
+
+              <div className="space-y-1.5">
+                {itemsUnder100.map(item => {
+                  const isSelected = item.id === (selectedQuizTargetItemId || itemsUnder100[0]?.id);
+                  const itemDiscount = Math.round(item.price * (appliedPromo.value / 100));
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => setSelectedQuizTargetItemId(item.id)}
+                      className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-amber-100/90 border-amber-500 shadow-sm font-bold text-slate-900'
+                          : 'bg-white border-amber-200/60 text-slate-700 hover:bg-amber-50/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 truncate">
+                        {item.image && <img src={item.image} className="w-8 h-8 rounded-lg object-cover" alt="" />}
+                        <div className="truncate">
+                          <div className="text-xs font-bold truncate">{getLocalizedProductName(item.name, language)}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">Original: ₹{item.price}</div>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-xs font-black text-emerald-600 font-mono block">
+                          -₹{itemDiscount} OFF
+                        </span>
+                        {isSelected && (
+                          <span className="text-[8.5px] font-black uppercase tracking-wider text-amber-800 bg-amber-300/60 px-1.5 py-0.5 rounded">
+                            Applied
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="text-[9.5px] text-amber-800/90 font-mono italic pt-1 border-t border-amber-200/60">
+                * Offer Terms: Min order subtotal ₹499 required. Coupon applies exclusively to 1 product &lt; ₹100.
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Delivery Fee Info */}
@@ -706,7 +830,7 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
             {sortedItems.map(item => (
               <div key={item.id} className="flex justify-between items-center">
                 <div className="flex flex-col">
-                  <span className="text-xs font-bold text-gray-700">{item.name}</span>
+                  <span className="text-xs font-bold text-gray-700">{getLocalizedProductName(item.name, language)}</span>
                   <span className="text-[9px] font-black text-gray-400 uppercase tracking-tighter">₹{item.price} × {item.quantity}</span>
                 </div>
                 <span className="text-sm font-black text-gray-900">₹{item.price * item.quantity}</span>
@@ -843,7 +967,7 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
                 {items.filter(item => item.isMonthlySubscription).map(item => (
                   <div key={item.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
                     <div>
-                      <p className="text-xs font-extrabold text-slate-800 uppercase">{item.name}</p>
+                      <p className="text-xs font-extrabold text-slate-800 uppercase">{getLocalizedProductName(item.name, language)}</p>
                       <p className="text-[9px] font-bold text-slate-400">₹{item.price}/day × 30 days subscription</p>
                     </div>
                     <div className="text-right">

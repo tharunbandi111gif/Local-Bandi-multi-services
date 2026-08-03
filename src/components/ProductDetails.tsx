@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Product, Review, CartItem } from '../types';
 import ReviewsSection from './ReviewsSection';
 import { HospitalOPForm } from './HospitalOPForm';
+import { useTranslation } from '../i18n';
+import { getLocalizedProductName, getLocalizedProductDescription } from '../utils/localizedContent';
 
 interface ProductDetailsProps {
   product: Product;
@@ -31,6 +33,7 @@ export default function ProductDetails({
   onBookHospitalOP,
   isAdmin = false
 }: ProductDetailsProps) {
+  const { language } = useTranslation();
   const [selectedSize, setSelectedSize] = useState(1);
   const stock = product.stock ?? 10;
 
@@ -243,7 +246,7 @@ export default function ProductDetails({
             </div>
           </div>
           <div className="flex items-center justify-between gap-4">
-            <h2 className="text-3xl font-black text-gray-900 tracking-tight">{product.name}</h2>
+            <h2 className="text-3xl font-black text-gray-900 tracking-tight">{getLocalizedProductName(product.name, language)}</h2>
             <motion.button 
               whileTap={{ scale: 0.9 }}
               onClick={() => {

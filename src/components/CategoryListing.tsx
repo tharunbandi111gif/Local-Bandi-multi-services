@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Search, Filter, ShoppingCart, Star, Calendar, Mic, MicOff, ChevronDown, Check, X, ClipboardList, MessageSquare, Phone, ZoomIn, Edit3, Trash2, Camera } from 'lucide-react';
+import { ArrowLeft, Search, Filter, ShoppingCart, Star, Calendar, Mic, MicOff, ChevronDown, Check, X, ClipboardList, MessageSquare, Phone, ZoomIn, Edit3, Trash2, Camera, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Product, Service, LanguageCode } from '../types';
-import { PRODUCTS, SERVICES } from '../constants';
+import { PRODUCTS, SERVICES, CATEGORIES } from '../constants';
 import MarriageBureau from './MarriageBureau';
 import { HospitalOPForm } from './HospitalOPForm';
 import { translations } from '../translations';
-import { getLocalizedCategoryName, getLocalizedSubcategoryName } from '../utils/localizedContent';
+import { getLocalizedCategoryName, getLocalizedSubcategoryName, getLocalizedProductName, getLocalizedProductDescription, getLocalizedServiceName, getLocalizedServiceDescription } from '../utils/localizedContent';
 import { performSmartSearch } from '../utils/smartSearch';
 import { AdminInput } from './common/AdminInput';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -76,21 +76,28 @@ export default function CategoryListing({
   };
 
   const handleSaveCatalogItem = async () => {
-    if (!editingItem || !editingItem.name) {
+    if (!editingItem || !editingItem.name?.trim()) {
       alert("Product/Service Name is required!");
       return;
     }
+    const docId = editingItem.id || `prod_${Date.now()}`;
     const itemToSave = {
       ...editingItem,
+      id: docId,
+      category: editingItem.category || category.id,
+      branchId: editingItem.branchId || currentBranchId,
+      isAvailable: editingItem.isAvailable ?? true,
       price: Number(editingItem.price) || 0,
-      stock: editingItem.stock !== undefined ? Number(editingItem.stock) : undefined
+      stock: editingItem.stock !== undefined ? Number(editingItem.stock) : 100,
+      vendorId: editingItem.vendorId || 'admin-store',
+      updatedAt: new Date().toISOString()
     };
     try {
-      await setDoc(doc(db, 'products', editingItem.id), itemToSave, { merge: true });
+      await setDoc(doc(db, 'products', docId), itemToSave, { merge: true });
       setShowEditModal(false);
       setEditingItem(null);
     } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, `products/${editingItem.id}`);
+      handleFirestoreError(e, OperationType.WRITE, `products/${docId}`);
     }
   };
 
@@ -151,7 +158,25 @@ export default function CategoryListing({
 
   const itemsInCategory = React.useMemo(() => {
     if (!category) return [];
-    return localInventory.filter(p => p.category === category.id && (!p.branchId || p.branchId === currentBranchId));
+    const targetCatId = (category.id || '').toLowerCase();
+
+    return localInventory.filter(p => {
+      const pCat = (p.category || '').toLowerCase();
+
+      const matchesCategory = pCat === targetCatId ||
+        (targetCatId === 'veg' && (pCat === 'vegetables' || pCat === 'veg' || pCat === 'fruits')) ||
+        (targetCatId === 'dairy' && (pCat === 'dairy' || pCat === 'milk' || pCat === 'dairy & eggs')) ||
+        (targetCatId === 'meat' && (pCat === 'meat' || pCat === 'chicken' || pCat === 'fish' || pCat === 'meat & fish')) ||
+        (targetCatId === 'bakery' && (pCat === 'bakery' || pCat === 'ice cream' || pCat === 'icecream')) ||
+        (targetCatId === 'groceries' && (pCat === 'groceries' || pCat === 'snacks' || pCat === 'household')) ||
+        (targetCatId === 'pharmacy' && (pCat === 'pharmacy' || pCat === 'medicine' || pCat === 'health')) ||
+        (targetCatId === 'electronics' && (pCat === 'electronics' || pCat === 'mobiles')) ||
+        (targetCatId === 'services' && (pCat === 'services' || pCat === 'home services'));
+
+      const matchesBranch = !p.branchId || p.branchId === currentBranchId || currentBranchId === 'khammam_main';
+
+      return matchesCategory && matchesBranch;
+    });
   }, [localInventory, category?.id, currentBranchId]);
 
   const searchResult = React.useMemo(() => {
@@ -237,6 +262,29 @@ export default function CategoryListing({
             </button>
             <h2 className="text-xl font-black text-gray-900 flex-1">{categoryDisplayName}</h2>
             <div className="flex items-center gap-1">
+              <button 
+                onClick={() => {
+                  setEditingItem({
+                    id: '',
+                    name: '',
+                    price: '',
+                    category: category.id,
+                    branchId: currentBranchId,
+                    image: '',
+                    description: '',
+                    unit: '1 unit',
+                    stock: 100,
+                    vendorId: 'admin-store',
+                    isAvailable: true
+                  });
+                  setShowEditModal(true);
+                }}
+                className="p-2 bg-yellow-400 text-gray-900 font-bold rounded-xl flex items-center gap-1 text-xs px-3 shadow-sm hover:bg-yellow-500 transition-all active:scale-95 cursor-pointer"
+                title={`Add product to ${categoryDisplayName}`}
+              >
+                <Plus className="w-4 h-4" />
+                <span className="hidden sm:inline font-black text-[10px] uppercase tracking-wider">Add</span>
+              </button>
               <button 
                 onClick={handleVoiceSearch} 
                 className={`p-2 rounded-xl transition-all ${isListening ? 'bg-rose-100 text-rose-500 animate-pulse' : 'bg-gray-100 text-gray-700'}`}
@@ -450,7 +498,7 @@ export default function CategoryListing({
                     )}
                   </div>
                 </div>
-                <h3 className="font-extrabold text-sm text-gray-900 mb-1 leading-tight">{item.name}</h3>
+                <h3 className="font-extrabold text-sm text-gray-900 mb-1 leading-tight">{getLocalizedProductName(item.name, language)}</h3>
                 {(item as Product).hotelName && (
                   <p className="text-[10px] text-gray-400 font-bold mb-1">{(item as Product).hotelName}</p>
                 )}
@@ -665,7 +713,7 @@ export default function CategoryListing({
                     <div className="space-y-4">
                       <div>
                         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Product</p>
-                        <h4 className="font-extrabold text-gray-900 leading-tight">{item.name}</h4>
+                        <h4 className="font-extrabold text-gray-900 leading-tight">{getLocalizedProductName(item.name, language)}</h4>
                       </div>
                       <div>
                         <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Price</p>
@@ -863,6 +911,19 @@ export default function CategoryListing({
                   value={editingItem.unit || ''}
                   onChange={(e) => setEditingItem({ ...editingItem, unit: e.target.value })}
                 />
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block ml-1">Assigned Category</label>
+                  <select
+                    value={editingItem.category || category.id}
+                    onChange={(e) => setEditingItem({ ...editingItem, category: e.target.value })}
+                    className="w-full bg-gray-50 border border-gray-200 p-3.5 rounded-xl text-xs font-bold text-gray-900 outline-none focus:border-indigo-500 transition-all appearance-none cursor-pointer"
+                  >
+                    {CATEGORIES.map((cat) => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
 
                 {!isServiceCategory && (
                   <AdminInput 

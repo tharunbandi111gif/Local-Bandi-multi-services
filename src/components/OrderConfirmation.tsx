@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { CheckCircle2, ChevronRight, Package, MapPin, Share2, Home, Bike, Phone, MessageSquare, Navigation } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Package, MapPin, Share2, Home, Bike, Phone, MessageSquare, Navigation, Sparkles, Trophy, Zap } from 'lucide-react';
 import { CartItem } from '../types';
 import LiveMap from './LiveMap';
+import { SpinWheelModal } from './SpinWheelModal';
 
 interface OrderConfirmationProps {
   items: CartItem[];
@@ -12,6 +13,7 @@ interface OrderConfirmationProps {
 
 export default function OrderConfirmation({ items, orderId, onHome }: OrderConfirmationProps) {
   const [riderPos, setRiderPos] = useState<[number, number]>([17.2505, 80.1450]);
+  const [showSpinWheel, setShowSpinWheel] = useState(false);
   const vendorPos: [number, number] = [17.2473, 80.1514];
   const customerPos: [number, number] = [17.2550, 80.1600];
   
@@ -110,6 +112,34 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
             <p className="text-xs text-gray-500 font-bold mt-2 font-sans">
               Your order is booked and locked on the decentralised dispatch grid. Keep a watch on delivery updates.
             </p>
+          </div>
+
+          {/* 1ST ORDER DELIVERED SPIN & WIN BANNER */}
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950 p-5 border border-amber-400/40 shadow-xl space-y-3 text-left">
+            <div className="flex items-center justify-between">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/10 border border-amber-400/30 text-amber-400 text-[9px] font-black uppercase font-mono">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400 fill-amber-400 animate-spin" />
+                <span>1st Order Delivered Reward</span>
+              </div>
+              <span className="text-[9.5px] font-mono font-extrabold text-amber-300">100% Free Wheel</span>
+            </div>
+
+            <div>
+              <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
+                🎰 SPIN &amp; WIN TO FREE 100%!
+              </h3>
+              <p className="text-[11px] text-slate-300 font-medium leading-relaxed mt-0.5">
+                Spin the lucky round wheel to unlock your exclusive delivered order reward!
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowSpinWheel(true)}
+              className="w-full py-3 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-300 text-slate-950 rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Zap className="w-4 h-4 fill-slate-950" />
+              <span>SPIN LUCKY WHEEL NOW</span>
+            </button>
           </div>
 
           <div className="flex items-center justify-between pb-6 border-b border-gray-50">
@@ -233,6 +263,11 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
           Return to Home
         </button>
       </div>
+
+      <SpinWheelModal
+        isOpen={showSpinWheel}
+        onClose={() => setShowSpinWheel(false)}
+      />
     </div>
   );
 }

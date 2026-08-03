@@ -436,6 +436,49 @@ export const CATEGORY_TRANSLATIONS: Record<string, Partial<Record<LanguageCode, 
     'or-IN': 'ବ୍ୟୁଟି ପାର୍ଲର',
     'as-IN': 'বিউটি পার্লাৰ',
     'sa-IN': 'సౌందర్య-వర్ధకాలయః',
+  },
+  agriculture: {
+    'hi-IN': 'कृषि और खेती',
+    'te-IN': 'వ్యవసాయం & వ్యవసాయ దినుసులు',
+    'ta-IN': 'வேளாண்மை & விவசாயம்',
+    'kn-IN': 'ಕೃಷಿ ಮತ್ತು ಕೃಷಿ ಸಾಮಗ್ರಿಗಳು',
+  },
+  auto_garage: {
+    'hi-IN': 'ऑटो और बाइक मरम्मत',
+    'te-IN': 'ఆటో & బైక్ సర్వీసింగ్/గ్యారేజ్',
+    'ta-IN': 'ஆட்டோ & பைக் పழுது',
+  },
+  education: {
+    'hi-IN': 'ट्यूशन और कोचिंग',
+    'te-IN': 'ట్యూషన్లు & కోచింగ్',
+  },
+  pets: {
+    'hi-IN': 'पेट केयर और खाना',
+    'te-IN': 'పెట్ కేర్ & పెంపుడు జంతువుల ఆహారం',
+  },
+  sports: {
+    'hi-IN': 'खेल और फिटनेस',
+    'te-IN': 'స్పోర్ట్స్ & ఫిట్‌నెస్',
+  },
+  footwear: {
+    'hi-IN': 'जूते और चप्पल',
+    'te-IN': 'పాదరక్షలు & షూస్',
+  },
+  chitfund: {
+    'hi-IN': 'चिट फंड और बचत',
+    'te-IN': 'చిట్ ఫండ్స్ & పొదుపు',
+  },
+  books: {
+    'hi-IN': 'किताबें और स्टेशनरी',
+    'te-IN': 'పుస్తకాలు & స్టేషనరీ',
+  },
+  gifts: {
+    'hi-IN': 'उपहार और फूल',
+    'te-IN': 'హుందా బహుమతులు & పూలు',
+  },
+  sweets: {
+    'hi-IN': 'मिठाई और नमकीन',
+    'te-IN': 'స్వీట్లు & హాట్స్',
   }
 };
 
@@ -1331,4 +1374,518 @@ export function getLocalizedBannerSub(sub: string, language: LanguageCode): stri
   if (match && match[language]) return match[language]!;
   return sub;
 }
+
+// Deals of the Day Localized Content
+export function getLocalizedDealsOfDay(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return {
+      title: "ఈనాటి ధమాకా ఆఫర్లు & డీల్స్",
+      subtitle: "స్థానిక దుకాణాల నుండి అత్యుత్తమ డిస్కౌంట్లు & క్యాష్‌బ్యాక్",
+      superSaver: "సూపర్ సేవర్ ఆఫర్",
+      claimDeal: "డీల్ పొందుము",
+      endsIn: "ముగిసే సమయం"
+    };
+  }
+  if (language === 'hi-IN') {
+    return {
+      title: "आज के धमाकेदार सौदे और ऑफर",
+      subtitle: "स्थानीय दुकानों से सर्वोत्तम छूट और कैशबैक",
+      superSaver: "सुपर सेवर डील",
+      claimDeal: "ऑफर पाएं",
+      endsIn: "समाप्त होने का समय"
+    };
+  }
+  if (language === 'ta-IN') {
+    return {
+      title: "இன்றைய சிறப்பு சலுகைகள்",
+      subtitle: "உள்ளூர் கடைகளின் சிறந்த தள்ளுபடி",
+      superSaver: "சூப்பர் சேவர் சலுகை",
+      claimDeal: "சலுகையைப் பெறுக",
+      endsIn: "முடிவடையும் நேரம்"
+    };
+  }
+  if (language === 'kn-IN') {
+    return {
+      title: "ಇಂದಿನ ಧಮಾಕಾ ಆಫರ್‌ಗಳು",
+      subtitle: "ಸ್ಥಳೀಯ ಅಂಗಡಿಗಳಿಂದ ಅತ್ಯುತ್ತಮ ರಿಯಾಯಿತಿಗಳು",
+      superSaver: "ಸೂಪರ್ ಸೇವರ್ ಆಫರ್",
+      claimDeal: "ಆಫರ್ ಪಡೆಯಿರಿ",
+      endsIn: "ಮುಕ್ತಾಯದ ಸಮಯ"
+    };
+  }
+  if (language === 'ml-IN') {
+    return {
+      title: "ഇന്നത്തെ വൻകിട ഓഫറുകൾ",
+      subtitle: "പ്രാദേശിക സ്റ്റോറുകളിൽ നിന്നുള്ള മികച്ച ഡിസ്കൗണ്ടുകൾ",
+      superSaver: "സൂപ്പർ സേവർ ഓഫർ",
+      claimDeal: "ഓഫർ സ്വന്തമാക്കൂ",
+      endsIn: "അവസാനിക്കുന്ന സമയം"
+    };
+  }
+  return {
+    title: "Deals of the Day & Special Offers",
+    subtitle: "Exclusive discounts & mega cashbacks from verified local vendors",
+    superSaver: "Super Saver Deal",
+    claimDeal: "Claim Deal Now",
+    endsIn: "Ends in"
+  };
+}
+
+// Popular & Around You Localized Content
+export function getLocalizedPopularAroundYou(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return {
+      title: "మీ చుట్టుపక్కల పాపులర్ సేవలు",
+      subtitle: "ఖమ్మం సరౌండింగ్స్ లో అత్యధికంగా ఆర్డర్ చేసిన సేవలు & షాప్‌లు",
+      nearbyStores: "సమీప స్టోర్‌లు",
+      verifiedLocal: "ధృవీకరించబడిన లోకల్ బండి పార్ట్‌నర్"
+    };
+  }
+  if (language === 'hi-IN') {
+    return {
+      title: "आपके आसपास लोकप्रिय सेवाएं",
+      subtitle: "खम्मम और आसपास सबसे ज्यादा ऑर्डर की जाने वाली सेवाएं",
+      nearbyStores: "पास की दुकानें",
+      verifiedLocal: "सत्यापित लोकल बांडी पार्टनर"
+    };
+  }
+  if (language === 'ta-IN') {
+    return {
+      title: "உங்களைச் சுற்றியுள்ள பிரபல சேவைகள்",
+      subtitle: "அதிகம் ஆர்டர் செய்யப்பட்ட உள்ளூர் சேவைகள்",
+      nearbyStores: "அருகிலுள்ள கடைகள்",
+      verifiedLocal: "சரிபார்க்கப்பட்ட உள்ளூர் பார்ட்னர்"
+    };
+  }
+  return {
+    title: "Popular & Around You",
+    subtitle: "Top rated local shops & essential services in your vicinity",
+    nearbyStores: "Nearby Express Stores",
+    verifiedLocal: "Verified Local Bandi Partner"
+  };
+}
+
+// Trending Services Localized Content
+export function getLocalizedTrendingServices(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return {
+      title: "ట్రెండింగ్ హోమ్ & మల్టీ సర్వీసెస్",
+      subtitle: "AC మెకానిక్స్, రెంట్ కార్స్, మ్యారేజ్ సంబంధాలు & వంటవారు",
+      bookNow: "ఇప్పుడే బుక్ చేయండి",
+      instantDispatch: "త్వరిత డిస్పాచ్"
+    };
+  }
+  if (language === 'hi-IN') {
+    return {
+      title: "ट्रेंडिंग होम और मल्टी सर्विसेज",
+      subtitle: "एसी मैकेनिक, रेंटल कार, मैरिज ब्यूरो और रसोइया",
+      bookNow: "अभी बुक करें",
+      instantDispatch: "त्वरित डिस्पैच"
+    };
+  }
+  return {
+    title: "Trending Local & Multi Services",
+    subtitle: "AC mechanics, rental cars, marriage bureau, maids & drivers",
+    bookNow: "Book Service Now",
+    instantDispatch: "Instant Local Dispatch"
+  };
+}
+
+// Mechanic Portal Localized Content
+export function getLocalizedMechanicPortalText(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return {
+      title: "మెకానిక్ & టెక్నీషియన్ పోర్టల్",
+      subtitle: "AC, ఫ్రిజ్, బైక్, కార్ & ఎలక్ట్రికల్ రిపేర్ నిపుణులు",
+      registerAsMechanic: "మెకానిక్‌గా నమోదు చేసుకోండి",
+      viewJobs: "రిపేర్ జాబ్స్ చూడండి",
+      emergencyBreakdown: "ఎమర్జెన్సీ బ్రేక్‌డౌన్ హెల్ప్"
+    };
+  }
+  if (language === 'hi-IN') {
+    return {
+      title: "मैकेनिक और तकनीशियन पोर्टल",
+      subtitle: "एसी, फ्रिज, बाइक, कार और इलेक्ट्रिकल रिपेयर विशेषज्ञ",
+      registerAsMechanic: "मैकेनिक के रूप में पंजीकरण करें",
+      viewJobs: "रिपेयर जॉब देखें",
+      emergencyBreakdown: "आपातकालीन ब्रेकडाउन सहायता"
+    };
+  }
+  return {
+    title: "Mechanic & Technician Portal",
+    subtitle: "AC, fridge, bike, car & electrical repair specialists",
+    registerAsMechanic: "Register as Mechanic Partner",
+    viewJobs: "View Active Repair Jobs",
+    emergencyBreakdown: "Emergency Breakdown Support"
+  };
+}
+
+// Rider Portal Localized Content
+export function getLocalizedRiderPortalText(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return {
+      title: "రైడర్ & డెలివరీ పార్ట్‌నర్ పోర్టల్",
+      subtitle: "రోజువారీ సంపాదన, ఫ్లీట్ మేనేజ్‌మెంట్ & ట్రిప్ సపోర్ట్",
+      riderDutyOn: "డ్యూటీ స్టార్ట్ చేయి",
+      riderDutyOff: "డ్యూటీ ఆఫ్ చేయి",
+      tipTrends: "టిప్ ట్రెండ్స్ & సంపాదన"
+    };
+  }
+  if (language === 'hi-IN') {
+    return {
+      title: "राइडर एवं डिलीवरी पार्टनर पोर्टल",
+      subtitle: "दैनिक कमाई, फ़्लीट प्रबंधन और ट्रिप सहायता",
+      riderDutyOn: "ड्यूटी शुरू करें",
+      riderDutyOff: "ड्यूटी बंद करें",
+      tipTrends: "टिप ट्रेंड्स और कमाई"
+    };
+  }
+  return {
+    title: "Rider & Delivery Fleet Portal",
+    subtitle: "Daily earnings, tip trends, duty manager & live dispatch",
+    riderDutyOn: "Start Delivery Shift",
+    riderDutyOff: "End Shift",
+    tipTrends: "Tip Trends & Tier Perks"
+  };
+}
+
+// Help In & Out Localized Content
+export function getLocalizedHelpInOutText(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return {
+      title: "హెల్ప్ ఇన్ & అవుట్ సపోర్ట్ సెంటర్",
+      subtitle: "ఆర్డర్ సహాయం, ఆన్-సైట్ గైడెన్స్, కస్టమర్ కేర్ & ఫౌండర్ హెల్ప్",
+      helpDesk: "హెల్ప్ డెస్క్",
+      founderLine: "ఫౌండర్ డైరెక్ట్ హెల్ప్‌లైన్"
+    };
+  }
+  if (language === 'hi-IN') {
+    return {
+      title: "हेल्प इन और आउट सपोर्ट सेंटर",
+      subtitle: "ऑर्डर सहायता, ऑन-साइट मार्गदर्शन और संस्थापक सहायता",
+      helpDesk: "हेल्प डेस्क",
+      founderLine: "संस्थापक डायरेक्ट हेल्पलाइन"
+    };
+  }
+  return {
+    title: "Help In & Out Support Desk",
+    subtitle: "Immediate order assistance, founder hotline & live agent guidance",
+    helpDesk: "Help Desk Console",
+    founderLine: "Founder Direct Line"
+  };
+}
+
+// Support & Integrations Localized Content
+export function getLocalizedSupportIntegrationsText(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return {
+      title: "సపోర్ట్ & సిస్టమ్ ఇంటిగ్రేషన్లు",
+      subtitle: "WhatsApp అలర్ట్‌లు, సత్వర ప్రింటింగ్, GPS మ్యాప్స్ & పిన్ లాక్",
+      whatsappAlerts: "వాట్సాప్ అలర్ట్‌లు",
+      bluetoothPrinter: "బ్లూటూత్ బిల్లు ప్రింటర్",
+      gpsNavigation: "GPS నావిగేషన్"
+    };
+  }
+  if (language === 'hi-IN') {
+    return {
+      title: "सहायता और सिस्टम एकीकरण",
+      subtitle: "व्हाट्सएप अलर्ट, प्रिंटिंग, जीपीएस मैप्स और पिन लॉक",
+      whatsappAlerts: "व्हाट्सएप अलर्ट",
+      bluetoothPrinter: "ब्लूटूथ बिल प्रिंटर",
+      gpsNavigation: "जीपीएस नेविगेशन"
+    };
+  }
+  return {
+    title: "Support & Hardware Integrations",
+    subtitle: "WhatsApp notifications, thermal receipt printing, live maps & security",
+    whatsappAlerts: "WhatsApp Order Alerts",
+    bluetoothPrinter: "Thermal Receipt Printer",
+    gpsNavigation: "Live GPS Navigation"
+  };
+}
+
+// Frequently Asked Questions (FAQs)
+export function getLocalizedFAQ(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return [
+      { q: "లోకల్ బండి ద్వారా డెలివరీ సమయం ఎంత?", a: "మీ స్థానిక పరిసరాల నుండి 20 నుండి 35 నిమిషాల వ్యవధిలో ఆర్డర్ మీ ఇంటికి చేరుతుంది." },
+      { q: "కస్టమర్ కేర్ సపోర్ట్ అందుబాటులో ఉండే సమయాలు ఏమిటి?", a: "ప్రతిరోజూ ఉదయం 09:20 నుండి సాయంత్రం 05:00 వరకు డైరెక్ట్ ఫోన్ & లైవ్ చాట్ సపోర్ట్ లభిస్తుంది." },
+      { q: "కాష్ ఆన్ డెలివరీ (COD) లభ్యమవుతుందా?", a: "అవును, అన్ని రకాల సరుకులు, పాలు, కూరగాయలు & సేవలకు COD సదుపాయం కలదు." }
+    ];
+  }
+  if (language === 'hi-IN') {
+    return [
+      { q: "लोकल बांडी की डिलीवरी समय सीमा क्या है?", a: "आपके स्थानीय क्षेत्र से 20 से 35 मिनट के भीतर ऑर्डर आपके दरवाजे तक पहुंच जाता है।" },
+      { q: "ग्राहक सेवा सहायता का समय क्या है?", a: "प्रतिदिन सुबह 09:20 से शाम 05:00 तक डायरेक्ट फोन और लाइव चैट सहायता उपलब्ध है।" },
+      { q: "क्या कैश ऑन डिलीवरी (COD) उपलब्ध है?", a: "हाँ, सभी किराना, दूध, सब्जी एवं सेवाओं के लिए COD उपलब्ध है।" }
+    ];
+  }
+  return [
+    { q: "What is the delivery time for Local Bandi orders?", a: "Orders are delivered directly from local verified stores within 20 to 35 minutes." },
+    { q: "What are the customer care support hours?", a: "Daily callback & live agent support operates between 09:20 AM and 05:00 PM." },
+    { q: "Is Cash on Delivery (COD) supported?", a: "Yes, COD is fully accepted for all groceries, fresh milk, vegetables, and home services." }
+  ];
+}
+
+// Terms and Conditions
+export function getLocalizedTermsAndConditions(language: LanguageCode) {
+  if (language === 'te-IN') {
+    return {
+      title: "నిబంధనలు మరియు షరతులు",
+      content: "లోకల్ బండి మల్టీ సర్వీసెస్ యాప్ ద్వారా పొందే సేవలు, ఆర్డర్‌లు మరియు రిఫండ్‌లు స్థానిక ఫ్రాంచైజ్ నియమ నిబంధనలకు లోబడి ఉంటాయి."
+    };
+  }
+  if (language === 'hi-IN') {
+    return {
+      title: "नियम एवं शर्तें",
+      content: "लोकल बांडी मल्टी सर्विसेज ऐप के माध्यम से प्राप्त सेवाएं, ऑर्डर और रिफंड स्थानीय फ्रैंचाइज़ी नियमों के अधीन हैं।"
+    };
+  }
+  return {
+    title: "Terms & Conditions",
+    content: "All orders, services, and transactions fulfilled via Local Bandi Multi Services are governed by local franchise operational policies and partner terms."
+  };
+}
+
+// Localized Offer Text Helper
+export function getLocalizedOfferText(text: string, language: LanguageCode): string {
+  if (!text || language === 'en-IN') return text;
+  if (language === 'te-IN') return text.replace('OFF', 'రాయితీ').replace('Free Delivery', 'ఉచిత డెలివరీ');
+  if (language === 'hi-IN') return text.replace('OFF', 'छूट').replace('Free Delivery', 'मुफ्त डिलीवरी');
+  return text;
+}
+
+// Localized Address Helper
+export function getLocalizedAddressText(address: string, language: LanguageCode): string {
+  if (!address || language === 'en-IN') return address;
+  if (language === 'te-IN') {
+    return address
+      .replace('Khammam', 'ఖమ్మం')
+      .replace('Telangana', 'తెలంగాణ')
+      .replace('Main Road', 'మెయిన్ రోడ్')
+      .replace('Bypass', 'బైపాస్');
+  }
+  if (language === 'hi-IN') {
+    return address
+      .replace('Khammam', 'खम्मम')
+      .replace('Telangana', 'तेलंगाना')
+      .replace('Main Road', 'मेन रोड');
+  }
+  return address;
+}
+
+// Universal UI Text Keys Engine
+export function getLocalizedUIText(key: string, language: LanguageCode): string {
+  if (language === 'en-IN') return key;
+
+  const UI_KEY_MAP: Record<string, Partial<Record<LanguageCode, string>>> = {
+    'Search for products, services & shops': {
+      'te-IN': 'ఉత్పత్తులు, సేవలు & షాప్‌ల కోసం వెతకండి...',
+      'hi-IN': 'उत्पाद, सेवाएं और दुकानें खोजें...',
+      'ta-IN': 'பொருட்கள் மற்றும் சேவைகளைத் தேடுங்கள்...',
+      'kn-IN': 'ಉತ್ಪನ್ನಗಳು ಮತ್ತು ಸೇವೆಗಳನ್ನು ಹುಡುಕಿ...',
+      'ml-IN': 'ഉൽപ്പന്നങ്ങളും സേവനങ്ങളും തിരയുക...'
+    },
+    'Cart': {
+      'te-IN': 'కార్ట్',
+      'hi-IN': 'कार्ट',
+      'ta-IN': 'கார்ட்',
+      'kn-IN': 'ಕಾರ್ಟ್',
+      'ml-IN': 'കാർട്ട്'
+    },
+    'Add to Cart': {
+      'te-IN': 'కార్ట్‌కి జోడించు',
+      'hi-IN': 'कार्ट में जोड़ें',
+      'ta-IN': 'கார்ட்டில் சேர்',
+      'kn-IN': 'ಕಾರ್ಟ್‌ಗೆ ಸೇರಿಸಿ',
+      'ml-IN': 'കാർട്ടിലേക്ക് ചേർക്കുക'
+    },
+    'Checkout': {
+      'te-IN': 'చెక్‌అవుట్ చేయండి',
+      'hi-IN': 'चेकआउट करें',
+      'ta-IN': 'செக்அவுட் செய்யவா',
+      'kn-IN': 'ಚೆಕ್‌ಔಟ್ ಮಾಡಿ',
+      'ml-IN': 'ചെക്ക്ഔട്ട് ചെയ്യുക'
+    }
+  };
+
+  const match = UI_KEY_MAP[key];
+  if (match && match[language]) return match[language]!;
+  return translateText(key, language);
+}
+
+// Universal Product & Service Translations Dictionary
+export const PRODUCT_TRANSLATIONS: Record<string, Partial<Record<LanguageCode, string>>> = {
+  'Fresh Chicken (With Skin)': {
+    'hi-IN': 'ताज़ा चिकन (त्वचा सहित)',
+    'te-IN': 'తాజా చికెన్ (స్కిన్‌తో)',
+    'ta-IN': 'புதிய கோழி இறைச்சி',
+    'kn-IN': 'ತಾಜಾ ಕೋಳಿ ಮಾಂಸ',
+    'ml-IN': 'ഫ്രഷ് ചിക്കൻ',
+    'bn-IN': 'তাজা মুরগির মাংস',
+    'gu-IN': 'તાજું ચિકન',
+    'mr-IN': 'ताजे चिकन',
+    'pa-IN': 'ਤਾਜ਼ਾ ਚਿਕਨ',
+    'ur-IN': 'تازہ چکن',
+    'or-IN': 'ତାଜା କୁକୁଡ଼ା ମାଂସ'
+  },
+  'Chicken Boneless': {
+    'hi-IN': 'चिकन बोनलेस',
+    'te-IN': 'చికెన్ బోన్‌లెస్',
+    'ta-IN': 'எலும்பில்லாத கோழி இறைச்சி',
+    'kn-IN': 'ಬೋನ್​ಲೆಸ್ ಕೋಳಿ ಮಾಂಸ',
+    'ml-IN': 'ബോൺലെസ് ചിക്കൻ',
+    'bn-IN': 'বোনলেস চিকেন',
+    'gu-IN': 'બોનલેસ ચિકન',
+    'mr-IN': 'बोनलेस चिकन'
+  },
+  'Skinless Chicken': {
+    'hi-IN': 'स्किनलेस चिकन',
+    'te-IN': 'స్కిన్‌లెస్ చికెన్',
+    'ta-IN': 'தோல் நீக்கப்பட்ட கோழி',
+    'kn-IN': 'ಸ್ಕಿನ್​ಲೆಸ್ ಕೋಳಿ ಮಾಂಸ'
+  },
+  'Premium Mutton (Goat)': {
+    'hi-IN': 'प्रीमियम मटन (बकरा)',
+    'te-IN': 'ప్రీమియం మటన్ (మేక మాంసం)',
+    'ta-IN': 'பிரிமியம் ஆட்டு இறைச்சி',
+    'kn-IN': 'ಪ್ರೀಮಿಯಂ ಮೇಕೆ ಮಾಂಸ',
+    'ml-IN': 'പ്രീമിയം മട്ടൺ',
+    'bn-IN': 'প্রিমিয়াম খাঁসি মাংস',
+    'gu-IN': 'પ્રીમિયમ મટન',
+    'mr-IN': 'प्रीमियम मटण'
+  },
+  'Farm Fresh Eggs (12pk)': {
+    'hi-IN': 'ताज़े अंडे (12 का पैक)',
+    'te-IN': 'ఫామ్ తాజా గుడ్లు (12 ప్యాక్)',
+    'ta-IN': 'பண்ணை முட்டைகள் (12 எண்ணிக்கை)',
+    'kn-IN': 'ತಾಜಾ ಮೊಟ್ಟೆಗಳು (12 ಪ್ಯಾಕ್)'
+  },
+  'Pure Buffalo Milk 1L': {
+    'hi-IN': 'शुद्ध भैंस का दूध 1 लीटर',
+    'te-IN': 'ప్యూర్ గేదె పాలు 1లీటర్',
+    'ta-IN': 'தூய எருமை பால் 1 லிட்டர்',
+    'kn-IN': 'ಶುದ್ಧ ಎಮ್ಮೆ ಹಾಲು 1 ಲೀಟರ್',
+    'ml-IN': 'ശുദ്ധമായ എരുമപ്പാൽ 1 ലിറ്റർ',
+    'mr-IN': 'शुद्ध म्हशीचे दूध १ लिटर'
+  },
+  'Fresh Cow Milk 1L': {
+    'hi-IN': 'ताज़ा गाय का दूध 1 लीटर',
+    'te-IN': 'తాజా ఆవు పాలు 1లీటర్',
+    'ta-IN': 'பசுவின் பால் 1 லிட்டர்',
+    'kn-IN': 'ತಾಜಾ ಹಸುವಿನ ಹಾಲು 1 ಲೀ'
+  },
+  'Fresh Paneer 200g': {
+    'hi-IN': 'ताज़ा पनीर 200 ग्राम',
+    'te-IN': 'తాజా పనీర్ 200గ్రామ్స్',
+    'ta-IN': 'புதிய பனீர் 200 கிராம்',
+    'kn-IN': 'ತಾಜಾ ಪನ್ನೀರ್ 200 ಗ್ರಾಂ'
+  },
+  'Daily Water (20L Tin)': {
+    'hi-IN': 'मिनरल वाटर कैन (20 लीटर)',
+    'te-IN': 'మినరల్ వాటర్ క్యాన్ (20 లీటర్లు)',
+    'ta-IN': 'குடிநீர் கேன் (20 லிட்டர்)',
+    'kn-IN': 'ಕುಡಿಯುವ నీటి క్యాన్ (20 లీ)'
+  },
+  'Hybrid Tomatoes 1kg': {
+    'hi-IN': 'हाइब्रिड टमाटर 1 किग्रा',
+    'te-IN': 'హైబ్రిడ్ టమోటాలు 1కేజీ',
+    'ta-IN': 'தக்காளி 1 கிலோ',
+    'kn-IN': 'ಟೊಮೆಟೊ 1 ಕೆಜಿ'
+  },
+  'Shimla Apple 1kg': {
+    'hi-IN': 'शिमला सेब 1 किग्रा',
+    'te-IN': 'షిమ్లా యాపిల్స్ 1కేజీ',
+    'ta-IN': 'சிம்லா ஆப்பிள் 1 கிலோ',
+    'kn-IN': 'ಶಿಮ್ಲಾ ಸೇಬು 1 ಕೆಜಿ'
+  },
+  'Idly Sambar': {
+    'hi-IN': 'इडली सांभर',
+    'te-IN': 'ఇడ్లీ సాంబార్',
+    'ta-IN': 'இட்லி சாம்பார்',
+    'kn-IN': 'ఇడ్లి సాంబార్'
+  },
+  'Masala Dosa': {
+    'hi-IN': 'मसाला डोसा',
+    'te-IN': 'మసాలా దోశ',
+    'ta-IN': 'மசாலா தோசை',
+    'kn-IN': 'ಮಸಾಲ ದೋಸೆ'
+  },
+  'Chicken Biryani': {
+    'hi-IN': 'चिकन बिरयानी',
+    'te-IN': 'చికెన్ బిర్యానీ',
+    'ta-IN': 'சிக்கன் பிரியாணி',
+    'kn-IN': 'ಚಿಕನ್ ಬಿರಿಯಾನಿ'
+  }
+};
+
+// Universal Smart Word Translator for dynamic titles & strings
+export function translateText(text: string, language: LanguageCode): string {
+  if (!text || language === 'en-IN' || !language) return text;
+
+  // Direct exact match
+  if (PRODUCT_TRANSLATIONS[text]?.[language]) {
+    return PRODUCT_TRANSLATIONS[text]![language]!;
+  }
+
+  // Key phrase substitutions for dynamic product names & descriptions
+  const PHRASE_MAP: Record<string, Partial<Record<LanguageCode, string>>> = {
+    'Fresh': { 'hi-IN': 'ताज़ा', 'te-IN': 'తాజా', 'ta-IN': 'புதிய', 'kn-IN': 'ತಾಜಾ', 'ml-IN': 'ഫ്രഷ്', 'bn-IN': 'তাজা' },
+    'Pure': { 'hi-IN': 'शुद्ध', 'te-IN': 'స్వచ్ఛమైన', 'ta-IN': 'தூய', 'kn-IN': 'ಶುದ್ಧ' },
+    'Milk': { 'hi-IN': 'दूध', 'te-IN': 'పాలు', 'ta-IN': 'பால்', 'kn-IN': 'ಹಾಲು', 'ml-IN': 'പാൽ' },
+    'Water': { 'hi-IN': 'पानी', 'te-IN': 'నీరు', 'ta-IN': 'தண்ணீர்', 'kn-IN': 'ನೀರು' },
+    'Curd': { 'hi-IN': 'दही', 'te-IN': 'పెరుగు', 'ta-IN': 'தயிர்', 'kn-IN': 'ಮೊಸರು' },
+    'Chicken': { 'hi-IN': 'चिकन', 'te-IN': 'చికెన్', 'ta-IN': 'கோழி', 'kn-IN': 'ಕೋಳಿ' },
+    'Mutton': { 'hi-IN': 'मटन', 'te-IN': 'మటన్', 'ta-IN': 'ஆட்டு இறைச்சி', 'kn-IN': 'ಮೇಕೆ మాంస' },
+    'Eggs': { 'hi-IN': 'अंडे', 'te-IN': 'గుడ్లు', 'ta-IN': 'முட்டைகள்', 'kn-IN': 'ಮೊಟ್ಟೆಗಳು' },
+    'Rice': { 'hi-IN': 'चावल', 'te-IN': 'బియ్యం', 'ta-IN': 'அரிசி', 'kn-IN': 'ಅಕ್ಕಿ' },
+    'Oil': { 'hi-IN': 'तेल', 'te-IN': 'నూనె', 'ta-IN': 'எண்ணெய்', 'kn-IN': 'ಎಣ್ಣೆ' },
+    'Atta': { 'hi-IN': 'आटा', 'te-IN': 'పిండి', 'ta-IN': 'மாவு', 'kn-IN': 'ಹಿಟ್ಟು' },
+    'Cake': { 'hi-IN': 'केक', 'te-IN': 'కేక్', 'ta-IN': 'கேக்', 'kn-IN': 'ಕೇಕ್' },
+    'Sweets': { 'hi-IN': 'मिठाई', 'te-IN': 'మిఠాయిలు', 'ta-IN': 'இனிப்புகள்', 'kn-IN': 'ಸಿಹಿ ತಿಂಡಿಗಳು' },
+    'Vegetables': { 'hi-IN': 'सब्जियां', 'te-IN': 'కూరగాయలు', 'ta-IN': 'காய்கறிகள்', 'kn-IN': 'ತರಕಾರಿಗಳು' },
+    'Tomatoes': { 'hi-IN': 'टमाटर', 'te-IN': 'టమోటాలు', 'ta-IN': 'தக்காளி', 'kn-IN': 'ಟೊಮೆಟೊ' },
+    'Onion': { 'hi-IN': 'प्याज़', 'te-IN': 'ఉల్లిపాయలు', 'ta-IN': 'வெங்காயம்', 'kn-IN': 'ಈರುಳ್ಳಿ' },
+    'Plumber': { 'hi-IN': 'प्लंबर', 'te-IN': 'ప్లంబర్', 'ta-IN': 'பிளம்பர்', 'kn-IN': 'ಪ್ಲಂಬರ್' },
+    'Electrician': { 'hi-IN': 'इलेक्ट्रीशियन', 'te-IN': 'ఎలక్ట్రీషియన్', 'ta-IN': 'எலக்ட்ரீஷியன்', 'kn-IN': 'ಎಲೆಕ್ಟ್ರಿಷಿಯನ್' },
+    'Mechanic': { 'hi-IN': 'मैकेनिक', 'te-IN': 'మెకానిక్', 'ta-IN': 'மெக்கானிக்', 'kn-IN': 'ಮೆಕ್ಯಾನಿಕ್' },
+    'Painter': { 'hi-IN': 'पेंटर', 'te-IN': 'పెయింటర్', 'ta-IN': 'பெயிண்டர்', 'kn-IN': 'ಪೇಂಟರ್' },
+    'Maid': { 'hi-IN': 'कामवाली बाई', 'te-IN': 'ఇంటి పనిమనిషి', 'ta-IN': 'வேலைக்காரர்', 'kn-IN': 'ಕೆಲಸದಾಕೆ' },
+    'Cook': { 'hi-IN': 'रसोइया', 'te-IN': 'వంటమనిషి', 'ta-IN': 'சமையல்காரர்', 'kn-IN': 'ಅಡುಗೆಯವರು' },
+    'Free Delivery': { 'hi-IN': 'मुफ्त डिलीवरी', 'te-IN': 'ఉచిత డెలివరీ', 'ta-IN': 'இலவச டெலிவரி', 'kn-IN': 'ಉಚಿತ ಡೆಲಿವರಿ' },
+    'DISCOUNT': { 'hi-IN': 'छूट', 'te-IN': 'రాయితీ', 'ta-IN': 'தள்ளுபடி', 'kn-IN': 'ರಿಯಾಯಿತಿ' }
+  };
+
+  let translated = text;
+  Object.keys(PHRASE_MAP).forEach((key) => {
+    const replacement = PHRASE_MAP[key]?.[language];
+    if (replacement && translated.includes(key)) {
+      translated = translated.replace(new RegExp(key, 'g'), replacement);
+    }
+  });
+
+  return translated;
+}
+
+export function getLocalizedProductName(name: string, language: LanguageCode): string {
+  if (!name) return '';
+  return translateText(name, language);
+}
+
+export function getLocalizedProductDescription(desc: string, language: LanguageCode): string {
+  if (!desc) return '';
+  return translateText(desc, language);
+}
+
+export function getLocalizedServiceName(name: string, language: LanguageCode): string {
+  if (!name) return '';
+  return translateText(name, language);
+}
+
+export function getLocalizedServiceDescription(desc: string, language: LanguageCode): string {
+  if (!desc) return '';
+  return translateText(desc, language);
+}
+
+
 

@@ -63,7 +63,7 @@ import {
 import { useFirebase } from '../contexts/FirebaseContext';
 import { useTranslation } from '../i18n';
 import { VendorProfile, Product, VendorOrder, SupportMessage, LanguageCode } from '../types';
-import { LANGUAGES } from '../constants';
+import { LANGUAGES, CATEGORIES } from '../constants';
 import JoiningLetter from './JoiningLetter';
 import LanguageSelectorModal from './common/LanguageSelectorModal';
 import { getLocalizedVendorContent, getLocalizedCategoryName } from '../utils/localizedContent';
@@ -647,7 +647,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
               if (Notification.permission === "granted") {
                 new Notification("💰 Payout Cycle Settled!", {
                   body: `Congratulations! A settlement payout of ₹${amountSettle} has been successfully credited.`,
-                  icon: '/src/assets/images/lokal_bharath_logo_1777014931353.png'
+                  icon: '/src/assets/images/local_bandi_logo_1785784124975.jpg'
                 });
               } else {
                 // Safe alert backup
@@ -2891,21 +2891,9 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                      <div className="space-y-1">
                         <label className="text-[9px] font-black uppercase tracking-widest text-gray-400 ml-2">Category</label>
                         <select name="category" className="w-full bg-gray-50 px-6 h-14 rounded-2xl font-bold text-sm outline-none focus:border-yellow-400 border-2 border-transparent transition-all appearance-none cursor-pointer">
-                           <option value="groceries">Groceries</option>
-                           <option value="vegetables">Vegetables</option>
-                           <option value="fruits">Fruits</option>
-                           <option value="dairy">Dairy & Eggs</option>
-                           <option value="snacks">Snacks & Drinks</option>
-                           <option value="meat">Meat & Fish</option>
-                           <option value="bakery">Bakery</option>
-                           <option value="pharmacy">Pharmacy</option>
-                           <option value="household">Household Essentials</option>
-                           <option value="electronics">Electronics</option>
-                           <option value="services">Home Services</option>
-                           <option value="travel">Travel & Transport</option>
-                           <option value="emergency">Emergency Help</option>
-                           <option value="marriage">Marriage Bureau</option>
-                           <option value="events">Events & Decor</option>
+                           {CATEGORIES.map((cat) => (
+                              <option key={cat.id} value={cat.id}>{cat.name}</option>
+                           ))}
                         </select>
                      </div>
                   </div>
@@ -3042,21 +3030,9 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                      <div className="space-y-1">
                         <label className="text-[9px] font-black uppercase tracking-widest text-gray-400 ml-2">Category</label>
                         <select name="category" defaultValue={editingProduct.category} className="w-full bg-gray-50 px-6 h-14 rounded-2xl font-bold text-sm outline-none appearance-none cursor-pointer">
-                           <option value="groceries">Groceries</option>
-                           <option value="vegetables">Vegetables</option>
-                           <option value="fruits">Fruits</option>
-                           <option value="dairy">Dairy & Eggs</option>
-                           <option value="snacks">Snacks & Drinks</option>
-                           <option value="meat">Meat & Fish</option>
-                           <option value="bakery">Bakery</option>
-                           <option value="pharmacy">Pharmacy</option>
-                           <option value="household">Household Essentials</option>
-                           <option value="electronics">Electronics</option>
-                           <option value="services">Home Services</option>
-                           <option value="travel">Travel & Transport</option>
-                           <option value="emergency">Emergency Help</option>
-                           <option value="marriage">Marriage Bureau</option>
-                           <option value="events">Events & Decor</option>
+                           {CATEGORIES.map((cat) => (
+                              <option key={cat.id} value={cat.id}>{cat.name}</option>
+                           ))}
                         </select>
                      </div>
                   </div>

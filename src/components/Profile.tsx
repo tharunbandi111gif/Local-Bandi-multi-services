@@ -599,6 +599,7 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
       }
     },
     { icon: Package, label: t.myOrders, sub: 'View order history', onClick: () => onNavigate('orders') },
+    { icon: ListTodo, label: 'Task List', sub: 'Create and manage local work tasks', onClick: () => onNavigate('tasks') },
     { icon: MapPin, label: t.savedAddresses, sub: `${addresses.length} Addresses saved`, onClick: () => setView('addresses') },
     { icon: Wallet, label: t.lokalWallet, sub: `Balance: ₹${walletBalance}`, onClick: () => setView('wallet') },
     { icon: Gift, label: t.referAndEarn, sub: 'Get ₹15 for every friend', onClick: () => setView('refer') },

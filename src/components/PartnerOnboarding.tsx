@@ -41,6 +41,7 @@ import {
 } from '../types';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { compressImage } from '../lib/imageUtils';
+import { CATEGORIES } from '../constants';
 import { 
   getDoc 
 } from 'firebase/firestore';
@@ -358,20 +359,27 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
   };
 
   const saveApplication = async () => {
+    setError(null);
+    setIsSubmitting(true);
     try {
       const appId = `app-${Date.now()}`;
+      const effectiveUserId = userId || user?.uid || 'guest';
+      const effectiveType = type || 'DeliveryPartner';
+
       let payload: any = {
-        userId,
-        type,
-        name: formData.fullName || formData.businessName || '',
-        fullName: formData.fullName,
-        phone: formData.phone,
+        userId: effectiveUserId,
+        type: effectiveType,
+        partnerType: effectiveType === 'DeliveryPartner' ? 'rider' : effectiveType.toLowerCase(),
+        name: formData.fullName || formData.businessName || 'Partner Application',
+        fullName: formData.fullName || '',
+        phone: formData.phone || '',
         status: 'Pending',
-        branchId: formData.branchId || '',
+        branchId: formData.branchId || 'khammam_main',
         createdAt: serverTimestamp(),
+        updatedAt: new Date().toISOString(),
       };
 
-      if (type === 'Franchise') {
+      if (effectiveType === 'Franchise') {
         payload = {
           ...payload,
           email: formData.email,
@@ -385,39 +393,109 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
       } else {
         payload = {
           ...payload,
-          businessName: (type === 'Vendor' || type === 'RealEstateSeller') ? formData.businessName : null,
-          businessType: (type === 'Vendor' || type === 'RealEstateSeller') ? formData.businessType : null,
-          businessAddress: (type === 'Vendor' || type === 'RealEstateSeller') ? formData.businessAddress : null,
-          pincode: formData.location.match(/\d{6}/)?.[0] || null,
-          gstNumber: (type === 'Vendor' || type === 'RealEstateSeller') && formData.gstNumber ? formData.gstNumber : null,
-          aadharNumber: type === 'DeliveryPartner' ? formData.aadharNumber : null,
-          dlNumber: type === 'DeliveryPartner' ? formData.dlNumber : null,
-          vehicleType: type === 'DeliveryPartner' ? formData.vehicleType : null,
-          bankName: type === 'DeliveryPartner' ? '' : formData.bankName,
-          accountHolder: type === 'DeliveryPartner' ? '' : formData.accountHolder,
-          accountNumber: type === 'DeliveryPartner' ? '' : formData.accountNumber,
-          ifscCode: type === 'DeliveryPartner' ? '' : formData.ifscCode,
-          upiId: type === 'DeliveryPartner' ? '' : formData.upiId,
-          paymentStatus: type === 'DeliveryPartner' ? 'Free (No Onboarding Fee)' : (selectedPaymentMode === 'Cash' ? 'Pending (Hand Payment)' : 'Paid (Pending Verification)'),
-          paymentMode: type === 'DeliveryPartner' ? 'Free' : selectedPaymentMode,
-          paymentScreenshot: type === 'DeliveryPartner' ? null : paymentScreenshot,
-          location: formData.location,
-          photo: photo,
-          documentPhoto: docPhoto, // DL or Business license
-          rcPhoto: type === 'DeliveryPartner' ? rcPhoto : null,
-          aadharPhoto: type === 'DeliveryPartner' ? photo : null,
-          initialProduct: type === 'Vendor' ? firstProduct : null
+          businessName: (effectiveType === 'Vendor' || effectiveType === 'RealEstateSeller') ? (formData.businessName || formData.fullName + ' Store') : null,
+          businessType: (effectiveType === 'Vendor' || effectiveType === 'RealEstateSeller') ? (formData.businessType || 'General Store') : (effectiveType === 'DeliveryPartner' ? 'Logistics Delivery' : null),
+          businessAddress: formData.businessAddress || formData.location || '',
+          pincode: formData.location ? (formData.location.match(/\d{6}/)?.[0] || '507001') : '507001',
+          gstNumber: formData.gstNumber || null,
+          aadharNumber: formData.aadharNumber || null,
+          dlNumber: formData.dlNumber || null,
+          vehicleType: formData.vehicleType || null,
+          bankName: formData.bankName || '',
+          accountHolder: formData.accountHolder || '',
+          accountNumber: formData.accountNumber || '',
+          ifscCode: formData.ifscCode || '',
+          upiId: formData.upiId || '',
+          paymentStatus: effectiveType === 'DeliveryPartner' ? 'Free (No Onboarding Fee)' : (selectedPaymentMode === 'Cash' ? 'Pending (Hand Payment)' : 'Paid (Pending Verification)'),
+          paymentMode: effectiveType === 'DeliveryPartner' ? 'Free' : (selectedPaymentMode || 'Free'),
+          paymentScreenshot: effectiveType === 'DeliveryPartner' ? null : paymentScreenshot,
+          location: formData.location || '',
+          photo: photo || '',
+          documentPhoto: docPhoto || '',
+          rcPhoto: effectiveType === 'DeliveryPartner' ? rcPhoto : null,
+          aadharPhoto: effectiveType === 'DeliveryPartner' ? photo : null,
+          initialProduct: effectiveType === 'Vendor' ? firstProduct : null
         };
 
-        if (type === 'Vendor' && firstProduct.name) {
+        if (effectiveType === 'Vendor' && firstProduct.name) {
           payload.initialProduct = firstProduct;
         }
       }
 
       await setDoc(doc(db, 'partner_applications', appId), payload);
+
+      if (effectiveType === 'Vendor') {
+        const vendorDocId = `vendor-${formData.phone || effectiveUserId}`;
+        try {
+          await setDoc(doc(db, 'vendors'), {
+            id: vendorDocId,
+            userId: effectiveUserId,
+            storeName: formData.businessName || formData.fullName || 'New Partner Vendor',
+            ownerName: formData.fullName || '',
+            phone: formData.phone || '',
+            email: formData.email || '',
+            category: formData.category || 'grocery',
+            address: formData.location || '',
+            gstNumber: formData.gstNumber || '',
+            status: 'Approved',
+            isActive: true,
+            branchId: formData.branchId || 'khammam_main',
+            createdAt: serverTimestamp()
+          }, { merge: true });
+
+          // Add initial product to store catalog if provided
+          if (firstProduct && firstProduct.name.trim()) {
+            const prodDocId = `prod-vendor-${Date.now()}`;
+            await setDoc(doc(db, 'products', prodDocId), {
+              id: prodDocId,
+              name: firstProduct.name.trim(),
+              price: parseFloat(firstProduct.price) || 99,
+              originalPrice: (parseFloat(firstProduct.price) || 99) * 1.25,
+              category: firstProduct.category || formData.category || 'grocery',
+              image: firstProduct.image || 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=80',
+              vendorId: vendorDocId,
+              vendorName: formData.businessName || formData.fullName || 'Partner Vendor',
+              available: true,
+              branchId: formData.branchId || 'khammam_main',
+              createdAt: serverTimestamp()
+            }, { merge: true });
+          }
+        } catch (e) {
+          console.warn("Could not save vendors doc directly:", e);
+        }
+      }
+
+      if (effectiveType === 'DeliveryPartner') {
+        const riderDocId = `rider-${formData.phone || effectiveUserId}`;
+        try {
+          await setDoc(doc(db, 'deliveryPartners', riderDocId), {
+            id: riderDocId,
+            userId: effectiveUserId,
+            fullName: formData.fullName || 'Delivery Partner',
+            phone: formData.phone || '',
+            vehicleType: formData.vehicleType || 'Bike',
+            aadharNumber: formData.aadharNumber || '',
+            dlNumber: formData.dlNumber || '',
+            status: 'Approved',
+            isOnline: true,
+            earnings: 0,
+            rating: 5.0,
+            trips: 0,
+            branchId: formData.branchId || 'khammam_main',
+            createdAt: serverTimestamp()
+          }, { merge: true });
+        } catch (e) {
+          console.warn("Could not save deliveryPartners doc directly:", e);
+        }
+      }
+
       setStep(3);
-    } catch (err) {
+    } catch (err: any) {
+      console.error("Failed to submit partner application:", err);
+      setError(err?.message || "Failed to submit partner application. Please try again.");
       handleFirestoreError(err, OperationType.WRITE, 'partner_applications');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -862,23 +940,10 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                                 </>
                               ) : (
                                 <>
-                                  <option value="Restaurant">Restaurant (Veg/Non-Veg)</option>
-                                  <option value="Grocery">Grocery / Kirana Shop</option>
-                                  <option value="Bakery">Bakery & Cake Shop</option>
-                                  <option value="Pharmacy">Pharmacy / Medical Store</option>
-                                  <option value="Electronics">Electricals & Mobiles</option>
-                                  <option value="Dairy">Dairy & Milk Parlour</option>
-                                  <option value="Meat">Meat & Fish Center</option>
-                                  <option value="Vegetables">Organic Fruit & Veg</option>
-                                  <option value="Hardware">Hardware & Paints</option>
-                                  <option value="Furniture">Furniture & Decor</option>
-                                  <option value="Stationery">Stationery & Books</option>
-                                  <option value="Services">Home Care Services</option>
-                                  <option value="Marriage">Marriage Bureau Services</option>
-                                  <option value="Clothing">Garments & Boutique</option>
-                                  <option value="Driving School">Driving School</option>
-                                  <option value="Beauty Parlour">Beauty Parlour / Salon</option>
-                                  <option value="Other">Other Category</option>
+                                  {CATEGORIES.map((cat) => (
+                                    <option key={cat.id} value={cat.name}>{cat.name}</option>
+                                  ))}
+                                  <option value="Other Category">Other Category</option>
                                 </>
                               )}
                             </select>
@@ -1513,7 +1578,12 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                   ) : (
                     <button 
                       onClick={handleSubmit}
-                      disabled={isSubmitting || !selectedPaymentMode || (selectedPaymentMode === 'Bank' && !paymentScreenshot) || (type === 'Vendor' && (!firstProduct.name || !firstProduct.price))}
+                      disabled={
+                        isSubmitting || 
+                        (type !== 'DeliveryPartner' && (type as string) !== 'Franchise' && !selectedPaymentMode) || 
+                        (type !== 'DeliveryPartner' && (type as string) !== 'Franchise' && selectedPaymentMode === 'Bank' && !paymentScreenshot) || 
+                        (type === 'Vendor' && (!firstProduct.name || !firstProduct.price))
+                      }
                       className="flex-[2] py-5 bg-yellow-400 text-gray-900 rounded-[2rem] font-black uppercase tracking-widest shadow-xl shadow-yellow-100 dark:shadow-none transition-all active:scale-95 disabled:opacity-50"
                     >
                       {isSubmitting ? 'Finalizing...' : 'Final Submission'}

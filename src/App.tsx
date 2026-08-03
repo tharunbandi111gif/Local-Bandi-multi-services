@@ -63,7 +63,7 @@ function AppModeSelector({ onSelect }: { onSelect: (mode: 'customer' | 'partner'
           className="space-y-3"
         >
           <div className="w-20 h-20 bg-white rounded-[2.2rem] flex items-center justify-center mx-auto shadow-2xl shadow-yellow-500/10 border-4 border-slate-900 overflow-hidden relative" id="app_mode_logo">
-            <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
+            <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover" alt="Local Bandi Logo" />
           </div>
           <p className="text-[10px] font-black tracking-[0.25em] uppercase text-yellow-500">Local Bandi Multi Services</p>
           <h1 className="text-3xl font-black italic tracking-tighter leading-none text-white uppercase sm:text-4xl">Platform Entry</h1>
@@ -777,8 +777,8 @@ function AppContent() {
   useEffect(() => {
     if (!db || !currentBranchId) return;
 
-    // Fetch cloud inventory for BOTH products and services
-    const productsQ = query(collection(db, 'products'), where('branchId', '==', currentBranchId), limit(100));
+    // Fetch cloud inventory for BOTH products and services across categories
+    const productsQ = query(collection(db, 'products'), limit(500));
     const unsub = onSnapshot(productsQ, (snap) => {
       const cloudItems = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product | Service));
       
@@ -788,13 +788,17 @@ function AppContent() {
       
       // 1. Add hardcoded items that are either global or match current branch
       [...PRODUCTS, ...SERVICES].forEach(item => {
-        if (!item.branchId || item.branchId === currentBranchId) {
+        if (!item.branchId || item.branchId === currentBranchId || currentBranchId === 'khammam_main') {
           merged.set(item.id, item);
         }
       });
 
-      // 2. Overwrite with real database items (takes precedence)
-      cloudItems.forEach(item => merged.set(item.id, item));
+      // 2. Overwrite with real database items saved in categories (takes precedence)
+      cloudItems.forEach(item => {
+        if (!item.branchId || item.branchId === currentBranchId || currentBranchId === 'khammam_main') {
+          merged.set(item.id, item);
+        }
+      });
       
       setLocalInventory(Array.from(merged.values()));
     }, err => {

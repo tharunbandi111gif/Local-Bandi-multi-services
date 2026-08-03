@@ -7,7 +7,8 @@ import {
   FileText, LogOut, ArrowRight, Activity, 
   BarChart2, RefreshCw, Send, DollarSign, 
   Heart, Building, Percent, Power, Laptop, ShieldCheck,
-  Star, Check, X, Shield, Globe, AlertCircle, Home
+  Star, Check, X, Shield, Globe, AlertCircle, Home,
+  Zap, Award, RotateCcw, Sparkles, Timer, Gift, Trophy
 } from 'lucide-react';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -21,6 +22,7 @@ import { SafeZone } from './common/SafeZone';
 import { CATEGORIES, PRODUCTS } from '../constants';
 import LogisticsHeatmap from './LogisticsHeatmap';
 import OrderTrendsChart from './OrderTrendsChart';
+import { getStoredQuizQuestions, DEFAULT_LOW_PRICE_QUIZ_QUESTIONS, QuizQuestion } from './MarketingQuizModal';
 
 export default function AdminPortal() {
   const { user, login, logout, userProfile, isSuperAdmin: isFbSuperAdmin } = useFirebase();
@@ -49,7 +51,22 @@ export default function AdminPortal() {
 
   const [adminPasscode, setAdminPasscode] = useState('');
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'ai_desk' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'ai_desk' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz'>('dashboard');
+
+  // --- QUIZ & TRIVIA CONTROL STATES ---
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>(() => getStoredQuizQuestions());
+  const [showQuizModal, setShowQuizModal] = useState(false);
+  const [editingQuizQuestion, setEditingQuizQuestion] = useState<QuizQuestion | null>(null);
+  const [quizForm, setQuizForm] = useState({
+    question: '',
+    optA: '',
+    optB: '',
+    optC: '',
+    optD: '',
+    correctIndex: 0,
+    explanation: '',
+    category: 'Low Price Grocery'
+  });
 
   // --- LOGISTICS HUB STATES ---
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -1372,6 +1389,108 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     }
   };
 
+  // --- 40-SEC SPEED QUIZ & TRIVIA CRUD HANDLERS ---
+  const handleSaveQuizQuestion = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quizForm.question.trim() || !quizForm.optA.trim() || !quizForm.optB.trim()) {
+      alert("Please provide the question and at least 2 options!");
+      return;
+    }
+
+    const options = [
+      quizForm.optA.trim(), 
+      quizForm.optB.trim(), 
+      quizForm.optC.trim(), 
+      quizForm.optD.trim()
+    ].filter(Boolean);
+
+    let updated: QuizQuestion[] = [];
+    if (editingQuizQuestion) {
+      updated = quizQuestions.map(q => q.id === editingQuizQuestion.id ? {
+        ...q,
+        question: quizForm.question.trim(),
+        options,
+        correctIndex: Number(quizForm.correctIndex),
+        explanation: quizForm.explanation.trim() || 'Verified answer',
+        category: quizForm.category.trim() || 'Low Price Trivia'
+      } : q);
+      triggerToast('✓ Quiz Question Updated Successfully!');
+    } else {
+      const newId = Date.now();
+      const newQ: QuizQuestion = {
+        id: newId,
+        question: quizForm.question.trim(),
+        options,
+        correctIndex: Number(quizForm.correctIndex),
+        explanation: quizForm.explanation.trim() || 'Verified answer',
+        category: quizForm.category.trim() || 'Low Price Trivia'
+      };
+      updated = [...quizQuestions, newQ];
+      triggerToast('✓ New Quiz Question Created Successfully!');
+    }
+
+    setQuizQuestions(updated);
+    localStorage.setItem('custom_quiz_questions', JSON.stringify(updated));
+    window.dispatchEvent(new Event('quiz_questions_updated'));
+
+    try {
+      setDoc(doc(db, 'settings', 'quiz_config'), { questions: updated, updatedAt: new Date().toISOString() });
+    } catch (err) {
+      console.warn("Firestore quiz sync info:", err);
+    }
+
+    setShowQuizModal(false);
+    setEditingQuizQuestion(null);
+    setQuizForm({ question: '', optA: '', optB: '', optC: '', optD: '', correctIndex: 0, explanation: '', category: 'Low Price Grocery' });
+  };
+
+  const handleOpenEditQuizQuestion = (q: QuizQuestion) => {
+    setEditingQuizQuestion(q);
+    setQuizForm({
+      question: q.question,
+      optA: q.options[0] || '',
+      optB: q.options[1] || '',
+      optC: q.options[2] || '',
+      optD: q.options[3] || '',
+      correctIndex: q.correctIndex,
+      explanation: q.explanation,
+      category: q.category
+    });
+    setShowQuizModal(true);
+  };
+
+  const handleDeleteQuizQuestion = (id: number) => {
+    if (!confirm('Permanently delete this quiz question?')) return;
+    const updated = quizQuestions.filter(q => q.id !== id);
+    setQuizQuestions(updated);
+    localStorage.setItem('custom_quiz_questions', JSON.stringify(updated));
+    window.dispatchEvent(new Event('quiz_questions_updated'));
+
+    try {
+      setDoc(doc(db, 'settings', 'quiz_config'), { questions: updated, updatedAt: new Date().toISOString() });
+    } catch (err) {
+      console.warn("Firestore quiz delete sync info:", err);
+    }
+
+    triggerToast('✓ Quiz question deleted');
+  };
+
+  const handleResetQuizQuestions = () => {
+    if (!confirm('Reset quiz to default low-price product information questions?')) return;
+    const defaults = DEFAULT_LOW_PRICE_QUIZ_QUESTIONS;
+    setQuizQuestions(defaults);
+    localStorage.setItem('custom_quiz_questions', JSON.stringify(defaults));
+    window.dispatchEvent(new Event('quiz_questions_updated'));
+
+    try {
+      setDoc(doc(db, 'settings', 'quiz_config'), { questions: defaults, updatedAt: new Date().toISOString() });
+    } catch (err) {
+      console.warn("Firestore quiz reset sync info:", err);
+    }
+
+    triggerToast('✓ Reset quiz questions to default low-price product trivia.');
+  };
+
   const handleSavePromo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!promoForm.code.trim() || !promoForm.value) return;
@@ -2080,7 +2199,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       <div className="bg-slate-900/90 border-b border-white/5 backdrop-blur-md p-6 flex flex-col sm:flex-row items-center justify-between gap-4 sticky top-0 z-40">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 bg-white rounded-2xl flex items-center justify-center border border-white/10 overflow-hidden">
-            <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
+            <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover" alt="Local Bandi Logo" />
           </div>
           <div>
             <h1 className="text-sm font-black tracking-tight leading-none uppercase">Master Admin Console</h1>
@@ -2089,7 +2208,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {['dashboard', 'ai_desk', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals'].map((tab) => {
+          {['dashboard', 'ai_desk', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz'].map((tab) => {
             const isPendingSupport = tab === 'support' && complaints.some(c => c.status === 'Pending');
             return (
               <button
@@ -2098,12 +2217,14 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
                 className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all relative flex items-center gap-1.5 cursor-pointer ${
                   activeTab === tab 
                     ? 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20 font-extrabold border border-yellow-300' 
-                    : tab === 'ai_desk'
-                      ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
-                      : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
+                    : tab === 'quiz'
+                      ? 'bg-amber-950/40 text-amber-400 border border-amber-500/30 font-bold hover:bg-amber-950/60'
+                      : tab === 'ai_desk'
+                        ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
+                        : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
                 }`}
               >
-                <span>{tab === 'ai_desk' ? '🧠 AI Developer Desk' : tab}</span>
+                <span>{tab === 'quiz' ? '⚡ 40s Quiz' : tab === 'ai_desk' ? '🧠 AI Developer Desk' : tab}</span>
                 {isPendingSupport && (
                   <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping absolute -top-0.5 -right-0.5" />
                 )}
@@ -6139,6 +6260,168 @@ const reconcileDocSync = async (branchId, docBody) => {
           );
         })()}
 
+        {/* TAB: QUIZ & TRIVIA MANAGEMENT */}
+        {activeTab === 'quiz' && (
+          <div className="space-y-6 text-left">
+            
+            {/* Intro Header */}
+            <div className="relative bg-gradient-to-r from-amber-950/60 via-slate-900 to-slate-900 border border-amber-500/30 p-6 sm:p-8 rounded-[2.5rem] overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative z-10">
+                <div className="space-y-2 max-w-2xl">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-500/10 border border-amber-500/30 rounded-full">
+                    <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                    <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest font-mono">Master Marketing Engine</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-white uppercase tracking-tight flex items-center gap-2">
+                    ⚡ 40s Speed Quiz &amp; Low Price Offer Manager
+                  </h2>
+                  <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                    Master Admin can edit, add, or delete any quiz trivia question. All changes update instantly on the customer app without refresh. Offers are capped strictly under <strong className="text-amber-400">25% OFF</strong> (3/3: 25%, 2/3: 15%, 1/3: 8%) with 100% Cashback Super Coins!
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    onClick={handleResetQuizQuestions}
+                    className="px-4 py-2.5 bg-slate-950 hover:bg-slate-800 text-slate-300 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Reset to default low-price trivia"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Reset Defaults</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setEditingQuizQuestion(null);
+                      setQuizForm({
+                        question: '',
+                        optA: '',
+                        optB: '',
+                        optC: '',
+                        optD: '',
+                        correctIndex: 0,
+                        explanation: '',
+                        category: 'Low Price Grocery'
+                      });
+                      setShowQuizModal(true);
+                    }}
+                    className="px-5 py-2.5 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-slate-950 font-black text-[10px] uppercase tracking-wider rounded-xl shadow-lg shadow-amber-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4 stroke-[3]" />
+                    <span>Add Question</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Stats Highlights */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-6 border-t border-white/10">
+                <div className="bg-slate-950/80 p-3 rounded-2xl border border-white/5">
+                  <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-widest block font-mono">Timer Limit</span>
+                  <span className="text-lg font-black text-amber-400 font-mono">40 Seconds</span>
+                </div>
+                <div className="bg-slate-950/80 p-3 rounded-2xl border border-white/5">
+                  <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-widest block font-mono">Max Offer Tier</span>
+                  <span className="text-lg font-black text-emerald-400 font-mono">25% OFF</span>
+                </div>
+                <div className="bg-slate-950/80 p-3 rounded-2xl border border-white/5">
+                  <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-widest block font-mono">Reward Coins</span>
+                  <span className="text-lg font-black text-yellow-400 font-mono">100% Cashback</span>
+                </div>
+                <div className="bg-slate-950/80 p-3 rounded-2xl border border-white/5">
+                  <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-widest block font-mono">Active Questions</span>
+                  <span className="text-lg font-black text-indigo-400 font-mono">{quizQuestions.length} Questions</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Questions Card List */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  Active Quiz Question Pool ({quizQuestions.length})
+                </h3>
+              </div>
+
+              {quizQuestions.length === 0 ? (
+                <div className="text-center py-16 bg-slate-900 rounded-[2rem] border border-dashed border-white/10 p-6">
+                  <HelpCircle className="w-10 h-10 text-slate-700 mx-auto mb-2" />
+                  <p className="text-xs font-black text-slate-400 uppercase">No quiz questions configured</p>
+                  <p className="text-[10.5px] text-slate-500 mt-1">Click "Add Question" or "Reset Defaults" to load questions.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {quizQuestions.map((q, idx) => (
+                    <div key={q.id || idx} className="bg-slate-900 border border-white/10 p-5 rounded-[2rem] space-y-3 relative group hover:border-amber-500/40 transition-all flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="px-2.5 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[9px] font-black uppercase font-mono">
+                            Q#{idx + 1} &bull; {q.category || 'Low Price Trivia'}
+                          </span>
+                          <span className="text-[9px] font-mono text-slate-500">ID: {q.id}</span>
+                        </div>
+
+                        <h4 className="text-sm font-extrabold text-white leading-snug">
+                          {q.question}
+                        </h4>
+
+                        {/* Options List */}
+                        <div className="grid grid-cols-2 gap-1.5 pt-1">
+                          {q.options.map((opt, oIdx) => {
+                            const isCorrect = oIdx === q.correctIndex;
+                            return (
+                              <div
+                                key={oIdx}
+                                className={`p-2 rounded-xl text-[11px] font-medium border flex items-center gap-1.5 ${
+                                  isCorrect 
+                                    ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300 font-bold' 
+                                    : 'bg-slate-950 border-white/5 text-slate-400'
+                                }`}
+                              >
+                                <span className={`w-4 h-4 rounded-full text-[9px] font-black flex items-center justify-center shrink-0 ${isCorrect ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'}`}>
+                                  {String.fromCharCode(65 + oIdx)}
+                                </span>
+                                <span className="truncate">{opt}</span>
+                                {isCorrect && <Check className="w-3.5 h-3.5 text-emerald-400 ml-auto shrink-0" />}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {q.explanation && (
+                          <div className="p-2.5 bg-slate-950 rounded-xl border border-white/5 text-[10px] text-slate-400 leading-relaxed italic">
+                            💡 <strong className="text-slate-300 font-bold">Explanation:</strong> {q.explanation}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Card Actions */}
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/5">
+                        <button
+                          onClick={() => handleOpenEditQuizQuestion(q)}
+                          className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 text-slate-300 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit2 className="w-3 h-3 text-amber-400" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteQuizQuestion(q.id)}
+                          className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/20 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
       </div>
 
       {/* Standalone footer layout */}
@@ -7634,6 +7917,138 @@ const reconcileDocSync = async (branchId, docBody) => {
                     Save Changes
                   </button>
                 </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* QUIZ QUESTION ADD / EDIT MODAL */}
+      <AnimatePresence>
+        {showQuizModal && (
+          <div className="fixed inset-0 z-[10009] flex items-center justify-center p-6 bg-slate-950/85 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-slate-900 border border-amber-500/30 rounded-[2.5rem] p-6 max-w-lg w-full space-y-5 text-white shadow-2xl overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2.5 text-left">
+                  <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                    <Zap className="w-5 h-5 fill-amber-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-tight text-white">
+                      {editingQuizQuestion ? 'Edit Quiz Question' : 'Create 40s Quiz Question'}
+                    </h3>
+                    <p className="text-[10px] text-slate-400">Targeting low-price product information &amp; offers</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowQuizModal(false)}
+                  className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveQuizQuestion} className="space-y-4 text-left">
+                
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                    Category Tag
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={quizForm.category}
+                    onChange={(e) => setQuizForm({...quizForm, category: e.target.value})}
+                    placeholder="e.g. Low Price Grocery, Bike Taxi, Repair Services"
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-amber-400 outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                    Question Text
+                  </label>
+                  <textarea
+                    required
+                    rows={2}
+                    value={quizForm.question}
+                    onChange={(e) => setQuizForm({...quizForm, question: e.target.value})}
+                    placeholder="e.g. What is the starting price for 1 Liter Pure Milk on Local Bandi?"
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-amber-400 outline-none"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                    Answer Options &amp; Select Correct Option
+                  </label>
+
+                  <div className="space-y-2">
+                    {[
+                      { label: 'Option A', key: 'optA', index: 0 },
+                      { label: 'Option B', key: 'optB', index: 1 },
+                      { label: 'Option C', key: 'optC', index: 2 },
+                      { label: 'Option D', key: 'optD', index: 3 }
+                    ].map((opt) => (
+                      <div key={opt.key} className="flex items-center gap-2 bg-slate-950 p-2 rounded-xl border border-white/5">
+                        <input
+                          type="radio"
+                          name="correctOption"
+                          checked={Number(quizForm.correctIndex) === opt.index}
+                          onChange={() => setQuizForm({...quizForm, correctIndex: opt.index})}
+                          className="w-4 h-4 accent-amber-400 cursor-pointer"
+                        />
+                        <span className="text-[10px] font-mono font-bold text-amber-400 shrink-0 w-14">
+                          {opt.label}:
+                        </span>
+                        <input
+                          type="text"
+                          required={opt.index < 2}
+                          value={(quizForm as any)[opt.key]}
+                          onChange={(e) => setQuizForm({...quizForm, [opt.key]: e.target.value})}
+                          placeholder={`Enter ${opt.label} text`}
+                          className="flex-1 bg-slate-900 border border-white/10 p-2 rounded-lg text-xs font-medium text-white outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-slate-400 italic">Select the radio button next to the correct answer.</p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                    Explanation / Facts Info (Shown after answer)
+                  </label>
+                  <input
+                    type="text"
+                    value={quizForm.explanation}
+                    onChange={(e) => setQuizForm({...quizForm, explanation: e.target.value})}
+                    placeholder="e.g. Pure fresh milk starting at ₹28 only with daily morning delivery!"
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-medium text-slate-200 outline-none focus:border-amber-400"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowQuizModal(false)}
+                    className="flex-1 py-3 bg-slate-950 text-slate-400 border border-white/5 rounded-xl font-black uppercase text-[10px] tracking-widest cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-slate-950 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-amber-500/20 cursor-pointer"
+                  >
+                    {editingQuizQuestion ? 'Save Changes' : 'Create Question'}
+                  </button>
+                </div>
+
               </form>
             </motion.div>
           </div>

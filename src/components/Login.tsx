@@ -265,7 +265,7 @@ export default function Login({ onLogin }: LoginProps) {
     <div className="h-full w-full bg-white px-8 pt-10 pb-10 flex flex-col">
       <div className="flex-1">
         <div className="flex items-center justify-between mb-8">
-          <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-20 h-20 object-contain" alt="Logo" />
+          <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-20 h-20 object-contain" alt="Logo" />
           <div className="flex gap-1 p-1 bg-gray-100 rounded-xl">
              <button 
               onClick={() => setLoginMethod('otp')}

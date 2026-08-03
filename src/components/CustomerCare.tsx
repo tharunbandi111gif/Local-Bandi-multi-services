@@ -435,76 +435,76 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
             className="relative bg-white dark:bg-slate-900 w-full h-full flex flex-col shadow-2xl overflow-hidden transition-all duration-500"
           >
             {/* Header */}
-            <div className="px-8 pt-10 pb-6 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 shrink-0 border-b border-gray-50 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-10 animate-fade-in">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 bg-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-xl shadow-indigo-200 dark:shadow-none">
-                  <HeartHandshake className="w-7 h-7" />
+            <div className="px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-3 shrink-0 border-b border-gray-100 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md sticky top-0 z-10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-md shadow-indigo-200 dark:shadow-none">
+                  <HeartHandshake className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter transition-colors">Local Bandi Care</h3>
-                  <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-black text-gray-900 dark:text-white italic tracking-tighter">Local Bandi Care</h3>
+                  <div className="flex items-center gap-1.5">
                     <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                    <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider transition-colors">Founder Support Desk • Live Online</p>
+                    <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Founder Support Desk • Live Online</p>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 self-center">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setShowLangModal(true)}
-                  className="flex items-center gap-1.5 px-3.5 py-2.5 bg-yellow-400/20 hover:bg-yellow-400/30 text-yellow-800 dark:text-yellow-300 border border-yellow-300 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all shrink-0 active:scale-95 shadow-sm cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-400/20 hover:bg-yellow-400/30 text-yellow-800 dark:text-yellow-300 border border-yellow-300 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shrink-0 cursor-pointer"
                   title="Select App Language / 24 Languages"
                 >
-                  <Globe className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+                  <Globe className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
                   <span>{LANGUAGES.find(l => l.code === currentLanguage)?.native || 'Language'}</span>
                 </button>
 
                 {/* View Tabs */}
-                <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-2xl">
-                <button
+                <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setView('faq')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                      view === 'faq' 
+                        ? 'bg-indigo-600 text-white shadow' 
+                        : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                    }`}
+                  >
+                    FAQ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView('chat')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                      view === 'chat' 
+                        ? 'bg-indigo-600 text-white shadow' 
+                        : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                    }`}
+                  >
+                    Live Chat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView('complaints')}
+                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                      view === 'complaints' 
+                        ? 'bg-indigo-600 text-white shadow' 
+                        : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                    }`}
+                  >
+                    Complaints
+                  </button>
+                </div>
+
+                <button 
                   type="button"
-                  onClick={() => setView('faq')}
-                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                    view === 'faq' 
-                      ? 'bg-indigo-600 text-white shadow' 
-                      : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
-                  }`}
+                  onClick={onClose}
+                  className="p-2 bg-gray-100 dark:bg-slate-800 rounded-xl text-gray-400 hover:bg-gray-900 hover:text-white dark:hover:bg-slate-700 transition-all cursor-pointer"
                 >
-                  FAQ Base
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setView('chat')}
-                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                    view === 'chat' 
-                      ? 'bg-indigo-600 text-white shadow' 
-                      : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
-                  }`}
-                >
-                  Live Chat
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setView('complaints')}
-                  className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                    view === 'complaints' 
-                      ? 'bg-indigo-600 text-white shadow' 
-                      : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
-                  }`}
-                >
-                  Order Complaints
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            </div>
-
-              <button 
-                type="button"
-                onClick={onClose}
-                className="p-4 bg-gray-100 dark:bg-slate-800 rounded-2xl text-gray-400 hover:bg-gray-900 hover:text-white dark:hover:bg-slate-700 transition-all active:scale-90 self-end md:self-auto cursor-pointer"
-              >
-                <X className="w-6 h-6" />
-              </button>
             </div>
 
             {/* Type Selector (Only in FAQ) */}
@@ -607,55 +607,62 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                     exit={{ opacity: 0, x: -20 }}
                     className="flex-1 flex flex-col min-h-0 bg-white dark:bg-slate-900 transition-colors shadow-2xl"
                   >
-                    <div className="px-8 py-6 bg-gray-50/50 dark:bg-slate-800/20 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between shrink-0">
-                      <div className="flex items-center gap-4">
-                        <button onClick={() => setView('faq')} className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 active:scale-90 transition-all">
-                          <ChevronRight className="w-5 h-5 text-gray-400 rotate-180" />
+                    <div className="px-4 sm:px-6 py-2.5 bg-gray-50/80 dark:bg-slate-800/40 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between shrink-0">
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setView('faq')} className="p-2 bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 active:scale-90 transition-all cursor-pointer" title="Back to FAQ">
+                          <ChevronRight className="w-4 h-4 text-gray-500 rotate-180" />
                         </button>
                         <div>
-                          <p className="text-sm font-black text-gray-900 dark:text-white italic tracking-tight">Active Resolution Session</p>
-                          <div className="flex items-center gap-2">
+                          <p className="text-xs font-black text-gray-900 dark:text-white italic tracking-tight">Active Resolution Session</p>
+                          <div className="flex items-center gap-1.5">
                              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                             <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Agent Connection Establised</p>
+                             <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Agent Connection Established</p>
                           </div>
                         </div>
                       </div>
-                      <div className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/10 rounded-full flex items-center gap-2">
-                        <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
-                        <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider">End-To-End Protection</span>
+                      <div className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-900/20 rounded-full flex items-center gap-1.5 border border-indigo-100 dark:border-indigo-800/40">
+                        <ShieldCheck className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                        <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-300 uppercase tracking-wider">End-To-End Protected</span>
                       </div>
                     </div>
 
-                    {/* Messages Area */}
-                    <div className="flex-1 overflow-y-auto px-8 sm:px-20 py-8 space-y-8 scrollbar-hide bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] dark:opacity-80">
+                    {/* Messages Area - Expanded for Conversation Space */}
+                    <div className="flex-1 overflow-y-auto px-4 sm:px-12 py-6 space-y-4 bg-slate-50/60 dark:bg-slate-950/80">
                       {messages.map((msg) => (
                         <motion.div 
-                          initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                          initial={{ opacity: 0, scale: 0.97, y: 6 }}
                           animate={{ opacity: 1, scale: 1, y: 0 }}
                           key={msg.id} 
                           className={`flex ${msg.senderType === 'user' ? 'justify-end' : 'justify-start'}`}
                         >
-                          <div className={`flex flex-col ${msg.senderType === 'user' ? 'items-end' : 'items-start'} max-w-[85%] sm:max-w-[65%] space-y-2`}>
-                            <div className={`p-6 rounded-[2.5rem] shadow-xl transition-all ${
+                          <div className={`flex flex-col ${msg.senderType === 'user' ? 'items-end' : 'items-start'} max-w-[92%] sm:max-w-[78%] space-y-1`}>
+                            {/* Sender Label */}
+                            <div className="flex items-center gap-1.5 px-1">
+                              <span className="text-[10px] font-black uppercase text-gray-400 dark:text-gray-500 tracking-wider">
+                                {msg.senderType === 'user' ? (msg.senderName || 'You') : msg.senderType === 'admin' ? 'Support Specialist' : 'Local Bandi Assistant'}
+                              </span>
+                            </div>
+
+                            <div className={`px-4 sm:px-6 py-3 sm:py-3.5 rounded-2xl sm:rounded-3xl shadow-sm transition-all ${
                               msg.senderType === 'user' 
                                 ? 'bg-indigo-600 text-white rounded-br-none shadow-indigo-100/50 dark:shadow-none' 
                                 : msg.senderType === 'admin'
-                                  ? 'bg-yellow-400 text-gray-900 rounded-bl-none shadow-yellow-100 dark:shadow-none'
-                                  : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-200 border border-gray-100 dark:border-slate-700 rounded-bl-none shadow-gray-50/50 dark:shadow-none'
+                                  ? 'bg-amber-400 text-gray-950 rounded-bl-none shadow-amber-100 dark:shadow-none font-medium'
+                                  : 'bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 border border-gray-100 dark:border-slate-700 rounded-bl-none shadow-gray-100/50 dark:shadow-none'
                             }`}>
                               {msg.imageUrl && (
-                                <div className="mb-4 overflow-hidden rounded-2xl border border-white/10 max-w-full">
+                                <div className="mb-3 overflow-hidden rounded-xl border border-black/10 max-w-full">
                                   <img 
                                     src={msg.imageUrl} 
                                     alt="Uploaded Support Proof" 
-                                    className="max-h-64 object-contain mx-auto rounded-xl"
+                                    className="max-h-60 object-contain mx-auto rounded-lg"
                                     referrerPolicy="no-referrer"
                                   />
                                 </div>
                               )}
-                              <p className="text-sm sm:text-base font-bold leading-relaxed">{msg.text}</p>
-                              <div className={`flex items-center gap-1.5 mt-4 opacity-50 ${msg.senderType === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <p className="text-[10px] font-bold uppercase tracking-wider leading-none">
+                              <p className="text-sm sm:text-base font-semibold leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                              <div className={`flex items-center gap-1.5 mt-2 opacity-60 ${msg.senderType === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <p className="text-[9px] font-bold uppercase tracking-wider leading-none">
                                   {msg.timestamp?.toDate ? msg.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
                                    msg.timestamp instanceof Date ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 
                                    new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -668,10 +675,10 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                               <motion.a 
                                 whileTap={{ scale: 0.95 }}
                                 href={`tel:${supportPhone}`}
-                                className="inline-flex items-center gap-3 bg-emerald-500 text-white px-10 py-5 rounded-[2rem] text-xs font-black uppercase tracking-widest shadow-2xl shadow-emerald-500/20"
+                                className="inline-flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider shadow-md hover:bg-emerald-700 transition-all mt-1"
                               >
-                                <Phone className="w-4 h-4" />
-                                Call Founder Directly
+                                <Phone className="w-3.5 h-3.5" />
+                                Call Support ({supportPhone})
                               </motion.a>
                             )}
                           </div>
@@ -680,34 +687,58 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                       <div ref={chatEndRef} />
                     </div>
 
-                    {/* Input Area */}
-                    <div className="px-8 py-10 bg-gray-50 dark:bg-slate-800/30 border-t border-gray-100 dark:border-slate-800 shrink-0">
-                      <div className="max-w-4xl mx-auto space-y-8">
+                    {/* Input Area - Streamlined & Compact */}
+                    <div className="px-4 sm:px-6 py-3 sm:py-4 bg-gray-50 dark:bg-slate-800/40 border-t border-gray-100 dark:border-slate-800 shrink-0">
+                      <div className="max-w-4xl mx-auto space-y-3">
+                        {/* Quick action bar */}
+                        <div className="flex flex-wrap gap-2 items-center justify-between">
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => setShowCallbackPicker(true)}
+                              className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-all shadow-xs cursor-pointer"
+                            >
+                              <Clock className="w-3.5 h-3.5" />
+                              <span>Request Callback</span>
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setShowSupportNumber(true);
+                                handleSendMessage("I want to speak with support now.");
+                              }}
+                              className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/60 rounded-xl flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all shadow-xs cursor-pointer"
+                            >
+                              <Phone className="w-3.5 h-3.5" />
+                              <span>Voice Support</span>
+                            </button>
+                          </div>
+
+                          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 opacity-80">
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                            <p className="text-[10px] font-bold italic text-gray-500 dark:text-gray-400 uppercase tracking-wider">Direct Resolution Channel</p>
+                          </div>
+                        </div>
+
+                        {/* Callback picker popup card */}
                         {showCallbackPicker && (
                           <motion.div 
-                            initial={{ y: 20, opacity: 0 }}
+                            initial={{ y: 10, opacity: 0 }}
                             animate={{ y: 0, opacity: 1 }}
-                            className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-indigo-100 dark:border-indigo-900/30 shadow-2xl flex flex-col gap-6"
+                            className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-indigo-100 dark:border-indigo-900/40 shadow-xl space-y-3"
                           >
-                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-gray-100 dark:border-slate-800 pb-4">
-                              <div className="text-left">
-                                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-1 italic font-mono">Schedule Callback Slot</p>
-                                <h4 className="text-sm font-black text-gray-850 dark:text-white uppercase tracking-tight font-sans">Request phone callback support</h4>
+                            <div className="flex items-center justify-between border-b border-gray-100 dark:border-slate-800 pb-2">
+                              <div>
+                                <p className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest italic font-mono">Schedule Callback Slot</p>
+                                <h4 className="text-xs font-black text-gray-900 dark:text-white uppercase">Hours: 09:20 AM - 05:00 PM Daily</h4>
                               </div>
-                              <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-900/40 px-4 py-2 rounded-xl text-left font-sans shrink-0">
-                                <p className="text-[8px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">Customer Support Hours</p>
-                                <p className="text-xs font-black text-emerald-700 dark:text-emerald-300">09:20 AM to 05:00 PM (Daily)</p>
-                              </div>
+                              <button 
+                                onClick={() => { setShowCallbackPicker(false); setCallbackError(null); }}
+                                className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-white cursor-pointer"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
                             </div>
 
-                            <div className="flex items-center gap-2.5 bg-indigo-50/50 dark:bg-indigo-950/20 p-4 rounded-2xl border border-indigo-100/50 dark:border-indigo-905/30">
-                              <ShieldCheck className="w-5 h-5 text-indigo-600" />
-                              <p className="text-xs text-indigo-700 dark:text-indigo-400 font-bold italic">
-                                ⭐ Your problems are highly valued & will be solved as soon as possible!
-                              </p>
-                            </div>
-
-                            <div className="flex flex-col sm:flex-row items-stretch gap-4">
+                            <div className="flex flex-col sm:flex-row items-stretch gap-2.5">
                               <input 
                                 type="datetime-local" 
                                 value={callbackTime}
@@ -715,99 +746,55 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                                   setCallbackTime(e.target.value);
                                   setCallbackError(null);
                                 }}
-                                className="flex-1 bg-gray-50 dark:bg-slate-800 border-none rounded-2xl p-5 text-sm font-bold outline-none ring-2 ring-transparent focus:ring-indigo-150 dark:focus:ring-indigo-900/50 transition-all dark:text-white"
+                                className="flex-1 bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl p-2.5 text-xs font-bold outline-none dark:text-white"
                               />
-                              <div className="flex gap-3 self-stretch sm:self-auto">
-                                <button 
-                                  onClick={handleRequestCallback}
-                                  className="flex-1 sm:flex-none px-10 py-5 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-indigo-100 dark:shadow-none cursor-pointer"
-                                >
-                                  Confirm
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    setShowCallbackPicker(false);
-                                    setCallbackError(null);
-                                  }}
-                                  className="p-5 bg-gray-100 dark:bg-slate-700 text-gray-400 rounded-2xl cursor-pointer"
-                                >
-                                  <X className="w-5 h-5" />
-                                </button>
-                              </div>
+                              <button 
+                                onClick={handleRequestCallback}
+                                className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-indigo-700 transition-all cursor-pointer"
+                              >
+                                Confirm Slot
+                              </button>
                             </div>
 
                             {callbackError && (
-                              <motion.div 
-                                initial={{ opacity: 0, y: -10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="p-4 bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-2xl text-[10px] font-black text-rose-600 dark:text-rose-400 text-left uppercase leading-relaxed tracking-wider font-mono"
-                              >
+                              <p className="text-[10px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
                                 {callbackError}
-                              </motion.div>
+                              </p>
                             )}
                           </motion.div>
                         )}
 
-                        <div className="flex flex-wrap gap-4 items-center justify-center">
-                          <button 
-                            onClick={() => setShowCallbackPicker(true)}
-                            className="px-8 py-4 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800 rounded-2xl flex items-center justify-center gap-3 text-xs font-bold uppercase tracking-wider hover:bg-emerald-100 transition-all shadow-sm cursor-pointer"
-                          >
-                            <Clock className="w-4 h-4" />
-                            Request Callback
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setShowSupportNumber(true);
-                              handleSendMessage("I want to speak with support now.");
-                            }}
-                            className="px-8 py-4 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-800 rounded-2xl flex items-center justify-center gap-3 text-xs font-bold uppercase tracking-wider hover:bg-indigo-100 transition-all shadow-sm cursor-pointer"
-                          >
-                            <Phone className="w-4 h-4" />
-                            Voice Support
-                          </button>
-                          <div className="p-2 px-6 bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-800 flex items-center gap-3 opacity-80">
-                             <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                             <p className="text-[10px] font-bold italic text-gray-400 dark:text-gray-500 uppercase tracking-widest">Secure Terminal</p>
-                          </div>
-                        </div>
-
                         {/* Screenshot preview attachment */}
                         {selectedImage && (
                           <motion.div 
-                            initial={{ scale: 0.95, opacity: 0 }}
+                            initial={{ scale: 0.98, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
-                            className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-3xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-4"
+                            className="p-3 bg-slate-100 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3"
                           >
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-3">
                               <img 
                                 src={selectedImage} 
-                                alt="Screenshot or photo attachment Preview" 
-                                className="w-16 h-16 object-cover rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md"
+                                alt="Screenshot attachment preview" 
+                                className="w-12 h-12 object-cover rounded-xl border border-slate-300 dark:border-slate-700 shadow-xs"
                                 referrerPolicy="no-referrer"
                               />
                               <div className="text-left font-sans">
-                                 <p className="text-xs font-black text-slate-850 dark:text-white uppercase tracking-widest font-mono">Attachment Upload Active</p>
-                                 <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-extrabold uppercase mt-1">Ready to send with your text</p>
+                                 <p className="text-xs font-bold text-slate-800 dark:text-white uppercase tracking-wider">Attachment Ready</p>
+                                 <p className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">Will send with message</p>
                               </div>
                             </div>
                             <button 
                               type="button"
                               onClick={() => setSelectedImage(null)}
-                              className="px-4 py-2.5 bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 border border-rose-100 dark:border-rose-900/30 rounded-xl text-[9px] font-extrabold uppercase tracking-widest cursor-pointer font-mono"
+                              className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/30 rounded-lg text-[10px] font-bold uppercase tracking-wider cursor-pointer"
                             >
-                              Remove Attachment
+                              Remove
                             </button>
                           </motion.div>
                         )}
-                        {isUploadingImage && (
-                          <div className="text-left text-[10px] text-indigo-600 font-black uppercase tracking-widest animate-pulse font-mono pl-4">
-                             Processing image upload...
-                          </div>
-                        )}
 
-                        <div className="relative group">
-                          {/* Image Attachment Hidden Input Router */}
+                        {/* Text input row */}
+                        <div className="relative flex items-center gap-2">
                           <input 
                             type="file"
                             ref={imageInputRef}
@@ -815,36 +802,38 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                             onChange={handleImageSelect}
                             className="hidden"
                           />
-                          <textarea 
-                            rows={1}
-                            value={message}
-                            onChange={(e) => setMessage(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
-                            placeholder="Message our resolution team..."
-                            className="w-full bg-white dark:bg-slate-900 px-8 py-7 pr-40 rounded-[3rem] font-bold text-lg outline-none border-4 border-transparent focus:border-indigo-50 dark:focus:border-indigo-900/30 transition-all shadow-2xl shadow-gray-100 dark:shadow-none resize-none min-h-[80px] max-h-[250px] dark:text-white font-sans"
-                          />
-                          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                          <div className="flex-1 relative flex items-center">
+                            <textarea 
+                              rows={1}
+                              value={message}
+                              onChange={(e) => setMessage(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
+                              placeholder="Type your message to support..."
+                              className="w-full bg-white dark:bg-slate-900 px-4 py-3 pr-11 rounded-2xl font-medium text-sm sm:text-base outline-none border border-gray-200 dark:border-slate-700 focus:border-indigo-500 dark:focus:border-indigo-500 transition-all shadow-xs resize-none min-h-[46px] max-h-[160px] dark:text-white font-sans"
+                            />
                             <button 
                               type="button"
                               onClick={() => imageInputRef.current?.click()}
-                              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors cursor-pointer ${
+                              title="Attach photo or screenshot"
+                              className={`absolute right-2.5 p-2 rounded-xl transition-colors cursor-pointer ${
                                 selectedImage 
                                   ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400' 
-                                  : 'bg-gray-50 dark:bg-slate-800 text-gray-400 hover:text-indigo-600'
+                                  : 'text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400'
                               }`}
                             >
                               <Camera className="w-5 h-5" />
                             </button>
-                            <button 
-                              onClick={() => handleSendMessage()}
-                              disabled={!message.trim() && !selectedImage}
-                              className="w-16 h-16 bg-indigo-600 text-white rounded-[1.5rem] flex items-center justify-center shadow-2xl shadow-indigo-100 dark:shadow-none active:scale-95 transition-all disabled:opacity-50 disabled:grayscale group-hover:bg-indigo-700 cursor-pointer"
-                            >
-                              <Send className="w-7 h-7" />
-                            </button>
                           </div>
+
+                          <button 
+                            onClick={() => handleSendMessage()}
+                            disabled={!message.trim() && !selectedImage}
+                            className="px-5 py-3 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-bold text-xs uppercase tracking-wider shadow-md hover:bg-indigo-700 active:scale-95 transition-all disabled:opacity-40 cursor-pointer shrink-0"
+                          >
+                            <Send className="w-4 h-4 mr-1.5" />
+                            <span>Send</span>
+                          </button>
                         </div>
-                        <p className="text-center text-[11px] font-bold text-gray-400 uppercase tracking-widest italic">Press Enter to Send • Shift+Enter for new line</p>
                       </div>
                     </div>
                   </motion.div>

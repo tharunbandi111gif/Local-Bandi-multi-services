@@ -21,7 +21,7 @@ export default function Splash({ onFinish }: SplashProps) {
       >
         <div className="relative w-56 h-56 mb-8 mx-auto scale-110">
           <div className="absolute inset-0 bg-white rounded-full shadow-2xl shadow-yellow-200 flex items-center justify-center border-8 border-white overflow-hidden">
-             <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
+             <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover" alt="Local Bandi Logo" />
           </div>
           
           {/* Decorative Elements */}

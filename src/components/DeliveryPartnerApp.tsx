@@ -55,8 +55,10 @@ import {
 } from 'lucide-react';
 import { APIProvider, Map, AdvancedMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import LiveMap, { tileCache } from './LiveMap';
+import { LowConnectivityGuardModal, ProactiveLowSignalAlertBanner } from './LowConnectivityGuard';
 import { AreaChart, Area, XAxis, YAxis, Tooltip as ChartTooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts';
 import { useFirebase } from '../contexts/FirebaseContext';
+import { RiderLevelHeaderBadge, RiderLevelProgressCard, TipTrendDashboardCard } from './RiderLevelAndTipTrend';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
   collection, 
@@ -601,6 +603,7 @@ export default function DeliveryPartnerApp() {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
 
   const [showSyncStatusModal, setShowSyncStatusModal] = useState(false);
+  const [showLowConnectivityGuardModal, setShowLowConnectivityGuardModal] = useState(false);
   const [syncQueueItems, setSyncQueueItems] = useState<any[]>([]);
 
   // Load initial IndexedDB Offline sync count
@@ -2055,7 +2058,7 @@ export default function DeliveryPartnerApp() {
           className="text-center space-y-6"
         >
           <div className="w-24 h-24 bg-white rounded-[2.5rem] flex items-center justify-center mx-auto shadow-2xl shadow-orange-500/20 border-4 border-slate-950 overflow-hidden relative">
-            <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
+            <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover" alt="Local Bandi Logo" />
           </div>
           <div className="space-y-2">
             <span className="text-[10px] font-black tracking-[0.3em] text-amber-500 uppercase">LOKAL BANDI BHARATH</span>
@@ -2498,13 +2501,16 @@ export default function DeliveryPartnerApp() {
           <div className="p-4 flex items-center justify-between w-full">
             <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 bg-white rounded-xl flex items-center justify-center border border-white/10 relative overflow-hidden">
-              <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
+              <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover" alt="Local Bandi Logo" />
               {riderProfile.isOnline && (
                 <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 border border-slate-900 rounded-full animate-ping" />
               )}
             </div>
             <div>
-              <h4 className="text-xs font-black tracking-tight leading-none uppercase">{riderProfile.name}</h4>
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-black tracking-tight leading-none uppercase">{riderProfile.name}</h4>
+                <RiderLevelHeaderBadge completedTrips={riderProfile?.trips || 124} />
+              </div>
               <span className="text-[8px] font-black text-slate-505 uppercase tracking-widest block mt-1">
                 TS-{riderProfile.vehicleType.toUpperCase()} &bull; {riderProfile.vehicleNumber}
               </span>
@@ -2571,6 +2577,18 @@ export default function DeliveryPartnerApp() {
                 <span>Job Queue: {offlineSyncQueueCount} ({isOnlineNetwork ? 'Ready' : 'Offline Cached'})</span>
               </button>
             )}
+
+            {/* Signal Guard & Low Connectivity Control Center Button */}
+            <button
+              type="button"
+              onClick={() => setShowLowConnectivityGuardModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/15 border border-amber-500/30 text-amber-400 hover:bg-amber-500/25 rounded-full cursor-pointer transition-all text-[8.5px] font-black uppercase tracking-wider shrink-0"
+              title="Low Connectivity Guard & Offline Map Tile Cache"
+              id="low-connectivity-signal-guard-btn"
+            >
+              <ShieldAlert className="w-3 h-3 text-amber-400 animate-pulse" />
+              <span>Signal Guard</span>
+            </button>
 
             {/* Sync Status Badge */}
             <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-950/60 border border-white/5 rounded-full mr-1.5">
@@ -2674,6 +2692,13 @@ export default function DeliveryPartnerApp() {
         </div>
       </header>
 
+      {/* PROACTIVE LOW-CONNECTIVITY SIGNAL ALERT BANNER */}
+      <ProactiveLowSignalAlertBanner
+        riderLocation={riderLocation}
+        speakCue={speakCue}
+        onOpenGuardCenter={() => setShowLowConnectivityGuardModal(true)}
+      />
+
         {/* WORKSPACE MIDDLE BODY */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
           
@@ -2714,6 +2739,12 @@ export default function DeliveryPartnerApp() {
                   <span>Support Desk</span>
                 </button>
               </div>
+
+              {/* RIDER LEVEL & RANK SYSTEM PROGRESS CARD */}
+              <RiderLevelProgressCard completedTrips={riderProfile?.trips || 124} />
+
+              {/* COMPACT TIP TREND & WORK WINDOWS DASHBOARD CARD */}
+              <TipTrendDashboardCard chartData={chartDataToShow} />
               
               {/* BLOCK 1: IF OFFLINE */}
               {!riderProfile.isOnline && (
@@ -4888,6 +4919,15 @@ export default function DeliveryPartnerApp() {
             </div>
           )}
         </AnimatePresence>
+
+        {/* LOW CONNECTIVITY GUARD CONTROL CENTER MODAL */}
+        <LowConnectivityGuardModal
+          riderLocation={riderLocation}
+          onUpdateRiderLocation={(loc) => setRiderLocation(loc)}
+          speakCue={speakCue}
+          isOpenModal={showLowConnectivityGuardModal}
+          onCloseModal={() => setShowLowConnectivityGuardModal(false)}
+        />
 
         {/* BOTTOM NAVIGATION PANEL TAB BAR */}
         <nav className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900 border-t border-white/5 p-2 px-4 flex items-center justify-between pointer-events-auto shadow-2xl">

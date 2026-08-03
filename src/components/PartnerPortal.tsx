@@ -64,6 +64,7 @@ import RealEstate from './RealEstate';
 import { SafeZone } from './common/SafeZone';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import L from 'leaflet';
+import { CATEGORIES } from '../constants';
 
 const PINCODE_COORDINATES: Record<string, [number, number]> = {
   "507001": [17.2473, 80.1514],
@@ -1195,7 +1196,7 @@ export default function PartnerPortal() {
         try {
           new Notification("Lokal Payout Settled! 💸", {
             body: `₹${amount.toLocaleString()} has been securely settled next-gen real-time and transferred.`,
-            icon: '/src/assets/images/lokal_bharath_logo_1777014931353.png'
+            icon: '/src/assets/images/local_bandi_logo_1785784124975.jpg'
           });
         } catch (err) {
           console.error("Failed to showcase notification: ", err);
@@ -1710,7 +1711,7 @@ export default function PartnerPortal() {
           title="Click to access Local Franchise Admin Portal"
         >
           <div className="w-9 h-9 bg-white rounded-xl flex items-center justify-center border border-white/10 overflow-hidden ring-2 ring-transparent group-hover:ring-yellow-400/50 transition-all">
-            <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
+            <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover" alt="Local Bandi Logo" />
           </div>
           <div>
             <div className="flex items-center gap-1.5">
@@ -3243,12 +3244,11 @@ export default function PartnerPortal() {
                   <select 
                     value={vendorCategory} 
                     onChange={(e) => setVendorCategory(e.target.value)}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs text-white uppercase font-black"
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs text-white uppercase font-black cursor-pointer"
                   >
-                    <option value="groceries">Groceries / Provisions</option>
-                    <option value="restaurant">Culinary / Fast Food</option>
-                    <option value="dairy">Dairy & Fresh Batter</option>
-                    <option value="organic">Organic / Pure Honey & Ghee</option>
+                    {CATEGORIES.map((cat) => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="space-y-1">

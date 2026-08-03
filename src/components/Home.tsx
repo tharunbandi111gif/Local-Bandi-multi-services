@@ -108,20 +108,45 @@ import LanguageSelectorModal from './common/LanguageSelectorModal';
 import LiveMap from './LiveMap';
 import PartnerOnboarding from './PartnerOnboarding';
 import JoiningLetter from './JoiningLetter';
+import { MarketingQuizModal, MarketingQuizFloatingBanner } from './MarketingQuizModal';
 import { downloadCSV } from '../lib/exportUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Product, Screen, Service, LanguageCode, VendorProfile, DeliveryPartnerProfile, SupportChat, SupportMessage, MarriageProfile, PlatformSettings, PartnerApplicationType } from '../types';
 import { CATEGORIES, PRODUCTS, SERVICES, LANGUAGES } from '../constants';
 import { translations } from '../translations';
 import { useTranslation } from '../i18n';
-import { getLocalizedCategoryName, getLocalizedSubcategoryName, getLocalizedBannerTitle, getLocalizedBannerSub } from '../utils/localizedContent';
+import { 
+  getLocalizedCategoryName, 
+  getLocalizedSubcategoryName, 
+  getLocalizedBannerTitle, 
+  getLocalizedBannerSub,
+  getLocalizedDealsOfDay,
+  getLocalizedPopularAroundYou,
+  getLocalizedTrendingServices,
+  getLocalizedMechanicPortalText,
+  getLocalizedRiderPortalText,
+  getLocalizedHelpInOutText,
+  getLocalizedSupportIntegrationsText,
+  getLocalizedFAQ,
+  getLocalizedTermsAndConditions,
+  getLocalizedOfferText,
+  getLocalizedAddressText,
+  getLocalizedUIText,
+  getLocalizedProductName,
+  getLocalizedProductDescription,
+  getLocalizedServiceName,
+  getLocalizedServiceDescription,
+  translateText
+} from '../utils/localizedContent';
 import { performSmartSearch } from '../utils/smartSearch';
 import { HospitalOPForm } from './HospitalOPForm';
+import { SpinWheelModal } from './SpinWheelModal';
+import { ImageZoomModal } from './ImageZoomModal';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, auth, handleFirestoreError, OperationType, setupRecaptcha } from '../lib/firebase';
 import { User as AuthUser } from 'firebase/auth';
 import type { ConfirmationResult } from '../lib/firebase';
-import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, setDoc, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, setDoc, orderBy, limit, increment } from 'firebase/firestore';
 
 interface HomeProps {
   location: string;
@@ -313,6 +338,14 @@ export default function Home({
   const [editingPromo, setEditingPromo] = useState<any>(null);
   const [isEditingPromoMode, setIsEditingPromoMode] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState(false);
+  const [showMarketingQuizModal, setShowMarketingQuizModal] = useState(false);
+  const [userSuperCoins, setUserSuperCoins] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem('user_super_coins') || 100);
+    } catch {
+      return 100;
+    }
+  });
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
     title: string;
@@ -934,35 +967,107 @@ export default function Home({
   const [showTripDetails, setShowTripDetails] = useState(false);
   const [vendors, setVendors] = useState<VendorProfile[]>([]);
   const [deliveryPartners, setDeliveryPartners] = useState<DeliveryPartnerProfile[]>([]);
+  const [showSpinWheelModal, setShowSpinWheelModal] = useState<boolean>(false);
+  const [sundaySpinCount, setSundaySpinCount] = useState<number>(128);
+  const [zoomImage, setZoomImage] = useState<{ url: string; title?: string; subtitle?: string } | null>(null);
+  const isTodaySunday = new Date().getDay() === 0;
   const walletBalance = userProfile?.walletBalance || 0;
 
   useEffect(() => {
-    // Load categories from Firestore collection
-    const loadCategories = async () => {
-      try {
-        const { getDocs, collection, getDoc, doc } = await import('firebase/firestore');
-        const categoriesCol = collection(db, 'categories');
-        const categoriesSnapshot = await getDocs(categoriesCol);
-        
-        if (!categoriesSnapshot.empty) {
-          const loadedCategories = categoriesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
-          setCategories(loadedCategories.length > 0 ? loadedCategories : CATEGORIES);
-        } else {
-          // Fallback to legacy single document
-          const settingsDoc = await getDoc(doc(db, 'settings', 'categories'));
-          if (settingsDoc.exists()) {
-            const data = settingsDoc.data();
-            if (data.list && Array.isArray(data.list)) {
-              setCategories(data.list);
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Failed to load categories", e);
+    const unsubSundaySpin = onSnapshot(doc(db, 'settings', 'sunday_spin_counter'), (snap) => {
+      if (snap.exists()) {
+        setSundaySpinCount(snap.data().claimsCount ?? 128);
+      } else {
+        setDoc(doc(db, 'settings', 'sunday_spin_counter'), { claimsCount: 128, maxClaims: 1000 }, { merge: true }).catch(() => {});
       }
+    }, (err) => {
+      console.warn("Sunday spin listener error:", err);
+    });
+
+    return () => {
+      unsubSundaySpin();
     };
-    loadCategories();
   }, []);
+
+  const handleSundaySpinSuccess = async () => {
+    try {
+      const counterRef = doc(db, 'settings', 'sunday_spin_counter');
+      await setDoc(counterRef, {
+        claimsCount: increment(1)
+      }, { merge: true });
+    } catch (err) {
+      console.warn("Could not increment Sunday spin count:", err);
+    }
+  };
+
+  useEffect(() => {
+    // Real-time listener for categories collection in Firestore
+    let unsubCategories: (() => void) | undefined;
+    try {
+      const categoriesCol = collection(db, 'categories');
+      unsubCategories = onSnapshot(categoriesCol, (categoriesSnapshot) => {
+        const loadedCategories = categoriesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+        const categoryMap = new Map<string, Category>();
+        
+        // 1. Add base CATEGORIES
+        CATEGORIES.forEach(c => { if (c && c.id) categoryMap.set(c.id, c); });
+        
+        // 2. Add Firestore loaded categories
+        loadedCategories.forEach(c => {
+          if (c && c.id) {
+            const existing = categoryMap.get(c.id);
+            categoryMap.set(c.id, {
+              ...existing,
+              ...c,
+              name: c.name || existing?.name || c.id
+            });
+          }
+        });
+
+        // 3. Auto-discover from local inventory
+        if (localInventory && Array.isArray(localInventory)) {
+          localInventory.forEach(item => {
+            if (item && item.category && !categoryMap.has(item.category)) {
+              const formattedName = item.category.charAt(0).toUpperCase() + item.category.slice(1).replace(/_/g, ' ');
+              categoryMap.set(item.category, {
+                id: item.category,
+                name: formattedName,
+                icon: 'ShoppingBag',
+                color: 'bg-indigo-100'
+              });
+            }
+          });
+        }
+
+        setCategories(Array.from(categoryMap.values()));
+      }, (err) => {
+        console.warn("Category subscription error:", err);
+        // Fallback merge
+        const categoryMap = new Map<string, Category>();
+        CATEGORIES.forEach(c => { if (c && c.id) categoryMap.set(c.id, c); });
+        if (localInventory && Array.isArray(localInventory)) {
+          localInventory.forEach(item => {
+            if (item && item.category && !categoryMap.has(item.category)) {
+              const formattedName = item.category.charAt(0).toUpperCase() + item.category.slice(1).replace(/_/g, ' ');
+              categoryMap.set(item.category, {
+                id: item.category,
+                name: formattedName,
+                icon: 'ShoppingBag',
+                color: 'bg-indigo-100'
+              });
+            }
+          });
+        }
+        setCategories(Array.from(categoryMap.values()));
+      });
+    } catch (e) {
+      console.error("Failed to load categories listener", e);
+    }
+
+    return () => {
+      if (unsubCategories) unsubCategories();
+    };
+  }, [localInventory]);
 
   const saveCategoryToFirestore = async (cat: Category) => {
     try {
@@ -9215,11 +9320,18 @@ export default function Home({
             <ShieldCheck className={`w-5 h-5 ${isAdmin ? 'text-gray-900' : 'text-yellow-400'}`} />
           </motion.button>
           <motion.div 
-            whileTap={{ scale: 0.95 }}
-            className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm overflow-hidden border border-white p-0.5 select-none pointer-events-none" 
-            onClick={() => {}}
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.92 }}
+            className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-md overflow-hidden border-2 border-yellow-400 p-0.5 select-none cursor-pointer group transition-all" 
+            onClick={() => setZoomImage({
+              url: '/src/assets/images/local_bandi_logo_1785784124975.jpg',
+              title: 'Local Bandi Official Logo',
+              subtitle: 'Click & Zoom Viewer • Hyper-Local Hyper-Fast Delivery'
+            })}
+            title="Click to Zoom Local Bandi Logo"
+            id="app-header-logo-button"
           >
-             <img src="/src/assets/images/lokal_bharath_logo_1777014931353.png" className="w-full h-full object-cover" alt="Local Bandi Logo" />
+             <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover rounded-lg group-hover:scale-110 transition-transform duration-200" alt="Local Bandi Logo" />
           </motion.div>
           <div 
             className="flex flex-col cursor-pointer"
@@ -9291,16 +9403,6 @@ export default function Home({
           <motion.div 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.9 }}
-            className="hidden sm:block"
-            onClick={() => onNavigate('tasks')}
-          >
-            <div className="bg-gray-50 dark:bg-slate-800 p-3 rounded-2xl relative border border-gray-100 dark:border-slate-700 cursor-pointer">
-              <ListTodo className="w-5 h-5 text-gray-700 dark:text-gray-300" />
-            </div>
-          </motion.div>
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
             className="relative"
             onClick={() => setShowLangModal(true)}
             title="Change Language (24 Languages)"
@@ -9312,6 +9414,38 @@ export default function Home({
               </span>
             </div>
           </motion.div>
+
+          {/* ⚡ 40-SEC MARKETING QUIZ HEADER BUTTON */}
+          <motion.div 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.9 }}
+            className="relative cursor-pointer"
+            onClick={() => setShowMarketingQuizModal(true)}
+            title="Play 40s Speed Quiz & Win Coupons!"
+            id="customer-header-40s-quiz-btn"
+          >
+            <div className="bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 px-2.5 py-2 rounded-2xl relative border border-amber-300 shadow-sm flex items-center gap-1 font-black text-[9px] uppercase tracking-wider">
+              <Zap className="w-3.5 h-3.5 fill-slate-950 animate-bounce" />
+              <span className="hidden sm:inline">40s Quiz</span>
+            </div>
+          </motion.div>
+
+          {/* 🎰 SPIN & WIN LUCKY WHEEL HEADER BUTTON (SUNDAYS ONLY) */}
+          {isTodaySunday && (
+            <motion.div 
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.9 }}
+              className="relative cursor-pointer"
+              onClick={() => setShowSpinWheelModal(true)}
+              title="Spin & Win Lucky Wheel (Sunday Special)"
+              id="customer-header-spin-wheel-btn"
+            >
+              <div className="bg-gradient-to-r from-yellow-400 via-amber-400 to-amber-500 text-slate-950 px-2.5 py-2 rounded-2xl relative border border-amber-300 shadow-sm flex items-center gap-1 font-black text-[9px] uppercase tracking-wider">
+                <Sparkles className="w-3.5 h-3.5 fill-slate-950 animate-spin text-slate-950" />
+                <span className="hidden sm:inline">Sunday Spin</span>
+              </div>
+            </motion.div>
+          )}
           <motion.div 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.9 }}
@@ -9641,8 +9775,8 @@ export default function Home({
                                 {prod.image && <img src={prod.image} className="w-full h-full object-cover" alt={prod.name} />}
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-bold text-gray-900 group-hover:text-yellow-600 transition-colors truncate">{prod.name}</p>
-                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-normal">In {prod.category}</p>
+                                <p className="text-sm font-bold text-gray-900 group-hover:text-yellow-600 transition-colors truncate">{getLocalizedProductName(prod.name, language)}</p>
+                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-normal">In {getLocalizedCategoryName(prod.category, language)}</p>
                               </div>
                               <div className="text-right shrink-0">
                                 <p className="text-xs font-black text-gray-900">₹{prod.price}</p>
@@ -9743,6 +9877,45 @@ export default function Home({
         {/* 3. Categories Grid - PRIMARY NAVIGATION */}
         {!searchQuery && (
           <>
+            {/* 🎰 SPIN & WIN LUCKY WHEEL SUNDAY SPECIAL PROMO BANNER (SUNDAYS ONLY) */}
+            {isTodaySunday && (
+              <div className="mb-4 p-4 rounded-3xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 shadow-xl relative overflow-hidden border border-amber-300">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 relative z-10">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-950 flex items-center justify-center text-amber-400 shadow-md border border-amber-400/40 shrink-0">
+                      <Sparkles className="w-6 h-6 animate-spin text-amber-400 fill-amber-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="bg-slate-950 text-amber-400 text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full font-mono border border-amber-400/30">
+                          🔥 SUNDAY SPECIAL LIVE
+                        </span>
+                        <span className="bg-slate-950/80 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full font-mono border border-white/20">
+                          First 1,000 Members • {sundaySpinCount}/1000 Claimed
+                        </span>
+                      </div>
+                      <h3 className="text-base font-black uppercase tracking-tight text-slate-950 leading-tight">
+                        Sunday Spin &amp; Win Lucky Wheel
+                      </h3>
+                      <p className="text-[10px] text-slate-900 font-extrabold leading-tight mt-0.5">
+                        Every Sunday Special! No order required for the first 1,000 members. Spin &amp; win up to 15% OFF for Sunday order growth!
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowSpinWheelModal(true)}
+                    className="w-full sm:w-auto px-5 py-2.5 bg-slate-950 hover:bg-slate-900 text-amber-400 text-xs font-black uppercase tracking-wider rounded-2xl shadow-lg border border-amber-400/40 transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>SPIN NOW</span>
+                    <ChevronRight className="w-4 h-4 text-amber-400" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ⚡ 40-SEC SPEED QUIZ MARKETING CAMPAIGN BANNER */}
+            <MarketingQuizFloatingBanner onOpenQuiz={() => setShowMarketingQuizModal(true)} />
+
             <section>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Explore Categories</h3>
@@ -9928,8 +10101,8 @@ export default function Home({
                     >
                       {prod.image && <img src={prod.image} className="w-20 h-20 rounded-2xl object-cover" alt={prod.name} />}
                       <div className="flex-1">
-                        <p className="font-extrabold text-gray-900 mb-1">{prod.name}</p>
-                        <p className="text-xs text-gray-500 line-clamp-2 mb-2">{prod.description}</p>
+                        <p className="font-extrabold text-gray-900 mb-1">{getLocalizedProductName(prod.name, language)}</p>
+                        <p className="text-xs text-gray-500 line-clamp-2 mb-2">{getLocalizedProductDescription(prod.description, language)}</p>
                         <div className="flex items-center gap-2">
                            <p className="text-sm font-black text-yellow-600">₹{prod.price}</p>
                            {('unit' in prod && prod.unit) && <span className="text-[10px] font-bold text-gray-400 uppercase truncate">/ {prod.unit}</span>}
@@ -10204,7 +10377,7 @@ export default function Home({
                       <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent"></div>
                       <div className="absolute bottom-4 left-4 right-4 text-white">
                         <p className="text-[8px] font-black text-white/70 uppercase tracking-widest mb-1">Local Product</p>
-                        <h4 className="text-sm font-black italic tracking-tight">{prod.name}</h4>
+                        <h4 className="text-sm font-black italic tracking-tight">{getLocalizedProductName(prod.name, language)}</h4>
                       </div>
                     </div>
                     <div className="p-5 bg-white flex-1 flex flex-col justify-between">
@@ -10324,7 +10497,7 @@ export default function Home({
                         <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
                         <span className="text-[10px] font-bold text-gray-400">4.8</span>
                       </div>
-                      <p className="font-extrabold text-sm text-gray-900 truncate mb-1">{prod.name}</p>
+                      <p className="font-extrabold text-sm text-gray-900 truncate mb-1">{getLocalizedProductName(prod.name, language)}</p>
                       <div className="flex items-center gap-2">
                          <p className="text-yellow-600 font-black">₹{prod.price}</p>
                          {(prod as any).unit && <span className="text-[8px] font-bold text-gray-400 uppercase">/ {(prod as any).unit}</span>}
@@ -10359,8 +10532,8 @@ export default function Home({
                         </div>
                         <span className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">{(service as any).bookings || '1.2k'}+ Bookings</span>
                       </div>
-                      <h4 className="text-sm font-black text-gray-900 mb-1">{service.name}</h4>
-                      <p className="text-[10px] font-medium text-gray-500 mb-2 line-clamp-1">{service.description}</p>
+                      <h4 className="text-sm font-black text-gray-900 mb-1">{getLocalizedServiceName(service.name, language)}</h4>
+                      <p className="text-[10px] font-medium text-gray-500 mb-2 line-clamp-1">{getLocalizedServiceDescription(service.description, language)}</p>
                       <div className="flex items-center justify-between">
                         <p className="text-xs font-black text-gray-900">Starting at ₹{service.price}</p>
                         <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-gray-900 group-hover:translate-x-1 transition-all" />
@@ -10774,12 +10947,78 @@ export default function Home({
         onClose={() => setShowLangModal(false)} 
       />
 
+      {/* ⚡ 40-SEC SPEED QUIZ MARKETING MODAL */}
+      <MarketingQuizModal
+        isOpen={showMarketingQuizModal}
+        onClose={() => setShowMarketingQuizModal(false)}
+        onApplyCoupon={(code) => {
+          alert(`🎉 Coupon "${code}" has been unlocked & saved to your promo codes!`);
+          setPromoCodes((prev: any[]) => {
+            if (prev.some((p: any) => p.id === code)) return prev;
+            return [{
+              id: code,
+              type: 'flat',
+              value: code.includes('100') ? 100 : code.includes('50') ? 50 : 25,
+              label: `40s Quiz Marketing Reward (${code})`,
+              minSubtotal: 100,
+              isActive: true
+            }, ...prev];
+          });
+        }}
+        userCoins={userSuperCoins}
+        onAddCoins={(amount) => {
+          setUserSuperCoins(prev => {
+            const updated = prev + amount;
+            try {
+              localStorage.setItem('user_super_coins', updated.toString());
+            } catch (e) {
+              console.warn("Coins storage failed", e);
+            }
+            return updated;
+          });
+        }}
+      />
+
+      {/* 🎰 SPIN & WIN LUCKY WHEEL SUNDAY SPECIAL MODAL */}
+      <SpinWheelModal
+        isOpen={showSpinWheelModal}
+        onClose={() => setShowSpinWheelModal(false)}
+        isSundaySpecial={true}
+        sundayClaimCount={sundaySpinCount}
+        maxSundayClaims={1000}
+        onSpinSuccess={handleSundaySpinSuccess}
+        onRewardWon={(code) => {
+          setPromoCodes((prev: any[]) => {
+            if (prev.some((p: any) => p.id === code)) return prev;
+            return [{
+              id: code,
+              type: 'percentage',
+              value: parseInt(code.replace(/\D/g, '')) || 10,
+              label: `Spin & Win Reward (${code})`,
+              minSubtotal: 599,
+              isActive: true
+            }, ...prev];
+          });
+        }}
+      />
+
       <HospitalOPModal 
         isOpen={showHospitalOP} 
         onClose={() => setShowHospitalOP(false)} 
         prices={hospitalPrices}
         onBook={handleBookHospitalOP}
       />
+
+      {/* 🔍 CLICK & ZOOM IMAGE VIEWER MODAL */}
+      {zoomImage && (
+        <ImageZoomModal
+          isOpen={!!zoomImage}
+          onClose={() => setZoomImage(null)}
+          imageUrl={zoomImage.url}
+          title={zoomImage.title}
+          subtitle={zoomImage.subtitle}
+        />
+      )}
 
       {/* Trip Details Modal for Delivery Partners */}
       <AnimatePresence>

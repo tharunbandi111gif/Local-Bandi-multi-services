@@ -59,6 +59,16 @@ export const CATEGORIES: Category[] = [
   { id: 'realestate', name: 'Real Estate', icon: 'Building2', color: 'bg-indigo-100' },
   { id: 'driving_school', name: 'Driving School', icon: 'Car', color: 'bg-blue-50' },
   { id: 'beauty_parlour', name: 'Beauty Parlour', icon: 'Scissors', color: 'bg-pink-100' },
+  { id: 'agriculture', name: 'Agriculture & Farm', icon: 'Sparkles', color: 'bg-emerald-100' },
+  { id: 'auto_garage', name: 'Auto & Bike Repair', icon: 'Wrench', color: 'bg-orange-100' },
+  { id: 'education', name: 'Tuition & Coaching', icon: 'Briefcase', color: 'bg-blue-100' },
+  { id: 'pets', name: 'Pet Care & Food', icon: 'Heart', color: 'bg-rose-100' },
+  { id: 'sports', name: 'Sports & Fitness', icon: 'Sparkles', color: 'bg-amber-100' },
+  { id: 'footwear', name: 'Shoes & Footwear', icon: 'ShoppingBag', color: 'bg-purple-100' },
+  { id: 'chitfund', name: 'Chit Funds & Savings', icon: 'Landmark', color: 'bg-indigo-100' },
+  { id: 'books', name: 'Books & Stationery', icon: 'ShoppingBag', color: 'bg-yellow-100' },
+  { id: 'gifts', name: 'Gifts & Flowers', icon: 'Flower', color: 'bg-pink-100' },
+  { id: 'sweets', name: 'Sweets & Namkeen', icon: 'Cake', color: 'bg-orange-50' },
 ];
 
 export const REWARDS = [

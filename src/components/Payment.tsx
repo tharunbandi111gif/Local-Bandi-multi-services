@@ -657,12 +657,21 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                 <button 
                   onClick={handlePayment}
                   disabled={loading}
-                  className="w-full py-5 bg-yellow-400 text-gray-900 rounded-[2.5rem] font-black shadow-2xl shadow-yellow-200 active:scale-95 transition-all flex items-center justify-center gap-3 text-lg italic tracking-tight disabled:opacity-50"
+                  className="w-full py-5 bg-gradient-to-r from-yellow-400 via-amber-400 to-yellow-500 hover:from-yellow-300 hover:to-amber-400 text-slate-950 rounded-[2.5rem] font-black shadow-2xl shadow-yellow-400/30 active:scale-95 transition-all flex items-center justify-center gap-3 text-base italic tracking-tight disabled:opacity-50 cursor-pointer border border-yellow-300"
                 >
                   {loading ? (
-                    <div className="w-6 h-6 border-2 border-gray-900/30 border-t-gray-900 rounded-full animate-spin" />
+                    <div className="w-6 h-6 border-2 border-slate-950/30 border-t-slate-950 rounded-full animate-spin" />
                   ) : (
-                    'Proceed to Payment'
+                    <span>
+                      {selectedMethod === 'cod' && `Place Order via Cash on Delivery (₹${finalAmountIncludingTip})`}
+                      {selectedMethod === 'gpay' && `Pay ₹${finalAmountIncludingTip} via Google Pay`}
+                      {selectedMethod === 'phonepe' && `Pay ₹${finalAmountIncludingTip} via PhonePe`}
+                      {selectedMethod === 'bhim' && `Pay ₹${finalAmountIncludingTip} via BHIM UPI`}
+                      {selectedMethod === 'upi' && `Pay ₹${finalAmountIncludingTip} via UPI`}
+                      {selectedMethod === 'card' && `Pay ₹${finalAmountIncludingTip} via Credit/Debit Card`}
+                      {selectedMethod === 'wallet' && `Pay ₹${finalAmountIncludingTip} via Wallet`}
+                      {selectedMethod === 'nb' && `Pay ₹${finalAmountIncludingTip} via Net Banking`}
+                    </span>
                   )}
                 </button>
               </div>
