@@ -258,6 +258,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
     stateName: '',
     districtName: '',
     branchId: '',
+    category: '',
   });
 
   const handleSubmit = async () => {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, CreditCard, Wallet, Landmark, Phone, CheckCircle2, ShieldCheck, MapPin, ChevronRight, Sparkles, Smartphone, QrCode, Banknote, HelpCircle, User, Info, ClipboardList, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../lib/firebase';
-import { doc, onSnapshot, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, addDoc, collection, serverTimestamp, getDocs } from 'firebase/firestore';
 
 interface PaymentProps {
   onBack: () => void | Promise<void>;
@@ -29,6 +29,10 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
   const [selectedBank, setSelectedBank] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [paymentConfig, setPaymentConfig] = useState<any>(null);
+  const [branches, setBranches] = useState<any[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(() => {
+    return localStorage.getItem('local_franchise_branch_id') || userProfile?.branchId || 'khammam_main';
+  });
   const [tipSelection, setTipSelection] = useState<number>(0);
 
   const finalAmountIncludingTip = amount + tipSelection;
@@ -40,8 +44,28 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
         setPaymentConfig(snapshot.data());
       }
     });
-    return () => unsub();
+
+    // Fetch Branches for payment method validation
+    const unsubBranches = onSnapshot(collection(db, 'branches'), (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setBranches(list);
+    });
+
+    return () => {
+      unsub();
+      unsubBranches();
+    };
   }, []);
+
+  const activeBranch = branches.find(b => b.id === selectedBranchId) || {
+    id: 'khammam_main',
+    name: 'Khammam Main Branch',
+    allowCOD: true,
+    allowUPI: true
+  };
+
+  const isCODAllowed = activeBranch.allowCOD !== false && paymentConfig?.allowCOD !== false;
+  const isUPIAllowed = activeBranch.allowUPI !== false && paymentConfig?.allowUPI !== false;
 
   const [address, setAddress] = useState(() => {
     const defaultAddr = userProfile?.addresses?.find((a: any) => a.isDefault) || userProfile?.addresses?.[0];
@@ -152,8 +176,12 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
       return;
     }
 
-    // 2. UPI payment validation
+    // 2. UPI payment validation & branch check
     if (['gpay', 'phonepe', 'bhim', 'upi'].includes(selectedMethod)) {
+      if (!isUPIAllowed) {
+        setPaymentError(`UPI Payments are currently disabled for ${activeBranch.name || 'this branch'}. Please choose Cash on Delivery or Card.`);
+        return;
+      }
       let finalUpi = upiIdInput.trim();
       if (!finalUpi) {
         if (selectedMethod === 'upi') {
@@ -195,8 +223,12 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
       return;
     }
 
-    // 4. Cash on Delivery
+    // 4. Cash on Delivery validation & branch check
     if (selectedMethod === 'cod') {
+      if (!isCODAllowed) {
+        setPaymentError(`Cash on Delivery (COD) is disabled for ${activeBranch.name || 'this branch'}. Please choose Online UPI or Card payment.`);
+        return;
+      }
       // Small delay for realism
       setLoading(true);
       setProcessingOrder(true);
@@ -495,17 +527,33 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                  <div className="space-y-4">
                   {paymentMethods.map((method) => {
                     const Icon = method.icon;
+                    const isMethodCOD = method.id === 'cod';
+                    const isMethodUPI = ['gpay', 'phonepe', 'bhim', 'upi'].includes(method.id);
+                    const isDisabledByBranch = (isMethodCOD && !isCODAllowed) || (isMethodUPI && !isUPIAllowed);
+
                     return (
                       <div
                         key={method.id}
                         className={`w-full p-4 rounded-[2rem] border-2 transition-all relative ${
-                          selectedMethod === method.id 
+                          isDisabledByBranch 
+                          ? 'border-red-200/60 bg-red-50/40 opacity-75'
+                          : selectedMethod === method.id 
                           ? 'border-yellow-400 bg-yellow-50 shadow-md shadow-yellow-105/50' 
                           : 'border-gray-50 bg-white hover:border-gray-200'
                         }`}
                       >
                         <div 
-                          onClick={() => setSelectedMethod(method.id)}
+                          onClick={() => {
+                            if (isDisabledByBranch) {
+                              setPaymentError(
+                                isMethodCOD 
+                                  ? `COD is disabled for ${activeBranch.name || 'this branch'}` 
+                                  : `UPI is disabled for ${activeBranch.name || 'this branch'}`
+                              );
+                              return;
+                            }
+                            setSelectedMethod(method.id);
+                          }}
                           className="flex items-center gap-4 cursor-pointer"
                         >
                           <div className={`p-3 rounded-2xl ${method.color} shadow-sm shrink-0`}>
@@ -513,13 +561,24 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                           </div>
                           <div className="flex-1 text-left">
                             <span className="block font-black text-gray-900 lowercase italic tracking-tight text-lg leading-none">{method.name.toLowerCase()}</span>
-                            {method.badge && (
-                              <span className="inline-block mt-1 px-1.5 py-0.5 bg-emerald-500 text-white text-[7px] font-black uppercase tracking-widest rounded-md leading-none">
-                                {method.badge}
-                              </span>
-                            )}
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              {method.badge && !isDisabledByBranch && (
+                                <span className="inline-block px-1.5 py-0.5 bg-emerald-500 text-white text-[7px] font-black uppercase tracking-widest rounded-md leading-none">
+                                  {method.badge}
+                                </span>
+                              )}
+                              {isDisabledByBranch ? (
+                                <span className="inline-block px-1.5 py-0.5 bg-red-500 text-white text-[7px] font-black uppercase tracking-widest rounded-md leading-none">
+                                  Unavailable for Branch
+                                </span>
+                              ) : (
+                                <span className="inline-block px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[7px] font-bold uppercase tracking-wider rounded-md leading-none">
+                                  {activeBranch.name ? `${activeBranch.name.split(' ')[0]} Enabled` : 'Verified'}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          {selectedMethod === method.id && (
+                          {selectedMethod === method.id && !isDisabledByBranch && (
                             <div className="w-6 h-6 bg-yellow-400 rounded-full flex items-center justify-center ring-4 ring-yellow-101 shrink-0 animate-scale-in">
                               <CheckCircle2 className="w-4 h-4 text-gray-900" strokeWidth={3} />
                             </div>

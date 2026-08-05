@@ -6,6 +6,7 @@ import ReviewsSection from './ReviewsSection';
 import { HospitalOPForm } from './HospitalOPForm';
 import { useTranslation } from '../i18n';
 import { getLocalizedProductName, getLocalizedProductDescription } from '../utils/localizedContent';
+import ImageZoom from './ImageZoomModal';
 
 interface ProductDetailsProps {
   product: Product;
@@ -192,29 +193,14 @@ export default function ProductDetails({
 
   return (
     <div className="h-full w-full bg-white flex flex-col overflow-y-auto">
-      <div className="relative h-2/5 shrink-0 overflow-hidden">
+      <div className="relative h-2/5 shrink-0 overflow-hidden bg-slate-100">
         {product.image && (
-          <div 
-            onClick={() => {
-              if (isChitFund) {
-                setLightboxOpen(true);
-              }
-            }}
-            className={`w-full h-full relative cursor-pointer ${isChitFund ? 'cursor-zoom-in group' : ''}`}
-          >
-            <img 
-              src={product.image} 
-              className={`w-full h-full ${isChitFund ? 'object-contain bg-slate-50 p-4' : 'object-cover'}`} 
-              alt={product.name} 
-            />
-            {isChitFund && (
-              <div className="absolute inset-0 bg-black/10 hover:bg-black/0 transition-colors flex items-center justify-center">
-                <div className="bg-black/60 text-white rounded-full px-4 py-2 flex items-center gap-2 backdrop-blur-md opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all text-[10px] font-black uppercase tracking-wider">
-                  <ZoomIn className="w-4 h-4 text-yellow-400" /> Tap image to zoom
-                </div>
-              </div>
-            )}
-          </div>
+          <ImageZoom 
+            src={product.image} 
+            alt={product.name}
+            containerClassName="w-full h-full"
+            className={`w-full h-full ${isChitFund ? 'object-contain bg-slate-50 p-4' : 'object-cover'}`}
+          />
         )}
         <div className="absolute top-0 inset-x-0 p-6 pt-12 flex items-center justify-between bg-gradient-to-b from-black/40 to-transparent">
           <button onClick={onBack} className="p-2 bg-white/20 backdrop-blur-md rounded-2xl border border-white/30 text-white transition-colors">

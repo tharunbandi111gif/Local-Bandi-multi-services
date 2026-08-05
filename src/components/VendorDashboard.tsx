@@ -66,6 +66,7 @@ import { VendorProfile, Product, VendorOrder, SupportMessage, LanguageCode } fro
 import { LANGUAGES, CATEGORIES } from '../constants';
 import JoiningLetter from './JoiningLetter';
 import LanguageSelectorModal from './common/LanguageSelectorModal';
+import PartnerOnboarding from './PartnerOnboarding';
 import { getLocalizedVendorContent, getLocalizedCategoryName } from '../utils/localizedContent';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
@@ -141,6 +142,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
   const isSettlementsFirstLoadRef = useRef(true);
   const [profile, setProfile] = useState<VendorProfile | null>(null);
   const [showJoiningLetter, setShowJoiningLetter] = useState(false);
+  const [showVendorOnboarding, setShowVendorOnboarding] = useState(false);
   const [activeTab, setActiveTab] = useState<'home' | 'orders' | 'inventory' | 'sales' | 'profile' | 'support'>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'All' | 'Pending' | 'Preparing' | 'ReadyForPickup' | 'Editing' | 'Cancelled' | 'Delivered'>('All');
@@ -2448,6 +2450,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
 
                   <div className="space-y-3">
                       {[
+                        { icon: FileText, label: 'Merchant Onboarding & KYC Wizard', value: 'Submit/Update Business, Banking & Identity Proofs', color: 'text-amber-500', bg: 'bg-amber-50', action: () => setShowVendorOnboarding(true) },
                         { icon: Phone, label: 'Contact Support', value: profile.phone, color: 'text-emerald-500', bg: 'bg-emerald-50', action: () => {} },
                         { icon: Star, label: 'Shop Rating', value: `${profile.rating || 0} Out of 5.0`, color: 'text-yellow-500', bg: 'bg-yellow-50', action: () => {} },
                         { icon: Package, label: 'Inventory Size', value: `${inventory.length} Active Items`, color: 'text-indigo-500', bg: 'bg-indigo-50', action: () => {} },
@@ -3130,6 +3133,20 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
            </div>
          )}
        </AnimatePresence>
+
+       {showVendorOnboarding && (
+         <div className="fixed inset-0 z-[10002] bg-slate-950 overflow-y-auto">
+           <PartnerOnboarding
+             userId={user?.uid || profile?.userId || 'vendor_user'}
+             defaultType="Vendor"
+             onClose={() => setShowVendorOnboarding(false)}
+             onSuccess={() => {
+               setShowVendorOnboarding(false);
+               alert("Vendor Onboarding Application & KYC documents updated successfully!");
+             }}
+           />
+         </div>
+       )}
     </div>
   );
 }
