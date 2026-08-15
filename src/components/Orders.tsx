@@ -363,7 +363,7 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
                 <Package className="w-6 h-6 text-gray-400" />
               </div>
               <div className="flex-1">
-                <p className="font-extrabold text-gray-900">{order.items} {common.items}</p>
+                <p className="font-extrabold text-gray-900">{Array.isArray(order.items) ? order.items.length : (typeof order.items === 'number' ? order.items : (order.items ? String(order.items) : 1))} {common.items}</p>
                 <div className="flex items-center gap-2">
                   <p className="text-sm text-yellow-600 font-black">₹{order.total}</p>
                   {order.rewardItem && (

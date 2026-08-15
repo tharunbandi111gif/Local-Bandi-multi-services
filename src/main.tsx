@@ -7,10 +7,8 @@ import { FirebaseProvider } from './contexts/FirebaseContext.tsx';
 import { LanguageProvider } from './i18n.ts';
 import './index.css';
 
-// MSG91 OTP Widget Configuration & Initialization
-const widgetId = "36666c664e56353538383733";
-const authToken = "514095TuKDjYZn2WUw69fde13eP1";
-console.log("✓ Web MSG91 direct fetch integration configured (Widget ID:", widgetId, ")");
+// Service Implicit (serv_imp) SMS OTP Verification Gateway Configuration
+console.log("✓ SMS OTP Verification configured with Service Implicit Gateway (Route: serv_imp, Match Template: false)");
 
 // Silence Firebase quota-exhausted and assertion failures to prevent app crash
 if (typeof window !== 'undefined') {

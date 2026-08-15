@@ -2506,21 +2506,39 @@ export default function Home({
     }
   };
 
-  const handleLogoClick = () => {
-    if (isAdminLoggedIn) {
+  const logoTapCountRef = useRef(0);
+  const logoTapTimerRef = useRef<any>(null);
+
+  const handleProtectedLogoInteraction = () => {
+    if (isAdminLoggedIn || localStorage.getItem('admin_session_active') === 'true') {
       setShowPanelSelection(true);
       return;
     }
-    // Check if device is authorized
-    const currentDevice = deviceRegistry.find(d => d.id === deviceId);
-    if (!currentDevice?.isAuthorized) {
-      setAdminView('dashboard'); // Default
+
+    logoTapCountRef.current += 1;
+    if (logoTapTimerRef.current) clearTimeout(logoTapTimerRef.current);
+
+    if (logoTapCountRef.current >= 4) {
+      logoTapCountRef.current = 0;
+      setAdminView('dashboard');
       setAdminPass('');
       setShowAdminLogin(true);
-    } else {
-      setShowPanelSelection(true);
+      return;
     }
+
+    logoTapTimerRef.current = setTimeout(() => {
+      if (logoTapCountRef.current < 4) {
+        setZoomImage({
+          url: '/src/assets/images/local_bandi_logo_1785784124975.jpg',
+          title: 'Local Bandi Official Logo',
+          subtitle: 'Click & Zoom Viewer • Hyper-Local Hyper-Fast Delivery'
+        });
+      }
+      logoTapCountRef.current = 0;
+    }, 1000);
   };
+
+  const handleLogoClick = handleProtectedLogoInteraction;
   const handleSaveItem = async () => {
     if (!editingItem || !editingItem.name || editingItem.price <= 0) {
       alert("Please fill all mandatory fields correctly (Name is required, Price must be greater than zero).");
@@ -3010,7 +3028,15 @@ export default function Home({
                       msg.senderType === 'partner' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-white text-gray-700 border border-gray-100 rounded-bl-sm'
                     }`}>
                       {msg.text}
-                      <p className={`text-[8px] mt-2 font-black uppercase tracking-widest opacity-60 ${msg.senderType === 'partner' ? 'text-right' : ''}`}>{msg.timestamp}</p>
+                      <p className={`text-[8px] mt-2 font-black uppercase tracking-widest opacity-60 ${msg.senderType === 'partner' ? 'text-right' : ''}`}>
+                        {typeof msg.timestamp === 'string' 
+                          ? msg.timestamp 
+                          : msg.timestamp?.toDate 
+                            ? msg.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                            : msg.timestamp?.seconds 
+                              ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                              : 'Just now'}
+                      </p>
                     </div>
                   </motion.div>
                 )) || (
@@ -3140,7 +3166,7 @@ export default function Home({
 
       {/* Admin Login Modal */}
       <AnimatePresence>
-        {false && (
+        {showAdminLogin && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
@@ -3279,11 +3305,13 @@ export default function Home({
         )}
       </AnimatePresence>
 
-        {false && (
+      <AnimatePresence>
+        {showPanelSelection && (
           <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-xl">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
               className="bg-white p-8 rounded-[3.5rem] w-full max-w-sm shadow-2xl relative border-2 border-white/50"
             >
               <div className="absolute top-0 right-0 p-8">
@@ -3292,78 +3320,86 @@ export default function Home({
                 </button>
               </div>
               
-              <div className="mb-8 text-center">
-                <div className="w-16 h-16 bg-gray-900 rounded-[1.5rem] mx-auto flex items-center justify-center mb-6 shadow-2xl">
+              <div className="mb-6 text-center">
+                <div className="w-16 h-16 bg-gray-900 rounded-[1.5rem] mx-auto flex items-center justify-center mb-4 shadow-2xl">
                   <ShieldCheck className="w-8 h-8 text-yellow-400" />
                 </div>
-                <h2 className="text-3xl font-black text-gray-900 italic tracking-tighter leading-none mb-2">Access Portal</h2>
-                <p className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em]">{isSuperAdmin ? 'Master Control Panel' : 'Branch Admin Portal'}</p>
+                <h2 className="text-2xl font-black text-gray-900 italic tracking-tighter leading-none mb-1">Master Gateway Access</h2>
+                <p className="text-[10px] font-black uppercase text-indigo-600 tracking-[0.2em]">Authorized Management Modules</p>
               </div>
 
-              <div className="grid gap-4">
-                {(isSuperAdmin || isBranchAdmin) && (
-                  <button 
-                    onClick={() => {
-                      setShowPanelSelection(false);
-                      setAdminView('dashboard');
-                      setIsAdminOpen(true);
-                    }}
-                    className="w-full p-6 bg-gray-900 text-white rounded-[2.5rem] flex items-center gap-5 group active:scale-95 transition-all shadow-xl shadow-gray-200"
-                  >
-                    <div className="p-4 bg-white/10 rounded-2xl group-hover:bg-yellow-400 group-hover:text-gray-900 transition-all">
-                      <LayoutDashboard className="w-6 h-6" />
-                    </div>
-                    <div className="text-left">
-                      <p className="text-sm font-black italic text-white">{isSuperAdmin ? 'Founder Panel' : 'Branch Dashboard'}</p>
-                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{isSuperAdmin ? 'Master Control & Catalog' : 'Local Branch Operations'}</p>
-                    </div>
-                  </button>
-                )}
+              <div className="grid gap-3 max-h-[60vh] overflow-y-auto pr-1">
+                <button 
+                  onClick={() => {
+                    window.location.href = '/admin';
+                  }}
+                  className="w-full p-4 bg-gray-900 text-white rounded-[2rem] flex items-center gap-4 group active:scale-95 transition-all shadow-xl"
+                >
+                  <div className="p-3 bg-yellow-400 text-gray-900 rounded-xl font-bold">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-black uppercase text-white">Master Admin Console</p>
+                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Global platform parameter controls</p>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={() => {
+                    window.location.href = '/partner';
+                  }}
+                  className="w-full p-4 bg-emerald-50 border-2 border-emerald-100 text-emerald-900 rounded-[2rem] flex items-center gap-4 group active:scale-95 transition-all"
+                >
+                  <div className="p-3 bg-emerald-600 text-white rounded-xl">
+                    <Truck className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-black uppercase text-emerald-900">Partner & Rider Hub</p>
+                    <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">Merchants & dispatch terminals</p>
+                  </div>
+                </button>
+
+                <button 
+                  onClick={() => {
+                    window.location.href = '/franchise';
+                  }}
+                  className="w-full p-4 bg-indigo-50 border-2 border-indigo-100 text-indigo-900 rounded-[2rem] flex items-center gap-4 group active:scale-95 transition-all"
+                >
+                  <div className="p-3 bg-indigo-600 text-white rounded-xl">
+                    <Building2 className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-black uppercase text-indigo-900">Franchise App</p>
+                    <p className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest">Regional branch workspace</p>
+                  </div>
+                </button>
 
                 <button 
                   onClick={() => {
                     setShowPanelSelection(false);
-                    setIsLogisticsOpen(true);
                   }}
-                  className="w-full p-6 bg-indigo-50 border-2 border-indigo-100 text-indigo-900 rounded-[2.5rem] flex items-center gap-5 group active:scale-95 transition-all shadow-lg shadow-indigo-100/10"
+                  className="w-full p-4 bg-gray-100 text-gray-700 rounded-[2rem] flex items-center gap-4 group active:scale-95 transition-all"
                 >
-                  <div className="p-4 bg-indigo-600 text-white rounded-2xl group-hover:scale-110 transition-all">
-                    <Truck className="w-6 h-6" />
+                  <div className="p-3 bg-gray-300 text-gray-800 rounded-xl">
+                    <Users className="w-5 h-5" />
                   </div>
                   <div className="text-left">
-                    <p className="text-sm font-black italic text-indigo-900">Logistics Hub</p>
-                    <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">Order Dispatch & Delivery</p>
+                    <p className="text-xs font-black uppercase text-gray-800">Customer Console</p>
+                    <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">Standard shopping view</p>
                   </div>
                 </button>
-
-                {isSuperAdmin && (
-                  <button 
-                    onClick={() => {
-                      setShowPanelSelection(false);
-                      onNavigate('vendor', 'admin-store');
-                    }}
-                    className="w-full p-6 bg-emerald-50 border-2 border-emerald-100 text-emerald-900 rounded-[2.5rem] flex items-center gap-5 group active:scale-95 transition-all shadow-lg shadow-emerald-100/10"
-                  >
-                    <div className="p-4 bg-emerald-600 text-white rounded-2xl group-hover:scale-110 transition-all">
-                      <Store className="w-6 h-6" />
-                    </div>
-                    <div className="text-left">
-                      <p className="text-sm font-black italic text-emerald-900">Admin Store Ops</p>
-                      <p className="text-[9px] font-bold text-emerald-400 uppercase tracking-widest">Local Bandi Multi Services Preparations</p>
-                    </div>
-                  </button>
-                )}
               </div>
               
-              <p className="text-center mt-8 text-[9px] font-bold text-gray-400 uppercase tracking-[0.2em] opacity-50 italic">Highly Secure Environment</p>
+              <p className="text-center mt-6 text-[9px] font-bold text-gray-400 uppercase tracking-[0.2em] italic">Strictly Restricted to Master Admin</p>
             </motion.div>
           </div>
         )}
+      </AnimatePresence>
 
       {/* Founder Admin Dashboard */}
 
       <AnimatePresence>
-        {false && (
+        {isLogisticsOpen && (
           <div className="fixed inset-0 z-[120] bg-white flex flex-col">
             <header className="p-6 bg-gray-900 text-white flex items-center justify-between shadow-2xl">
               <div className="flex items-center gap-4">
@@ -3507,13 +3543,13 @@ export default function Home({
                                </div>
                                <div className="flex items-center gap-3">
                                  <p className="text-[10px] font-bold text-gray-400 flex items-center gap-1 uppercase tracking-widest">
-                                   <Package className="w-3 h-3" /> {order.items} Items
+                                   <Package className="w-3 h-3" /> {Array.isArray(order.items) ? order.items.length : (typeof order.items === 'number' ? order.items : (order.items ? String(order.items) : 1))} Items
                                  </p>
                                  <p className="text-[10px] font-black text-indigo-600 flex items-center gap-1">
                                    ₹{order.total}
                                  </p>
                                  <p className="text-[8px] font-bold text-gray-300 uppercase italic">
-                                    {new Date(order.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {typeof order.timestamp === 'string' ? (isNaN(new Date(order.timestamp).getTime()) ? order.timestamp : new Date(order.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : (order.timestamp?.toDate ? order.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (order.timestamp?.seconds ? new Date(order.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '...'))}
                                  </p>
                                </div>
                                {order.deliveryAddress && (
@@ -3906,7 +3942,7 @@ export default function Home({
       </AnimatePresence>
 
       <AnimatePresence>
-        {false && (
+        {isAdminOpen && (
           <div className="fixed inset-0 z-[120] bg-white">
             <header className="p-6 border-b border-gray-100 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -4589,7 +4625,7 @@ export default function Home({
                                 <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
                                 <p className="text-[10px] font-bold text-gray-400">{order.customerName}</p>
                               </div>
-                              <p className="text-xs font-black text-gray-900 leading-tight mb-1">{order.items} Items • <span className="text-emerald-600">₹{order.total}</span></p>
+                              <p className="text-xs font-black text-gray-900 leading-tight mb-1">{Array.isArray(order.items) ? order.items.length : (typeof order.items === 'number' ? order.items : (order.items ? String(order.items) : 1))} Items • <span className="text-emerald-600">₹{order.total}</span></p>
                               {order.deliveryAddress && (
                                 <div className="flex items-start gap-1 mb-2">
                                   <MapPin className="w-3 h-3 text-gray-400 mt-0.5" />
@@ -4623,7 +4659,13 @@ export default function Home({
                                     Cancel
                                   </button>
                                   <p className="text-[8px] font-bold text-gray-400">
-                                    {order.timestamp ? `${Math.floor((Date.now() - new Date(order.timestamp).getTime()) / 60000)}m ago` : 'Just now'}
+                                    {order.timestamp ? (
+                                      typeof order.timestamp === 'number' ? `${Math.max(0, Math.floor((Date.now() - order.timestamp) / 60000))}m ago` :
+                                      typeof order.timestamp === 'string' && !isNaN(new Date(order.timestamp).getTime()) ? `${Math.max(0, Math.floor((Date.now() - new Date(order.timestamp).getTime()) / 60000))}m ago` :
+                                      order.timestamp?.toDate ? `${Math.max(0, Math.floor((Date.now() - order.timestamp.toDate().getTime()) / 60000))}m ago` :
+                                      order.timestamp?.seconds ? `${Math.max(0, Math.floor((Date.now() - order.timestamp.seconds * 1000) / 60000))}m ago` :
+                                      'Just now'
+                                    ) : 'Just now'}
                                   </p>
                                 </div>
                               )}
@@ -6330,7 +6372,7 @@ export default function Home({
                           <div key={review.id} className="p-5 bg-gray-50/50 hover:bg-gray-50 rounded-[2rem] border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-all">
                             <div className="space-y-1.5 flex-1 text-left">
                               <div className="flex items-center gap-3">
-                                <span className="text-xs font-black text-gray-900">{review.userName || 'Anonymous'}</span>
+                                <span className="text-xs font-black text-gray-900">{typeof review.userName === 'string' ? review.userName : 'Anonymous'}</span>
                                 <div className="flex items-center gap-0.5">
                                   {[...Array(5)].map((_, i) => (
                                     <Star 
@@ -6339,7 +6381,9 @@ export default function Home({
                                     />
                                   ))}
                                 </div>
-                                <span className="text-[9px] font-bold text-gray-400">{review.date || 'Recently'}</span>
+                                <span className="text-[9px] font-bold text-gray-400">
+                                  {typeof review.date === 'string' ? review.date : (review.date?.toDate ? review.date.toDate().toLocaleDateString() : (review.date?.seconds ? new Date(review.date.seconds * 1000).toLocaleDateString() : (review.createdAt?.toDate ? review.createdAt.toDate().toLocaleDateString() : (review.createdAt?.seconds ? new Date(review.createdAt.seconds * 1000).toLocaleDateString() : 'Recently'))))}
+                                </span>
                               </div>
                               
                               {/* Inline Editing */}
@@ -6384,12 +6428,12 @@ export default function Home({
                                   </div>
                                 </div>
                               ) : (
-                                <p className="text-sm font-medium text-gray-600 leading-relaxed">{review.comment}</p>
+                                <p className="text-sm font-medium text-gray-600 leading-relaxed">{typeof review.comment === 'string' ? review.comment : ''}</p>
                               )}
                               
                               <div className="flex items-center gap-4 text-[9px] font-bold text-gray-400 uppercase tracking-wider">
-                                {review.productName && <span>Product: <b className="text-gray-900">{review.productName}</b></span>}
-                                {review.vendorName && <span>Vendor: <b className="text-gray-900">{review.vendorName}</b></span>}
+                                {typeof review.productName === 'string' && review.productName && <span>Product: <b className="text-gray-900">{review.productName}</b></span>}
+                                {typeof review.vendorName === 'string' && review.vendorName && <span>Vendor: <b className="text-gray-900">{review.vendorName}</b></span>}
                               </div>
                             </div>
 
@@ -6569,7 +6613,7 @@ export default function Home({
                                <div>
                                   <p className="text-sm font-black text-slate-900">{item.name || item.title || item.fullName || item.patientName || 'Unnamed Entry'}</p>
                                   <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                                    {item.location || item.type || item.email || item.reason || 'Verification Required'}
+                                    {typeof item.location === 'string' ? item.location : (item.location?.area || item.location?.city ? `${item.location.area || ''} ${item.location.city || ''}`.trim() : (typeof item.type === 'string' ? item.type : (typeof item.email === 'string' ? item.email : (typeof item.reason === 'string' ? item.reason : 'Verification Required'))))}
                                   </p>
                                </div>
                              </div>
@@ -6936,7 +6980,9 @@ export default function Home({
                               </div>
                               <div>
                                 <p className="text-xs font-bold text-gray-900">{log.partnerName}</p>
-                                <p className="text-[8px] font-black text-gray-400 uppercase">{log.date}</p>
+                                <p className="text-[8px] font-black text-gray-400 uppercase">
+                                  {typeof (log as any).date === 'string' ? (log as any).date : ((log as any).date?.toDate ? (log as any).date.toDate().toLocaleDateString() : ((log as any).date?.seconds ? new Date((log as any).date.seconds * 1000).toLocaleDateString() : 'Recently'))}
+                                </p>
                               </div>
                             </div>
                             <p className="text-xs font-black text-emerald-600">Settled ₹{log.amount}</p>
@@ -7180,7 +7226,9 @@ export default function Home({
                             {(partner.totalPaid || partner.lastPayoutDate) && (
                               <div className="mb-4 px-4 py-2 bg-emerald-50/50 rounded-2xl flex items-center justify-between border border-emerald-100/50">
                                 <p className="text-[9px] font-black text-emerald-700">Total Paid: ₹{partner.totalPaid || 0}</p>
-                                <p className="text-[9px] font-bold text-emerald-600">Last: {partner.lastPayoutDate || 'Never'}</p>
+                                <p className="text-[9px] font-bold text-emerald-600">
+                                  Last: {typeof (partner as any).lastPayoutDate === 'string' ? (partner as any).lastPayoutDate : ((partner as any).lastPayoutDate?.toDate ? (partner as any).lastPayoutDate.toDate().toLocaleDateString() : ((partner as any).lastPayoutDate?.seconds ? new Date((partner as any).lastPayoutDate.seconds * 1000).toLocaleDateString() : 'Never'))}
+                                </p>
                               </div>
                             )}
                             <div className="flex gap-2">
@@ -7429,7 +7477,9 @@ export default function Home({
                             {(vendor.totalPaid || vendor.lastPayoutDate) && (
                               <div className="mb-4 px-4 py-2 bg-emerald-50/50 rounded-2xl flex items-center justify-between border border-emerald-100/50">
                                 <p className="text-[9px] font-black text-emerald-700">Total Settled: ₹{vendor.totalPaid || 0}</p>
-                                <p className="text-[9px] font-bold text-emerald-600">Last: {vendor.lastPayoutDate || 'Never'}</p>
+                                <p className="text-[9px] font-bold text-emerald-600">
+                                  Last: {typeof (vendor as any).lastPayoutDate === 'string' ? (vendor as any).lastPayoutDate : ((vendor as any).lastPayoutDate?.toDate ? (vendor as any).lastPayoutDate.toDate().toLocaleDateString() : ((vendor as any).lastPayoutDate?.seconds ? new Date((vendor as any).lastPayoutDate.seconds * 1000).toLocaleDateString() : 'Never'))}
+                                </p>
                               </div>
                             )}
                             <div className="flex gap-2">
@@ -8255,7 +8305,9 @@ export default function Home({
               {selectedApproval.details?.location && (
                 <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 mb-8">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Business / Hub Location</p>
-                  <p className="font-bold text-slate-900">{selectedApproval.details.location.area}, {selectedApproval.details.location.city}</p>
+                  <p className="font-bold text-slate-900">
+                    {typeof selectedApproval.details.location === 'string' ? selectedApproval.details.location : `${selectedApproval.details.location.area || ''}${selectedApproval.details.location.area && selectedApproval.details.location.city ? ', ' : ''}${selectedApproval.details.location.city || ''}`}
+                  </p>
                 </div>
               )}
 
@@ -9098,7 +9150,9 @@ export default function Home({
                       <div key={req.id} className="flex items-center justify-between bg-white/50 p-3 rounded-xl border border-amber-100">
                         <div>
                           <p className="text-[10px] font-black text-amber-900">₹{req.amount}</p>
-                          <p className="text-[8px] font-bold text-amber-500">{req.date}</p>
+                          <p className="text-[8px] font-bold text-amber-500">
+                            {typeof req.date === 'string' ? req.date : (req.date?.toDate ? req.date.toDate().toLocaleDateString() : (req.date?.seconds ? new Date(req.date.seconds * 1000).toLocaleDateString() : ''))}
+                          </p>
                         </div>
                         <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-lg ${
                           req.status === 'Approved' ? 'bg-emerald-100 text-emerald-600' : 
@@ -9178,7 +9232,9 @@ export default function Home({
                     <div key={trip.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex items-center justify-between">
                       <div>
                         <p className="text-[10px] font-black text-gray-900 leading-tight mb-1">{trip.from} ➔ {trip.to}</p>
-                        <p className="text-[8px] font-bold text-gray-400 uppercase">{trip.date}</p>
+                        <p className="text-[8px] font-bold text-gray-400 uppercase">
+                          {typeof (trip as any).date === 'string' ? (trip as any).date : ((trip as any).date?.toDate ? (trip as any).date.toDate().toLocaleDateString() : ((trip as any).date?.seconds ? new Date((trip as any).date.seconds * 1000).toLocaleDateString() : 'Today'))}
+                        </p>
                       </div>
                       <p className="text-xs font-black text-emerald-600">+₹{trip.fare}</p>
                     </div>
@@ -9277,7 +9333,13 @@ export default function Home({
                           <h4 className={`text-sm font-black italic mb-1 ${notif.read ? 'text-gray-600' : 'text-gray-900'}`}>{notif.title}</h4>
                           <p className="text-[11px] font-medium text-gray-500 leading-relaxed">{notif.message}</p>
                           <p className="text-[8px] font-bold text-gray-400 uppercase italic mt-3">
-                            {new Date(notif.timestamp).toLocaleDateString()} at {new Date(notif.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                            {typeof notif.timestamp === 'number' || typeof notif.timestamp === 'string' ? (
+                              !isNaN(new Date(notif.timestamp).getTime()) ? (
+                                `${new Date(notif.timestamp).toLocaleDateString()} at ${new Date(notif.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+                              ) : 'Recently'
+                            ) : ((notif.timestamp as any)?.toDate ? (
+                              `${(notif.timestamp as any).toDate().toLocaleDateString()} at ${(notif.timestamp as any).toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+                            ) : 'Recently')}
                           </p>
                         </div>
                       </div>
@@ -9323,12 +9385,8 @@ export default function Home({
             whileHover={{ scale: 1.08 }}
             whileTap={{ scale: 0.92 }}
             className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-md overflow-hidden border-2 border-yellow-400 p-0.5 select-none cursor-pointer group transition-all" 
-            onClick={() => setZoomImage({
-              url: '/src/assets/images/local_bandi_logo_1785784124975.jpg',
-              title: 'Local Bandi Official Logo',
-              subtitle: 'Click & Zoom Viewer • Hyper-Local Hyper-Fast Delivery'
-            })}
-            title="Click to Zoom Local Bandi Logo"
+            onClick={handleProtectedLogoInteraction}
+            title="Local Bandi Logo"
             id="app-header-logo-button"
           >
              <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover rounded-lg group-hover:scale-110 transition-transform duration-200" alt="Local Bandi Logo" />
@@ -9345,7 +9403,7 @@ export default function Home({
               <span className="text-[10px] font-black uppercase tracking-[0.1em]">{t.deliverTo}</span>
               <ChevronDown className="w-3 h-3" />
             </motion.div>
-            <span className="font-extrabold text-gray-900 dark:text-white truncate max-w-[140px] text-xs font-display tracking-tight leading-none mt-0.5">{location}</span>
+            <span className="font-extrabold text-gray-900 dark:text-white truncate max-w-[140px] text-xs font-display tracking-tight leading-none mt-0.5">{typeof location === 'string' ? location : ((location as any)?.address || (location as any)?.area || (location as any)?.city || (location as any)?.name || 'Select Location')}</span>
             <div className="flex flex-wrap items-center gap-1.5 mt-1 max-w-[200px]">
               {currentBranch ? (
                 currentBranch.status === 'Active' ? (
@@ -9437,12 +9495,12 @@ export default function Home({
               whileTap={{ scale: 0.9 }}
               className="relative cursor-pointer"
               onClick={() => setShowSpinWheelModal(true)}
-              title="Spin & Win Lucky Wheel (Sunday Special)"
+              title="100% Offer Get (Sunday Special)"
               id="customer-header-spin-wheel-btn"
             >
               <div className="bg-gradient-to-r from-yellow-400 via-amber-400 to-amber-500 text-slate-950 px-2.5 py-2 rounded-2xl relative border border-amber-300 shadow-sm flex items-center gap-1 font-black text-[9px] uppercase tracking-wider">
                 <Sparkles className="w-3.5 h-3.5 fill-slate-950 animate-spin text-slate-950" />
-                <span className="hidden sm:inline">Sunday Spin</span>
+                <span className="hidden sm:inline">100% Offer Get</span>
               </div>
             </motion.div>
           )}
@@ -9895,10 +9953,10 @@ export default function Home({
                         </span>
                       </div>
                       <h3 className="text-base font-black uppercase tracking-tight text-slate-950 leading-tight">
-                        Sunday Spin &amp; Win Lucky Wheel
+                        100% OFFER GET
                       </h3>
                       <p className="text-[10px] text-slate-900 font-extrabold leading-tight mt-0.5">
-                        Every Sunday Special! No order required for the first 1,000 members. Spin &amp; win up to 15% OFF for Sunday order growth!
+                        Every Sunday Special! No order required for the first 1,000 members. Spin the lucky wheel to get your offer!
                       </p>
                     </div>
                   </div>
@@ -11283,8 +11341,10 @@ const PropertyAdminCard = ({ property, setDeleteConfirm }: { property: any, setD
             )}
           </div>
           <div>
-              <p className="font-black text-gray-900 leading-tight">{property.title}</p>
-              <p className="text-[10px] font-bold text-gray-400 uppercase">{property.location.area}, {property.location.city}</p>
+              <p className="font-black text-gray-900 leading-tight">{typeof property.title === 'string' ? property.title : 'Property Listing'}</p>
+              <p className="text-[10px] font-bold text-gray-400 uppercase">
+                {typeof property.location === 'string' ? property.location : `${property.location?.area || ''}${property.location?.area && property.location?.city ? ', ' : ''}${property.location?.city || ''}`}
+              </p>
           </div>
         </div>
         {!property.isApproved ? (
@@ -11315,11 +11375,11 @@ const PropertyAdminCard = ({ property, setDeleteConfirm }: { property: any, setD
       </div>
       <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
           <div className="flex items-center justify-between text-[10px] font-bold text-gray-600">
-            <span className="flex items-center gap-1"><User className="w-3 h-3" /> Seller: {property.sellerName}</span>
-            <span className="flex items-center gap-1"><PhoneCall className="w-3 h-3" /> {privateData?.sellerPhone || (loadingPrivate ? 'Loading...' : 'N/A')}</span>
+            <span className="flex items-center gap-1"><User className="w-3 h-3" /> Seller: {typeof property.sellerName === 'string' ? property.sellerName : 'Seller'}</span>
+            <span className="flex items-center gap-1"><PhoneCall className="w-3 h-3" /> {typeof privateData?.sellerPhone === 'string' ? privateData.sellerPhone : (loadingPrivate ? 'Loading...' : 'N/A')}</span>
           </div>
           <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 truncate">
-            <MapPin className="w-3 h-3" /> {privateData?.fullAddress || (loadingPrivate ? 'Loading...' : 'N/A')}
+            <MapPin className="w-3 h-3" /> {typeof privateData?.fullAddress === 'string' ? privateData.fullAddress : (loadingPrivate ? 'Loading...' : 'N/A')}
           </div>
       </div>
       <div className="mt-4 flex gap-2">

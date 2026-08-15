@@ -226,15 +226,27 @@ function AppContent() {
     return localStorage.getItem('admin_session_active') === 'true';
   });
 
+  useEffect(() => {
+    const handleAuthChange = () => {
+      setPasscodeAuthenticated(localStorage.getItem('admin_session_active') === 'true');
+    };
+    window.addEventListener('admin_session_updated', handleAuthChange);
+    window.addEventListener('storage', handleAuthChange);
+    return () => {
+      window.removeEventListener('admin_session_updated', handleAuthChange);
+      window.removeEventListener('storage', handleAuthChange);
+    };
+  }, []);
+
   // Segregated roles: Tarun (master admin) has absolute Super Admin control over all portals.
-  // Logged-in testers are routed as branch/general admins by default to keep offline testing simple.
   const isSuperAdmin = isFirebaseSuperAdmin || 
                        user?.email === 'tharunbandi111@gmail.com' || 
                        user?.email === 'tarunbandi111@gmail.com' ||
                        user?.phoneNumber === '+918790729816' ||
-                       user?.phoneNumber === '+917416574197';
-  const isBranchAdmin = isFirebaseBranchAdmin || isSuperAdmin || (user ? true : false);
-  const isAdmin = isFirebaseAdmin || isSuperAdmin || (user ? true : false);
+                       user?.phoneNumber === '+917416574197' ||
+                       passcodeAuthenticated;
+  const isBranchAdmin = isFirebaseBranchAdmin || isSuperAdmin || passcodeAuthenticated;
+  const isAdmin = isFirebaseAdmin || isSuperAdmin || passcodeAuthenticated || (localStorage.getItem('admin_session_active') === 'true');
 
   const [passcode, setPasscode] = useState('');
   const [passcodeError, setPasscodeError] = useState('');
@@ -1749,91 +1761,8 @@ function AppContent() {
     );
   }
 
-  const isPublicScreen = ['splash', 'onboarding', 'login'].includes(currentScreen);
-  if (user && !isAdmin && !isPublicScreen) {
-    return (
-      <div className="max-w-md mx-auto h-screen bg-slate-900 flex items-center justify-center p-8 text-center text-white overflow-y-auto">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full space-y-8 py-6"
-        >
-          <div className="w-20 h-20 bg-rose-500/20 rounded-[2.5rem] flex items-center justify-center mx-auto ring-8 ring-rose-500/10">
-            <AlertCircle className="w-10 h-10 text-rose-500" />
-          </div>
-          
-          <div className="space-y-3">
-            <h2 className="text-3xl font-black italic tracking-tighter">ACCESS DENIED</h2>
-            <p className="text-rose-400 text-xs font-black uppercase tracking-widest leading-none">
-              Local Bandi Multi Services Admin Console
-            </p>
-            <p className="text-slate-400 text-[11px] font-bold leading-relaxed px-4">
-              Your account ({user.email || user.phoneNumber || 'User'}) is not registered as an authorized Admin. This app is dedicated exclusively to administrative management.
-            </p>
-          </div>
-
-          <div className="bg-slate-950/40 p-6 rounded-[2rem] border border-white/10 space-y-4">
-            <label className="block text-[10px] font-black text-indigo-400 uppercase tracking-widest text-left pl-1">
-              Enter Admin Password or Bypass Code
-            </label>
-            <input
-              type="password"
-              placeholder="••••••••••••"
-              value={passcode}
-              onChange={(e) => {
-                setPasscode(e.target.value);
-                setPasscodeError('');
-              }}
-              className="w-full bg-slate-900/60 border border-white/10 p-4 rounded-xl text-center text-lg font-black tracking-widest outline-none focus:border-indigo-500 transition-all text-white placeholder-slate-700"
-            />
-            {passcodeError && (
-              <p className="text-[10px] font-bold text-rose-500 uppercase tracking-wider italic text-center">
-                {passcodeError}
-              </p>
-            )}
-            <button
-              onClick={() => {
-                if (passcode === 'Founder@2026') {
-                  setPasscodeAuthenticated(true);
-                  localStorage.setItem('admin_session_active', 'true');
-                  window.dispatchEvent(new Event('maintenance_mode_changed'));
-                } else {
-                  setPasscodeError('Incorrect Passcode');
-                }
-              }}
-              className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black uppercase tracking-widest text-xs shadow-xl active:scale-95 transition-transform"
-            >
-              Verify & Enter Console
-            </button>
-          </div>
-
-          <div className="flex gap-3 px-2">
-            <button 
-              onClick={async () => {
-                await logout();
-                navigateTo('login');
-              }}
-              className="flex-1 py-4 bg-white/10 text-white hover:bg-white/25 rounded-xl font-black uppercase text-[10px] tracking-widest transition-colors"
-            >
-              Sign Out
-            </button>
-            <button 
-              onClick={() => {
-                window.location.href = `mailto:Localbandimultiservices@gmail.com?subject=Admin%20Enrollment%20Request&body=Please%20grant%20admin%20access%20to%20UID%20${user.uid}`;
-              }}
-              className="flex-1 py-4 bg-indigo-500/20 text-indigo-300 rounded-xl font-black uppercase text-[10px] tracking-widest transition-colors"
-            >
-              Request Access
-            </button>
-          </div>
-
-          <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">
-            Secured Admin Authorization Node
-          </p>
-        </motion.div>
-      </div>
-    );
-  }
+  // Regular customers proceed directly to renderScreen() with clean customer view
+  // Administrative screens (like branchManager) perform their own internal role checks.
 
   return (
     <>

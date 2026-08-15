@@ -8,7 +8,9 @@ import {
   BarChart2, RefreshCw, Send, DollarSign, 
   Heart, Building, Percent, Power, Laptop, ShieldCheck,
   Star, Check, X, Shield, Globe, AlertCircle, Home,
-  Zap, Award, RotateCcw, Sparkles, Timer, Gift, Trophy
+  Zap, Award, RotateCcw, Sparkles, Timer, Gift, Trophy,
+  UserPlus, UserMinus, UserCheck, Smartphone, Key, AlertOctagon, CheckCircle2,
+  Lock, Unlock
 } from 'lucide-react';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -23,18 +25,42 @@ import { CATEGORIES, PRODUCTS } from '../constants';
 import LogisticsHeatmap from './LogisticsHeatmap';
 import OrderTrendsChart from './OrderTrendsChart';
 import { getStoredQuizQuestions, DEFAULT_LOW_PRICE_QUIZ_QUESTIONS, QuizQuestion } from './MarketingQuizModal';
+import { AuthorizedAdmin, AuthorizedAdminsConfig } from '../types';
 
 export default function AdminPortal() {
-  const { user, login, logout, userProfile, isSuperAdmin: isFbSuperAdmin } = useFirebase();
+  const { 
+    user, 
+    login, 
+    logout, 
+    userProfile, 
+    isSuperAdmin: isFbSuperAdmin, 
+    isMasterAdmin, 
+    isAuthorizedAdmin,
+    revokeSession 
+  } = useFirebase();
+
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(() => {
     return localStorage.getItem('local_admin_sessions_authorized') === 'true';
   });
-  const [adminRole, setAdminRole] = useState<'master' | 'franchise'>(() => {
+  const [adminRole, setAdminRole] = useState<'master' | 'franchise' | 'authorizedAdmin'>(() => {
     return (localStorage.getItem('local_admin_role') as any) || 'master';
   });
   const [adminBranchId, setAdminBranchId] = useState<string>(() => {
     return localStorage.getItem('local_admin_branch_id') || 'global';
   });
+
+  // Settings Submenu state
+  const [settingsSubTab, setSettingsSubTab] = useState<'gateways' | 'master_access' | 'logs'>('gateways');
+
+  // Master Admin Access / Authorized Admins state
+  const [authorizedAdminsList, setAuthorizedAdminsList] = useState<AuthorizedAdmin[]>([]);
+  const [primaryMasterPhones, setPrimaryMasterPhones] = useState<string[]>(['+918790729816', '+917416574197']);
+  const [newAdminPhone, setNewAdminPhone] = useState('');
+  const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminRole, setNewAdminRole] = useState<'authorizedAdmin' | 'masterAdmin'>('authorizedAdmin');
+  const [newAdminNotes, setNewAdminNotes] = useState('');
+  const [isAdminSaving, setIsAdminSaving] = useState(false);
+  const [adminSearchTerm, setAdminSearchTerm] = useState('');
 
   // Auto-authenticate Firebase Super Admin
   useEffect(() => {
@@ -212,8 +238,11 @@ export default function AdminPortal() {
 
   // --- GATEWAY & LOGGER STATES ---
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
-  const [smsProvider, setSmsProvider] = useState<'msg91' | 'twilio' | 'plivo'>('msg91');
-  const [smsApiKey, setSmsApiKey] = useState('MSG91_SECURE_AUTH_KEY_9283749');
+  const [smsProvider, setSmsProvider] = useState<'serv_imp' | 'twilio' | 'plivo'>('serv_imp');
+  const [smsKey, setSmsKey] = useState('rJCIC6J0');
+  const [smsPassword, setSmsPassword] = useState('mXdYj5Bc');
+  const [smsAccountType, setSmsAccountType] = useState('serv_imp');
+  const [smsMatchTemplate, setSmsMatchTemplate] = useState(false);
   const [smsSenderId, setSmsSenderId] = useState('LKLBND');
   const [paymentGateway, setPaymentGateway] = useState<'razorpay' | 'paytm' | 'cashfree' | 'stripe'>('razorpay');
   const [paymentMode, setPaymentMode] = useState<'sandbox' | 'live'>('sandbox');
@@ -534,7 +563,9 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
   const handleAuthSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const entered = adminPasscode.trim();
-    // Master high-security validation passcode (Standard passcode '1122' or '7416')
+    const cleanEntered = entered.replace(/\D/g, '');
+
+    // 1. Master high-security validation passcode (Standard passcode '1122' or '7416' or Firebase Super Admin)
     if (entered === '1122' || entered === '7416' || isFbSuperAdmin) {
       localStorage.setItem('local_admin_sessions_authorized', 'true');
       localStorage.setItem('admin_session_active', 'true');
@@ -545,24 +576,49 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       setIsAdminAuthenticated(true);
       setAuthError('');
       triggerToast('🔑 Secure Master Session Authorized Successfully');
+      return;
+    }
+
+    // 2. Check if entered code matches an authorized secondary admin phone or secret key
+    const matchingAuthorizedAdmin = authorizedAdminsList.find(adm => {
+      const cleanAdmPhone = adm.phoneNumber.replace(/\D/g, '').slice(-10);
+      return (
+        cleanAdmPhone === cleanEntered.slice(-10) ||
+        adm.phoneNumber === entered ||
+        adm.id === entered
+      ) && adm.status === 'active';
+    });
+
+    if (matchingAuthorizedAdmin) {
+      localStorage.setItem('local_admin_sessions_authorized', 'true');
+      localStorage.setItem('admin_session_active', 'true');
+      localStorage.setItem('admin_phone', matchingAuthorizedAdmin.phoneNumber);
+      localStorage.setItem('local_admin_role', matchingAuthorizedAdmin.role === 'masterAdmin' ? 'master' : 'authorizedAdmin');
+      localStorage.setItem('local_admin_branch_id', 'global');
+      setAdminRole(matchingAuthorizedAdmin.role === 'masterAdmin' ? 'master' : 'authorizedAdmin');
+      setAdminBranchId('global');
+      setIsAdminAuthenticated(true);
+      setAuthError('');
+      triggerToast(`🔑 Authorized Admin Session Granted: ${matchingAuthorizedAdmin.name || matchingAuthorizedAdmin.phoneNumber}`);
+      return;
+    }
+
+    // 3. Check franchise branch passcodes
+    const matchingBranch = branches.find(b => b.secPasscode?.trim() === entered);
+    if (matchingBranch) {
+      localStorage.setItem('local_admin_sessions_authorized', 'true');
+      localStorage.setItem('admin_session_active', 'true');
+      localStorage.setItem('local_admin_role', 'franchise');
+      localStorage.setItem('local_admin_branch_id', matchingBranch.id);
+      localStorage.setItem('local_admin_branch_name', matchingBranch.name);
+      setAdminRole('franchise');
+      setAdminBranchId(matchingBranch.id);
+      setIsAdminAuthenticated(true);
+      setAuthError('');
+      triggerToast(`🔑 Franchise Session Authorized for: ${matchingBranch.name}`);
     } else {
-      // Check franchise branch passcodes
-      const matchingBranch = branches.find(b => b.secPasscode?.trim() === entered);
-      if (matchingBranch) {
-        localStorage.setItem('local_admin_sessions_authorized', 'true');
-        localStorage.setItem('admin_session_active', 'true');
-        localStorage.setItem('local_admin_role', 'franchise');
-        localStorage.setItem('local_admin_branch_id', matchingBranch.id);
-        localStorage.setItem('local_admin_branch_name', matchingBranch.name);
-        setAdminRole('franchise');
-        setAdminBranchId(matchingBranch.id);
-        setIsAdminAuthenticated(true);
-        setAuthError('');
-        triggerToast(`🔑 Franchise Session Authorized for: ${matchingBranch.name}`);
-      } else {
-        setAuthError('❌ Invalid high-security authorization passcode. If you are a franchise admin, please obtain your branch passcode from Master Admin Tarun Bandi.');
-        setIsAdminAuthenticated(false);
-      }
+      setAuthError('❌ Invalid high-security authorization passcode or unregistered admin phone. Master admin Tarun Bandi (+918790729816) can authorize secondary admins in Settings > Master Admin Access.');
+      setIsAdminAuthenticated(false);
     }
   };
 
@@ -572,6 +628,8 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     localStorage.removeItem('local_admin_role');
     localStorage.removeItem('local_admin_branch_id');
     localStorage.removeItem('local_admin_branch_name');
+    localStorage.removeItem('admin_role');
+    localStorage.removeItem('admin_phone');
     setAdminRole('master');
     setAdminBranchId('global');
     setIsAdminAuthenticated(false);
@@ -584,15 +642,149 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     setTimeout(() => setNotificationMsg(null), 3500);
   };
 
+  // --- MASTER ADMIN ACCESS HANDLERS ---
+  const handleAddAuthorizedAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanDigits = newAdminPhone.replace(/\D/g, '');
+    if (cleanDigits.length < 10) {
+      triggerToast('❌ Please enter a valid 10-digit mobile number.');
+      return;
+    }
+    const formattedPhone = `+91${cleanDigits.slice(-10)}`;
+    
+    // Check duplicates with primary master admins
+    const isAlreadyMaster = primaryMasterPhones.some(p => p.replace(/\D/g, '').slice(-10) === cleanDigits.slice(-10));
+    if (isAlreadyMaster) {
+      triggerToast('⚠️ This phone number is already registered as a Primary Master Admin.');
+      return;
+    }
+
+    // Check duplicates in secondary admin list
+    const isAlreadyAdded = authorizedAdminsList.some(a => a.phoneNumber.replace(/\D/g, '').slice(-10) === cleanDigits.slice(-10));
+    if (isAlreadyAdded) {
+      triggerToast('⚠️ This phone number is already authorized in the secondary admin directory.');
+      return;
+    }
+
+    setIsAdminSaving(true);
+    try {
+      const newRecord: AuthorizedAdmin = {
+        id: `adm_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        phoneNumber: formattedPhone,
+        name: newAdminName.trim() || 'Secondary Administrator',
+        role: newAdminRole,
+        addedBy: user?.phoneNumber || user?.email || '+918790729816 (Tarun Bandi)',
+        addedAt: new Date().toISOString(),
+        status: 'active',
+        notes: newAdminNotes.trim()
+      };
+
+      const updatedList = [...authorizedAdminsList, newRecord];
+      const activePhones = [
+        ...primaryMasterPhones,
+        ...updatedList.filter(a => a.status === 'active').map(a => a.phoneNumber)
+      ];
+
+      await setDoc(doc(db, 'settings', 'authorized_admins'), {
+        primaryMasterAdmin: '+918790729816',
+        primaryPhoneNumbers: primaryMasterPhones,
+        authorizedPhones: activePhones,
+        secondaryAdmins: updatedList,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.phoneNumber || user?.email || '+918790729816'
+      }, { merge: true });
+
+      setNewAdminPhone('');
+      setNewAdminName('');
+      setNewAdminNotes('');
+      setNewAdminRole('authorizedAdmin');
+      triggerToast(`👑 Authorized Admin saved successfully: ${formattedPhone}`);
+    } catch (err: any) {
+      console.error("Error adding authorized admin:", err);
+      triggerToast(`❌ Failed to authorize admin: ${err.message || 'Firestore error'}`);
+    } finally {
+      setIsAdminSaving(false);
+    }
+  };
+
+  const handleToggleAdminStatus = async (adminId: string, currentStatus: 'active' | 'revoked') => {
+    const nextStatus: 'active' | 'revoked' = currentStatus === 'active' ? 'revoked' : 'active';
+    try {
+      const targetAdmin = authorizedAdminsList.find(a => a.id === adminId);
+      const updatedList = authorizedAdminsList.map(a => 
+        a.id === adminId ? { ...a, status: nextStatus, revokedAt: nextStatus === 'revoked' ? new Date().toISOString() : undefined } : a
+      );
+
+      const activePhones = [
+        ...primaryMasterPhones,
+        ...updatedList.filter(a => a.status === 'active').map(a => a.phoneNumber)
+      ];
+
+      await setDoc(doc(db, 'settings', 'authorized_admins'), {
+        primaryMasterAdmin: '+918790729816',
+        primaryPhoneNumbers: primaryMasterPhones,
+        authorizedPhones: activePhones,
+        secondaryAdmins: updatedList,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.phoneNumber || user?.email || '+918790729816'
+      }, { merge: true });
+
+      if (nextStatus === 'revoked') {
+        triggerToast(`🔒 Access Revoked for ${targetAdmin?.name || targetAdmin?.phoneNumber}. Active sessions will be terminated immediately.`);
+      } else {
+        triggerToast(`🔓 Access Reactivated for ${targetAdmin?.name || targetAdmin?.phoneNumber}.`);
+      }
+    } catch (err: any) {
+      console.error("Error toggling admin status:", err);
+      triggerToast('❌ Error updating admin authorization status.');
+    }
+  };
+
+  const handleDeleteAuthorizedAdmin = async (adminId: string) => {
+    try {
+      const targetAdmin = authorizedAdminsList.find(a => a.id === adminId);
+      const updatedList = authorizedAdminsList.filter(a => a.id !== adminId);
+
+      const activePhones = [
+        ...primaryMasterPhones,
+        ...updatedList.filter(a => a.status === 'active').map(a => a.phoneNumber)
+      ];
+
+      await setDoc(doc(db, 'settings', 'authorized_admins'), {
+        primaryMasterAdmin: '+918790729816',
+        primaryPhoneNumbers: primaryMasterPhones,
+        authorizedPhones: activePhones,
+        secondaryAdmins: updatedList,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.phoneNumber || user?.email || '+918790729816'
+      }, { merge: true });
+
+      triggerToast(`🗑️ Removed ${targetAdmin?.name || targetAdmin?.phoneNumber} from Authorized Admins list.`);
+    } catch (err: any) {
+      console.error("Error deleting admin:", err);
+      triggerToast('❌ Error removing admin record.');
+    }
+  };
+
+  const handleTestRevokeMySession = async () => {
+    triggerToast('⚠️ Initiating instant admin session revocation test...');
+    await revokeSession('Master Admin initiated manual session revocation test.');
+  };
+
+
   const handleSaveSmsConfig = async () => {
     try {
       await setDoc(doc(db, 'settings', 'sms_config'), {
         provider: smsProvider,
-        apiKey: smsApiKey,
+        key: smsKey,
+        apiKey: smsKey,
+        password: smsPassword,
+        accountType: smsAccountType,
+        matchTemplate: smsMatchTemplate,
         senderId: smsSenderId,
         updatedAt: new Date().toISOString()
       });
-      triggerToast('📲 SMS OTP transmitter settings synced successfully!');
+      triggerToast('📲 Service Implicit SMS OTP transmitter settings synced successfully!');
     } catch (err: any) {
       triggerToast('❌ Error saving SMS configuration.');
     }
@@ -1020,7 +1212,10 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       if (snap.exists()) {
         const data = snap.data();
         if (data.provider) setSmsProvider(data.provider);
-        if (data.apiKey) setSmsApiKey(data.apiKey);
+        if (data.key || data.apiKey) setSmsKey(data.key || data.apiKey);
+        if (data.password) setSmsPassword(data.password);
+        if (data.accountType) setSmsAccountType(data.accountType);
+        if (data.matchTemplate !== undefined) setSmsMatchTemplate(data.matchTemplate === true || data.matchTemplate === 'true');
         if (data.senderId) setSmsSenderId(data.senderId);
       }
     }, (err) => {
@@ -1054,7 +1249,31 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       console.warn("Hospital bookings sync error:", err);
     });
 
+    // 20. Sync Authorized Admins Config (Master Admin Access)
+    const unsubAuthorizedAdmins = onSnapshot(doc(db, 'settings', 'authorized_admins'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as AuthorizedAdminsConfig;
+        setAuthorizedAdminsList(data.secondaryAdmins || []);
+        if (data.primaryPhoneNumbers && data.primaryPhoneNumbers.length > 0) {
+          setPrimaryMasterPhones(data.primaryPhoneNumbers);
+        }
+      }
+    }, (err) => {
+      console.warn("Authorized admins config sync error in AdminPortal:", err);
+    });
+
+    // 21. Real-time session revocation listener
+    const handleRevokeEvent = (event: any) => {
+      const reason = event?.detail?.reason || 'Administrative role removed from backend';
+      console.warn("Admin session revoked via event:", reason);
+      setIsAdminAuthenticated(false);
+      setAuthError(`⚠️ Session Revoked: ${reason}`);
+      triggerToast(`🔒 Session Revoked: ${reason}`);
+    };
+    window.addEventListener('revoke_admin_session', handleRevokeEvent);
+
     return () => {
+      window.removeEventListener('revoke_admin_session', handleRevokeEvent);
       unsubVendors();
       unsubRiders();
       unsubProducts();
@@ -1077,6 +1296,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       unsubProperties();
       unsubComplaints();
       unsubHospitalBookings();
+      unsubAuthorizedAdmins();
     };
   }, [isAdminAuthenticated, user]);
 
@@ -4894,254 +5114,684 @@ const reconcileDocSync = async (branchId, docBody) => {
           </div>
         )}
 
-        {/* TAB 7: GLOBAL CODES & MEDICAL SETTINGS */}
+        {/* TAB 7: SETTINGS & MASTER ADMIN ACCESS */}
         {activeTab === 'systems' && (
-          <div className="space-y-6">
+          <div className="space-y-6 text-left">
             
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              
-              {/* Promo code engine configurator */}
-              <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-black uppercase tracking-tight text-yellow-400">Promo Coupons Database</h3>
-                  <Percent className="w-5 h-5 text-yellow-400" />
-                </div>
+            {/* SUBMENU NAVIGATION BAR */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-white/5 p-3 rounded-[2rem]">
+              <div className="flex items-center gap-2 overflow-x-auto py-1">
+                <button
+                  onClick={() => setSettingsSubTab('gateways')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                    settingsSubTab === 'gateways'
+                      ? 'bg-yellow-400 text-slate-950 shadow-lg shadow-yellow-400/20'
+                      : 'bg-slate-950/70 text-slate-400 hover:text-white border border-white/5'
+                  }`}
+                  id="settings_subtab_gateways"
+                >
+                  <Settings className="w-4 h-4" />
+                  <span>Gateways & OPD Pricing</span>
+                </button>
 
-                <div className="space-y-3.5 max-h-[350px] overflow-y-auto">
-                  {promoCodes.length === 0 ? (
-                    <p className="text-center py-12 text-slate-500 text-[10px] font-black uppercase">No promo codes registered</p>
-                  ) : (
-                    promoCodes.map((p) => (
-                      <div key={p.id} className="bg-slate-950/70 border border-white/5 p-4 rounded-2xl flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-black text-white tracking-widest">{p.code}</p>
-                          <p className="text-[10px] text-slate-400">{p.type === 'percentage' ? `${p.value}% Off` : `₹${p.value} Flat Off`} • Status: {p.status}</p>
-                        </div>
-                        <span className="px-2.5 py-1 bg-yellow-400/10 text-yellow-500 text-[8px] font-black uppercase tracking-widest rounded-full">{p.status}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <button
+                  onClick={() => setSettingsSubTab('master_access')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                    settingsSubTab === 'master_access'
+                      ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 shadow-lg shadow-amber-400/25 ring-2 ring-amber-300/40'
+                      : 'bg-slate-950/70 text-slate-400 hover:text-amber-300 border border-white/5'
+                  }`}
+                  id="settings_subtab_master_access"
+                >
+                  <ShieldCheck className="w-4 h-4 text-amber-500" />
+                  <span>Master Admin Access</span>
+                  <span className="bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded text-[8px] font-mono font-bold">
+                    {authorizedAdminsList.length + primaryMasterPhones.length}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setSettingsSubTab('logs')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+                    settingsSubTab === 'logs'
+                      ? 'bg-yellow-400 text-slate-950 shadow-lg shadow-yellow-400/20'
+                      : 'bg-slate-950/70 text-slate-400 hover:text-white border border-white/5'
+                  }`}
+                  id="settings_subtab_logs"
+                >
+                  <Activity className="w-4 h-4" />
+                  <span>Transmitters & Settlement Logs</span>
+                </button>
               </div>
 
-              {/* Hospital Consultation Prices Configurator */}
-              <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-black uppercase tracking-tight text-rose-400">Hospital Consultation OPD Prices</h3>
-                  <Building className="w-5 h-5 text-rose-400" />
-                </div>
-
-                <div className="space-y-3 px-1.5 max-h-[350px] overflow-y-auto">
-                  {Object.entries(hospitalPrices).length === 0 ? (
-                    <p className="text-center py-12 text-slate-500 text-[10px] font-black uppercase">No local hospitals in database records</p>
-                  ) : (
-                    Object.entries(hospitalPrices).map(([name, data]: [string, any]) => (
-                      <div key={name} className="bg-slate-950/70 border border-white/5 p-4 rounded-2xl flex items-center justify-between">
-                        <div>
-                          <p className="text-xs font-black text-white uppercase tracking-tight">{name}</p>
-                          <p className="text-[11px] font-bold text-slate-400 mt-1">Fee: ₹{data.price ?? 0} • Status: {data.isActive ? 'Online' : 'Offline'}</p>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleUpdateHospitalPrice(name, Number(data.price ?? 0), !data.isActive)}
-                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${data.isActive ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
-                          >
-                            {data.isActive ? 'Deactivate OP' : 'Activate OP'}
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+              {/* Submenu status indicator */}
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-950/60 border border-white/5 rounded-xl">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[9px] font-mono font-bold uppercase text-slate-400">
+                  Firestore Secure Sync: Active
+                </span>
               </div>
-
             </div>
 
-            {/* SECOND GRID ROW: MASTER INTEGRATIONS CONFIGURATOR */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-left">
-              
-              {/* SMS Dynamic Transmitter Center & Gateway Logs */}
-              <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-6 flex flex-col justify-between">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                    <div>
-                      <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">SMS Gateway Config & Logs</h3>
-                      <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Platform-wide OTP secure transmitters controller</p>
+            {/* SUBMENU 1: GATEWAYS & OPD CONFIG */}
+            {settingsSubTab === 'gateways' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  
+                  {/* Promo code engine configurator */}
+                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-black uppercase tracking-tight text-yellow-400">Promo Coupons Database</h3>
+                      <Percent className="w-5 h-5 text-yellow-400" />
                     </div>
-                    <span className="px-2 py-0.5 bg-yellow-400/10 text-yellow-500 text-[8.5px] font-black tracking-wider uppercase rounded-full">TRANS-MTR</span>
-                  </div>
 
-                  {/* Settings form */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Provider</label>
-                      <select
-                        value={smsProvider}
-                        onChange={(e: any) => setSmsProvider(e.target.value)}
-                        className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-yellow-500 text-slate-300"
-                      >
-                        <option value="msg91">MSG91 Enterprise</option>
-                        <option value="twilio">Twilio Programmable SMS</option>
-                        <option value="plivo">Plivo Premium</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Sender alphacode</label>
-                      <input
-                        type="text"
-                        value={smsSenderId}
-                        onChange={(e) => setSmsSenderId(e.target.value)}
-                        placeholder="e.g. LKLBND"
-                        className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white uppercase tracking-widest outline-none focus:border-yellow-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Secure Auth Secret / API Key</label>
-                    <input
-                      type="password"
-                      value={smsApiKey}
-                      onChange={(e) => setSmsApiKey(e.target.value)}
-                      placeholder="Enter Provider API Auth Key"
-                      className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
-                    />
-                  </div>
-
-                  <div className="flex justify-end pt-2">
-                    <button
-                      onClick={handleSaveSmsConfig}
-                      className="px-4 py-2 bg-yellow-400 hover:bg-yellow-350 text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
-                    >
-                      Save SMS Config
-                    </button>
-                  </div>
-                </div>
-
-                {/* Subpanel list: Live logs */}
-                <div className="space-y-2 pt-4 border-t border-white/5">
-                  <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">🚨 Live Dispatched SMS Stream logs</p>
-                  <div className="bg-slate-950 border border-white/5 p-4 rounded-2xl max-h-[160px] overflow-y-auto font-mono text-[9px] space-y-2">
-                    {auditLogs.filter(log => ['sms_otp', 'onboarding_otp'].includes(log.type)).length === 0 ? (
-                      <p className="text-center py-6 text-slate-600 uppercase">Gateway quiet. Ready for verification dispatches.</p>
-                    ) : (
-                      auditLogs.filter(log => ['sms_otp', 'onboarding_otp'].includes(log.type)).map((log) => (
-                        <div key={log.id} className="p-2 border-b border-white/5 last:border-0 flex flex-col gap-0.5 text-left text-slate-300">
-                          <div className="flex justify-between items-center text-slate-500">
-                            <span>+91 {log.phoneNumber} ({log.type === 'sms_otp' ? 'Login' : 'Onboard'})</span>
-                            <span className="text-emerald-400 font-extrabold bg-emerald-400/10 px-1 py-0.2 rounded text-[7px]">[ {log.status || 'DELIVERED'} ]</span>
-                          </div>
-                          <p className="text-white mt-1 font-mono">{log.message}</p>
-                          <span className="text-[7.5px] text-slate-500 mt-0.5">Code: {log.code} • Date: {log.createdAt?.toDate ? log.createdAt.toDate().toLocaleTimeString() : new Date().toLocaleTimeString()}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Integrated Merchant Payment Gateway Config & Live Settlements */}
-              <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-6 flex flex-col justify-between">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                    <div>
-                      <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">Payment Gateways & Router</h3>
-                      <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Collect platform commissions & dispatch pay-ins</p>
-                    </div>
-                    <span className="px-2 py-0.5 bg-yellow-400/10 text-yellow-500 text-[8.5px] font-black tracking-wider uppercase rounded-full">GATE-WAY</span>
-                  </div>
-
-                  {/* Settings form */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Engine</label>
-                      <select
-                        value={paymentGateway}
-                        onChange={(e: any) => setPaymentGateway(e.target.value)}
-                        className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-yellow-500 text-slate-300"
-                      >
-                        <option value="razorpay">Razorpay Checkout</option>
-                        <option value="paytm">Paytm Merchant API</option>
-                        <option value="cashfree">Cashfree Core</option>
-                        <option value="stripe">Stripe international</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Processing Mode</label>
-                      <select
-                        value={paymentMode}
-                        onChange={(e: any) => setPaymentMode(e.target.value)}
-                        className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-yellow-500 text-slate-300"
-                      >
-                        <option value="sandbox">Sandbox (Simulation)</option>
-                        <option value="live">Live Production (Real)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 col-span-2">
-                    <div>
-                      <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Merchant Pay-in VPA UPI ID</label>
-                      <input
-                        type="text"
-                        value={paymentUpiId}
-                        onChange={(e) => setPaymentUpiId(e.target.value)}
-                        placeholder="e.g. 8790729816@ybl"
-                        className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Merchant Account Holder</label>
-                      <input
-                        type="text"
-                        value={paymentHolder}
-                        onChange={(e) => setPaymentHolder(e.target.value)}
-                        placeholder="Holder Full Name"
-                        className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end pt-2">
-                    <button
-                      onClick={handleSavePaymentConfig}
-                      className="px-4 py-2 bg-yellow-400 hover:bg-yellow-350 text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
-                    >
-                      Save Payment Config
-                    </button>
-                  </div>
-                </div>
-
-                {/* Subpanel list: Live Logs */}
-                <div className="space-y-2 pt-4 border-t border-white/5">
-                  <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest">💵 Real-Time Platform Revenue Settlements</p>
-                  <div className="bg-slate-950 border border-white/5 p-4 rounded-2xl max-h-[160px] overflow-y-auto font-mono text-[9px] space-y-2">
-                    {auditLogs.filter(log => log.type === 'payment_success').length === 0 ? (
-                      <p className="text-center py-6 text-slate-600 uppercase">No customer pay-ins recorded yet in this cycle.</p>
-                    ) : (
-                      auditLogs.filter(log => log.type === 'payment_success').map((log) => (
-                        <div key={log.id} className="p-2 border-b border-white/5 last:border-0 flex justify-between items-start text-left text-slate-300">
-                          <div>
-                            <div className="flex items-center gap-1.5 font-extrabold text-white">
-                              <span>₹{log.amount}</span>
-                              <span className="text-[7px] text-slate-500">({log.method?.toUpperCase()})</span>
+                    <div className="space-y-3.5 max-h-[350px] overflow-y-auto">
+                      {promoCodes.length === 0 ? (
+                        <p className="text-center py-12 text-slate-500 text-[10px] font-black uppercase">No promo codes registered</p>
+                      ) : (
+                        promoCodes.map((p) => (
+                          <div key={p.id} className="bg-slate-950/70 border border-white/5 p-4 rounded-2xl flex items-center justify-between">
+                            <div>
+                              <p className="text-sm font-black text-white tracking-widest">{p.code}</p>
+                              <p className="text-[10px] text-slate-400">{p.type === 'percentage' ? `${p.value}% Off` : `₹${p.value} Flat Off`} • Status: {p.status}</p>
                             </div>
-                            <p className="text-[8px] text-slate-400 mt-0.5 truncate max-w-[200px]">Loc: {log.deliveryLocation}</p>
-                            <span className="text-[7.5px] text-slate-500">Ref: {log.txnId} • {log.createdAt?.toDate ? log.createdAt.toDate().toLocaleTimeString() : new Date().toLocaleTimeString()}</span>
+                            <span className="px-2.5 py-1 bg-yellow-400/10 text-yellow-500 text-[8px] font-black uppercase tracking-widest rounded-full">{p.status}</span>
                           </div>
-                          <div className="text-right">
-                            <span className="text-emerald-400 font-extrabold bg-emerald-400/10 px-1 py-0.2 rounded text-[7px]">[ SUCCESS ]</span>
-                            <p className="text-[7px] text-slate-500 mt-1 truncate max-w-[90px]">{log.customerName}</p>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Hospital Consultation Prices Configurator */}
+                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-black uppercase tracking-tight text-rose-400">Hospital Consultation OPD Prices</h3>
+                      <Building className="w-5 h-5 text-rose-400" />
+                    </div>
+
+                    <div className="space-y-3 px-1.5 max-h-[350px] overflow-y-auto">
+                      {Object.entries(hospitalPrices).length === 0 ? (
+                        <p className="text-center py-12 text-slate-500 text-[10px] font-black uppercase">No local hospitals in database records</p>
+                      ) : (
+                        Object.entries(hospitalPrices).map(([name, data]: [string, any]) => (
+                          <div key={name} className="bg-slate-950/70 border border-white/5 p-4 rounded-2xl flex items-center justify-between">
+                            <div>
+                              <p className="text-xs font-black text-white uppercase tracking-tight">{name}</p>
+                              <p className="text-[11px] font-bold text-slate-400 mt-1">Fee: ₹{data.price ?? 0} • Status: {data.isActive ? 'Online' : 'Offline'}</p>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleUpdateHospitalPrice(name, Number(data.price ?? 0), !data.isActive)}
+                                className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${data.isActive ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'}`}
+                              >
+                                {data.isActive ? 'Deactivate OP' : 'Activate OP'}
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ))
-                    )}
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Integration Gateways */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-left">
+                  {/* SMS Gateway */}
+                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                      <div>
+                        <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">SMS Gateway Config</h3>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">OTP secure transmitters controller</p>
+                      </div>
+                      <span className="px-2 py-0.5 bg-yellow-400/10 text-yellow-500 text-[8.5px] font-black tracking-wider uppercase rounded-full">SMS-GATE</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Provider</label>
+                        <select
+                          value={smsProvider}
+                          onChange={(e: any) => setSmsProvider(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-yellow-500 text-slate-300"
+                        >
+                          <option value="serv_imp">Service Implicit (serv_imp)</option>
+                          <option value="twilio">Twilio Programmable SMS</option>
+                          <option value="plivo">Plivo Premium</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Account Type (Route)</label>
+                        <input
+                          type="text"
+                          value={smsAccountType}
+                          onChange={(e) => setSmsAccountType(e.target.value)}
+                          placeholder="e.g. serv_imp"
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Key / User</label>
+                        <input
+                          type="text"
+                          value={smsKey}
+                          onChange={(e) => setSmsKey(e.target.value)}
+                          placeholder="e.g. rJCIC6J0"
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Password</label>
+                        <input
+                          type="password"
+                          value={smsPassword}
+                          onChange={(e) => setSmsPassword(e.target.value)}
+                          placeholder="e.g. mXdYj5Bc"
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={handleSaveSmsConfig}
+                        className="px-4 py-2 bg-yellow-400 hover:bg-yellow-350 text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                      >
+                        Save SMS Config
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Payment Gateway */}
+                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                      <div>
+                        <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">Payment Gateways</h3>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">UPI & Commission Router</p>
+                      </div>
+                      <span className="px-2 py-0.5 bg-yellow-400/10 text-yellow-500 text-[8.5px] font-black tracking-wider uppercase rounded-full">PAY-GATE</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Engine</label>
+                        <select
+                          value={paymentGateway}
+                          onChange={(e: any) => setPaymentGateway(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-yellow-500 text-slate-300"
+                        >
+                          <option value="razorpay">Razorpay Checkout</option>
+                          <option value="paytm">Paytm Merchant API</option>
+                          <option value="cashfree">Cashfree Core</option>
+                          <option value="stripe">Stripe international</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Processing Mode</label>
+                        <select
+                          value={paymentMode}
+                          onChange={(e: any) => setPaymentMode(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-yellow-500 text-slate-300"
+                        >
+                          <option value="sandbox">Sandbox (Simulation)</option>
+                          <option value="live">Live Production (Real)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Merchant Pay-in UPI ID</label>
+                        <input
+                          type="text"
+                          value={paymentUpiId}
+                          onChange={(e) => setPaymentUpiId(e.target.value)}
+                          placeholder="e.g. 8790729816@ybl"
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Account Holder</label>
+                        <input
+                          type="text"
+                          value={paymentHolder}
+                          onChange={(e) => setPaymentHolder(e.target.value)}
+                          placeholder="Holder Full Name"
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                      <button
+                        onClick={handleSavePaymentConfig}
+                        className="px-4 py-2 bg-yellow-400 hover:bg-yellow-350 text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                      >
+                        Save Payment Config
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
+            )}
 
-            </div>
+            {/* SUBMENU 2: MASTER ADMIN ACCESS (AUTHORIZED SECONDARY ADMINS) */}
+            {settingsSubTab === 'master_access' && (
+              <div className="space-y-6">
+                
+                {/* Master Admin Security Header Card */}
+                <div className="relative bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/40 border border-amber-500/20 p-6 md:p-8 rounded-[2.5rem] overflow-hidden shadow-2xl">
+                  <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+                  
+                  <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                    <div className="space-y-3 max-w-2xl">
+                      <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-full">
+                        <ShieldCheck className="w-4 h-4 text-amber-400" />
+                        <span className="text-[9px] font-black uppercase tracking-widest text-amber-300 font-mono">
+                          Master Admin Authority & Access Control
+                        </span>
+                      </div>
+                      <h2 className="text-xl md:text-2xl font-black text-white tracking-tight uppercase">
+                        Authorized Secondary Administrators
+                      </h2>
+                      <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                        Input phone numbers below to authorize secondary administrators. All credentials are synchronized to the secure <code className="text-amber-400 bg-slate-950 px-1.5 py-0.5 rounded font-mono text-[10px]">settings/authorized_admins</code> Firestore document. 
+                        If any admin's phone number is removed or marked revoked, our live authentication stream <strong className="text-white">immediately terminates their session</strong> and redirects them to the Customer App.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row lg:flex-col gap-3 min-w-[240px]">
+                      <div className="bg-slate-950/80 border border-white/10 p-4 rounded-2xl">
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Primary Founder</span>
+                          <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 text-[8px] font-black rounded-full uppercase">Immune</span>
+                        </div>
+                        <p className="text-sm font-black text-white">Tarun Bandi</p>
+                        <p className="text-xs font-mono text-amber-400">+91 8790729816</p>
+                      </div>
+
+                      <button
+                        onClick={handleTestRevokeMySession}
+                        className="flex items-center justify-center gap-2 px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:border-rose-500/50 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                        id="btn_test_session_revocation"
+                      >
+                        <AlertOctagon className="w-3.5 h-3.5 text-rose-400" />
+                        <span>Test Instant Session Revocation</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Form & Table Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  
+                  {/* Left Column: Authorize New Admin Form */}
+                  <div className="lg:col-span-5 bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-5">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+                          <UserPlus className="w-4 h-4 text-amber-400" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-black text-white uppercase tracking-tight">Authorize New Admin</h3>
+                          <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Grant dashboard roles by mobile phone</p>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 text-[8px] font-black uppercase tracking-wider rounded-full">
+                        Secure
+                      </span>
+                    </div>
+
+                    <form onSubmit={handleAddAuthorizedAdmin} className="space-y-4" id="form_authorize_admin">
+                      <div>
+                        <label className="block text-[9px] font-black uppercase tracking-wider text-slate-300 mb-1.5">
+                          Admin Mobile Phone Number <span className="text-rose-400">*</span>
+                        </label>
+                        <div className="relative">
+                          <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                            <Smartphone className="w-4 h-4 text-slate-500" />
+                          </div>
+                          <input
+                            type="tel"
+                            value={newAdminPhone}
+                            onChange={(e) => setNewAdminPhone(e.target.value)}
+                            placeholder="e.g. 9876543210 or +91 8790729816"
+                            className="w-full bg-slate-950 border border-white/10 pl-10 pr-4 py-3 rounded-xl text-sm font-mono font-bold text-white placeholder-slate-600 outline-none focus:border-amber-400 transition-colors"
+                            required
+                            id="input_admin_phone"
+                          />
+                        </div>
+                        <p className="text-[8px] text-slate-500 mt-1">10-digit Indian mobile number (auto-prefixed with +91)</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-[9px] font-black uppercase tracking-wider text-slate-300 mb-1.5">
+                          Administrator Full Name / Title <span className="text-rose-400">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={newAdminName}
+                          onChange={(e) => setNewAdminName(e.target.value)}
+                          placeholder="e.g. Rajesh Kumar (Operations Lead)"
+                          className="w-full bg-slate-950 border border-white/10 px-4 py-3 rounded-xl text-sm font-bold text-white placeholder-slate-600 outline-none focus:border-amber-400 transition-colors"
+                          required
+                          id="input_admin_name"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[9px] font-black uppercase tracking-wider text-slate-300 mb-1.5">
+                          Administrative Privilege Role
+                        </label>
+                        <select
+                          value={newAdminRole}
+                          onChange={(e: any) => setNewAdminRole(e.target.value)}
+                          className="w-full bg-slate-950 border border-white/10 px-4 py-3 rounded-xl text-xs font-bold text-white outline-none focus:border-amber-400 transition-colors"
+                          id="select_admin_role"
+                        >
+                          <option value="authorizedAdmin">Authorized Admin (Logistics, Orders, Vendors, Real Estate)</option>
+                          <option value="masterAdmin">Master Admin (Full Co-Executive Access & Controls)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[9px] font-black uppercase tracking-wider text-slate-300 mb-1.5">
+                          Department / Operational Notes
+                        </label>
+                        <textarea
+                          value={newAdminNotes}
+                          onChange={(e) => setNewAdminNotes(e.target.value)}
+                          placeholder="e.g. Khammam South hub coordinator, partner onboarding approvals"
+                          rows={2}
+                          className="w-full bg-slate-950 border border-white/10 px-4 py-2.5 rounded-xl text-xs text-white placeholder-slate-600 outline-none focus:border-amber-400 resize-none transition-colors"
+                          id="input_admin_notes"
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isAdminSaving}
+                        className="w-full py-3.5 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-350 hover:to-yellow-400 text-slate-950 font-black text-xs uppercase tracking-widest rounded-xl shadow-lg shadow-amber-400/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                        id="btn_submit_admin_auth"
+                      >
+                        {isAdminSaving ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>Authorizing Admin...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Key className="w-4 h-4" />
+                            <span>Authorize Admin Phone Number</span>
+                          </>
+                        )}
+                      </button>
+                    </form>
+
+                    <div className="bg-slate-950/60 border border-white/5 p-3.5 rounded-2xl text-[9px] text-slate-400 space-y-1.5">
+                      <p className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                        Real-time Enforcement:
+                      </p>
+                      <p>
+                        When an authorized admin logs in with this phone number or uses their passcode, they get immediate access. 
+                        Toggling <strong className="text-amber-300">Revoke</strong> immediately kicks their browser out of the dashboard.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Directory of Primary & Authorized Admins */}
+                  <div className="lg:col-span-7 bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-5">
+                    
+                    {/* Header & Search Bar */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+                      <div>
+                        <h3 className="text-sm font-black text-white uppercase tracking-tight">Authorized Admins Directory</h3>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">
+                          {primaryMasterPhones.length} Primary Founders &bull; {authorizedAdminsList.length} Secondary Admins
+                        </p>
+                      </div>
+
+                      <div className="relative min-w-[200px]">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                        <input
+                          type="text"
+                          value={adminSearchTerm}
+                          onChange={(e) => setAdminSearchTerm(e.target.value)}
+                          placeholder="Search phone or name..."
+                          className="w-full bg-slate-950 border border-white/10 pl-9 pr-3 py-1.5 rounded-xl text-xs text-white placeholder-slate-600 outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Directory List */}
+                    <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                      
+                      {/* Primary Master Admins (Immutable) */}
+                      {primaryMasterPhones.map((phone) => (
+                        <div
+                          key={phone}
+                          className="bg-gradient-to-r from-amber-500/10 via-slate-950/80 to-slate-950/80 border border-amber-500/30 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-bold shrink-0">
+                              👑
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-black text-white uppercase">
+                                  {phone === '+918790729816' ? 'Tarun Bandi' : 'Master Executive Admin'}
+                                </p>
+                                <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 text-[7.5px] font-black uppercase tracking-wider rounded-full border border-amber-500/30">
+                                  Primary Founder
+                                </span>
+                              </div>
+                              <p className="text-xs font-mono font-bold text-amber-400 mt-0.5">{phone}</p>
+                              <p className="text-[9px] text-slate-400 mt-0.5">Absolute system authority & global platform architect</p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-end sm:self-center">
+                            <span className="px-2.5 py-1 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-black uppercase tracking-widest rounded-lg flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" />
+                              Active Forever
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Filtered Secondary Admins */}
+                      {authorizedAdminsList
+                        .filter((admin) => {
+                          if (!adminSearchTerm) return true;
+                          const term = adminSearchTerm.toLowerCase();
+                          return (
+                            admin.name.toLowerCase().includes(term) ||
+                            admin.phoneNumber.includes(term) ||
+                            (admin.notes && admin.notes.toLowerCase().includes(term)) ||
+                            admin.role.toLowerCase().includes(term)
+                          );
+                        })
+                        .map((admin) => {
+                          const isActive = admin.status === 'active';
+                          return (
+                            <div
+                              key={admin.id}
+                              className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                                isActive
+                                  ? 'bg-slate-950/70 border-white/10 hover:border-amber-500/30'
+                                  : 'bg-rose-950/20 border-rose-500/20 opacity-75'
+                              }`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                                  isActive 
+                                    ? 'bg-slate-900 border-white/10 text-amber-400' 
+                                    : 'bg-rose-900/30 border-rose-500/30 text-rose-400'
+                                }`}>
+                                  {isActive ? <UserCheck className="w-4 h-4" /> : <UserMinus className="w-4 h-4" />}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <p className="text-xs font-black text-white uppercase">{admin.name}</p>
+                                    <span className={`px-2 py-0.5 text-[7.5px] font-black uppercase tracking-wider rounded-full ${
+                                      admin.role === 'masterAdmin'
+                                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                        : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                    }`}>
+                                      {admin.role === 'masterAdmin' ? 'Co-Master Admin' : 'Secondary Admin'}
+                                    </span>
+                                    <span className={`px-2 py-0.5 text-[7.5px] font-black uppercase tracking-wider rounded-full ${
+                                      isActive 
+                                        ? 'bg-emerald-500/15 text-emerald-400' 
+                                        : 'bg-rose-500/20 text-rose-400'
+                                    }`}>
+                                      {isActive ? '● Active' : '✕ Revoked'}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs font-mono font-bold text-slate-300 mt-0.5">{admin.phoneNumber}</p>
+                                  {admin.notes && (
+                                    <p className="text-[9px] text-slate-400 mt-0.5">{admin.notes}</p>
+                                  )}
+                                  <p className="text-[8px] text-slate-500 mt-1 font-mono">
+                                    Added: {new Date(admin.addedAt).toLocaleDateString()} by {admin.addedBy}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex items-center gap-2 self-end sm:self-center">
+                                <button
+                                  onClick={() => handleToggleAdminStatus(admin.id, admin.status)}
+                                  className={`px-3 py-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+                                    isActive
+                                      ? 'bg-rose-500/15 hover:bg-rose-500 text-rose-300 hover:text-white border border-rose-500/30'
+                                      : 'bg-emerald-500/15 hover:bg-emerald-500 text-emerald-300 hover:text-white border border-emerald-500/30'
+                                  }`}
+                                  id={`btn_toggle_admin_${admin.id}`}
+                                >
+                                  {isActive ? (
+                                    <>
+                                      <Lock className="w-3 h-3" />
+                                      <span>Revoke Access</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Unlock className="w-3 h-3" />
+                                      <span>Restore Access</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <button
+                                  onClick={() => handleDeleteAuthorizedAdmin(admin.id)}
+                                  className="w-8 h-8 rounded-xl bg-slate-900 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-white/10 flex items-center justify-center transition-all cursor-pointer"
+                                  title="Delete Admin Record"
+                                  id={`btn_delete_admin_${admin.id}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                      {authorizedAdminsList.length === 0 && (
+                        <div className="bg-slate-950/40 border border-white/5 p-8 rounded-2xl text-center space-y-2">
+                          <ShieldAlert className="w-8 h-8 text-slate-600 mx-auto" />
+                          <p className="text-xs font-bold text-slate-400">No secondary administrators authorized yet.</p>
+                          <p className="text-[10px] text-slate-500">
+                            Use the form on the left to input new administrator phone numbers.
+                          </p>
+                        </div>
+                      )}
+
+                    </div>
+                  </div>
+
+                </div>
+
+              </div>
+            )}
+
+            {/* SUBMENU 3: LIVE TRANSMITTERS & SETTLEMENT LOGS */}
+            {settingsSubTab === 'logs' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-left">
+                  
+                  {/* SMS Stream Logs */}
+                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                      <div>
+                        <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">🚨 Live Dispatched SMS Stream</h3>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Real-time OTP delivery telemetry</p>
+                      </div>
+                      <span className="px-2 py-0.5 bg-yellow-400/10 text-yellow-500 text-[8.5px] font-black tracking-wider uppercase rounded-full">
+                        {auditLogs.filter(log => ['sms_otp', 'onboarding_otp'].includes(log.type)).length} Dispatches
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-950 border border-white/5 p-4 rounded-2xl max-h-[380px] overflow-y-auto font-mono text-[9px] space-y-2">
+                      {auditLogs.filter(log => ['sms_otp', 'onboarding_otp'].includes(log.type)).length === 0 ? (
+                        <p className="text-center py-12 text-slate-600 uppercase">Gateway quiet. Ready for verification dispatches.</p>
+                      ) : (
+                        auditLogs.filter(log => ['sms_otp', 'onboarding_otp'].includes(log.type)).map((log) => (
+                          <div key={log.id} className="p-2.5 border-b border-white/5 last:border-0 flex flex-col gap-1 text-left text-slate-300">
+                            <div className="flex justify-between items-center text-slate-500">
+                              <span className="font-bold text-white">+91 {log.phoneNumber} ({log.type === 'sms_otp' ? 'Login' : 'Onboard'})</span>
+                              <span className="text-emerald-400 font-extrabold bg-emerald-400/10 px-1.5 py-0.5 rounded text-[7.5px]">[ {log.status || 'DELIVERED'} ]</span>
+                            </div>
+                            <p className="text-slate-300 font-mono">{log.message}</p>
+                            <span className="text-[7.5px] text-slate-500">Code: {log.code} • Date: {log.createdAt?.toDate ? log.createdAt.toDate().toLocaleTimeString() : new Date().toLocaleTimeString()}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Payment Settlements */}
+                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                      <div>
+                        <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">💵 Real-Time Platform Revenue Settlements</h3>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">Commission allocations & checkout receipts</p>
+                      </div>
+                      <span className="px-2 py-0.5 bg-emerald-400/10 text-emerald-400 text-[8.5px] font-black tracking-wider uppercase rounded-full">
+                        {auditLogs.filter(log => log.type === 'payment_success').length} Settlements
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-950 border border-white/5 p-4 rounded-2xl max-h-[380px] overflow-y-auto font-mono text-[9px] space-y-2">
+                      {auditLogs.filter(log => log.type === 'payment_success').length === 0 ? (
+                        <p className="text-center py-12 text-slate-600 uppercase">No customer pay-ins recorded yet in this cycle.</p>
+                      ) : (
+                        auditLogs.filter(log => log.type === 'payment_success').map((log) => (
+                          <div key={log.id} className="p-2.5 border-b border-white/5 last:border-0 flex justify-between items-start text-left text-slate-300">
+                            <div>
+                              <div className="flex items-center gap-1.5 font-extrabold text-white">
+                                <span className="text-emerald-400 text-xs">₹{log.amount}</span>
+                                <span className="text-[8px] text-slate-500">({log.method?.toUpperCase()})</span>
+                              </div>
+                              <p className="text-[8.5px] text-slate-400 mt-0.5 truncate max-w-[220px]">Loc: {log.deliveryLocation}</p>
+                              <span className="text-[7.5px] text-slate-500">Ref: {log.txnId} • {log.createdAt?.toDate ? log.createdAt.toDate().toLocaleTimeString() : new Date().toLocaleTimeString()}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-emerald-400 font-extrabold bg-emerald-400/10 px-1.5 py-0.5 rounded text-[7.5px]">[ SUCCESS ]</span>
+                              <p className="text-[8px] text-slate-400 mt-1 truncate max-w-[100px]">{log.customerName}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            )}
 
           </div>
         )}

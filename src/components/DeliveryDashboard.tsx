@@ -763,7 +763,15 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
                   msg.senderType === 'partner' ? 'bg-indigo-600 text-white rounded-br-none shadow-indigo-100' : 'bg-white text-slate-900 border border-slate-100 rounded-bl-none shadow-slate-50'
                 }`}>
                   {msg.text}
-                  <p className={`text-[9px] mt-2 font-black uppercase tracking-widest opacity-80 ${msg.senderType === 'partner' ? 'text-right' : ''}`}>{msg.timestamp}</p>
+                  <p className={`text-[9px] mt-2 font-black uppercase tracking-widest opacity-80 ${msg.senderType === 'partner' ? 'text-right' : ''}`}>
+                    {typeof msg.timestamp === 'string' 
+                      ? msg.timestamp 
+                      : msg.timestamp?.toDate 
+                        ? msg.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                        : msg.timestamp?.seconds 
+                          ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                          : 'Just now'}
+                  </p>
                 </div>
               </motion.div>
             ))}
@@ -1298,7 +1306,7 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
                       <div className="flex justify-between items-start mb-4">
                         <div>
                            <p className="text-xs font-black text-indigo-600 uppercase tracking-widest">{order.id}</p>
-                           <p className="text-[10px] font-bold text-slate-400">{order.items} Items • ₹{order.total}</p>
+                           <p className="text-[10px] font-bold text-slate-400">{Array.isArray(order.items) ? order.items.length : (typeof order.items === 'number' ? order.items : (order.items ? String(order.items) : 1))} Items • ₹{order.total}</p>
                         </div>
                         <button 
                           onClick={() => handleAcceptOrder(order.id)}

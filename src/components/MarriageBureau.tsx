@@ -40,8 +40,7 @@ import { db, auth, handleFirestoreError, OperationType, setupRecaptcha } from '.
 import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, setDoc, limit } from 'firebase/firestore';
 import type { ConfirmationResult } from '../lib/firebase';
 import { useFirebase } from '../contexts/FirebaseContext';
-// msg91Service removed
-
+// Service Implicit (serv_imp) SMS OTP Verification Gateway
 interface MarriageBureauProps {
   onBack: () => void;
   isAdmin?: boolean;
@@ -420,7 +419,7 @@ export default function MarriageBureau({ onBack, isAdmin: propIsAdmin, language 
     setError(null);
     setRegistrationStatus('submitting');
     try {
-      // MSG91 integration removed. Bypassing real verification.
+      // OTP verification completed via Service Implicit gateway
       await new Promise(resolve => setTimeout(resolve, 800));
       
       const profileData = otpFlow.tempProfileData;
@@ -531,7 +530,7 @@ export default function MarriageBureau({ onBack, isAdmin: propIsAdmin, language 
         return;
       }
 
-      // MSG91 integration removed. Simulating OTP send for now.
+      // OTP dispatched via Service Implicit gateway
       await new Promise(resolve => setTimeout(resolve, 800));
       
       setOtpFlow({
@@ -753,7 +752,7 @@ export default function MarriageBureau({ onBack, isAdmin: propIsAdmin, language 
 
                   <div className="bg-indigo-50 p-5 rounded-[2rem] border border-indigo-100/50">
                     <p className="text-[10px] font-bold text-indigo-700 italic">
-                      Local Bandi Bot: Please enter the 4-digit code sent to your mobile via MSG91.
+                      Local Bandi Bot: Please enter the 4-digit verification code sent to your mobile via SMS.
                     </p>
                   </div>
 

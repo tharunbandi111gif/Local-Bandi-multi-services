@@ -1438,8 +1438,10 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                       <div key={review.id || idx} className="pt-4 first:pt-0 group">
                         <div className="flex justify-between items-start mb-1.5">
                           <div>
-                            <span className="text-[11px] font-black text-gray-900 group-hover:text-amber-600 transition-colors uppercase tracking-tight">{review.userName}</span>
-                            <span className="text-[8px] font-bold text-gray-400 uppercase tracking-tight ml-2 bg-gray-50 px-1.5 py-0.5 rounded-md">{review.date}</span>
+                            <span className="text-[11px] font-black text-gray-900 group-hover:text-amber-600 transition-colors uppercase tracking-tight">{typeof review.userName === 'string' ? review.userName : 'Anonymous'}</span>
+                            <span className="text-[8px] font-bold text-gray-400 uppercase tracking-tight ml-2 bg-gray-50 px-1.5 py-0.5 rounded-md">
+                              {typeof review.date === 'string' ? review.date : (review.date?.toDate ? review.date.toDate().toLocaleDateString() : (review.date?.seconds ? new Date(review.date.seconds * 1000).toLocaleDateString() : (review.createdAt?.toDate ? review.createdAt.toDate().toLocaleDateString() : 'Recently')))}
+                            </span>
                           </div>
                           
                           {/* Stars */}
@@ -1502,7 +1504,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                               <span className="w-1.5 h-1.5 bg-gray-200 rounded-full" />
                               <span className="text-xs font-bold uppercase text-indigo-500 tracking-tight">{order.id}</span>
                             </div>
-                            <p className="text-xs font-medium text-gray-400">₹{order.total} • {order.items} items • {formatOrderDate(order.createdAt)}</p>
+                            <p className="text-xs font-medium text-gray-400">₹{order.total} • {Array.isArray(order.items) ? order.items.length : (typeof order.items === 'number' ? order.items : (order.items ? String(order.items) : 1))} items • {formatOrderDate(order.createdAt)}</p>
                           </div>
                        </div>
                        <div className={`px-4 py-1.5 rounded-full text-[8px] font-black uppercase tracking-[0.2em] ${
@@ -2543,7 +2545,15 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                         msg.senderType === 'partner' ? 'bg-indigo-600 text-white rounded-br-none shadow-indigo-100' : 'bg-white text-gray-900 border border-gray-100 rounded-bl-none shadow-gray-50'
                       }`}>
                         {msg.text}
-                        <p className={`text-[9px] mt-2 font-black uppercase tracking-widest opacity-80 ${msg.senderType === 'partner' ? 'text-right' : ''}`}>{msg.timestamp}</p>
+                        <p className={`text-[9px] mt-2 font-black uppercase tracking-widest opacity-80 ${msg.senderType === 'partner' ? 'text-right' : ''}`}>
+                          {typeof msg.timestamp === 'string' 
+                            ? msg.timestamp 
+                            : msg.timestamp?.toDate 
+                              ? msg.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                              : msg.timestamp?.seconds 
+                                ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                                : 'Just now'}
+                        </p>
                       </div>
                     </div>
                   ))}

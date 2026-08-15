@@ -145,8 +145,10 @@ export default function ReviewsSection({
                       <User className="w-5 h-5 text-yellow-600" />
                     </div>
                     <div>
-                      <p className="font-black text-gray-900 text-sm">{review.userName}</p>
-                      <p className="text-[10px] font-bold text-gray-400">{review.date}</p>
+                      <p className="font-black text-gray-900 text-sm">{typeof review.userName === 'string' ? review.userName : 'Anonymous'}</p>
+                      <p className="text-[10px] font-bold text-gray-400">
+                        {typeof (review as any).date === 'string' ? (review as any).date : ((review as any).date?.toDate ? (review as any).date.toDate().toLocaleDateString() : ((review as any).date?.seconds ? new Date((review as any).date.seconds * 1000).toLocaleDateString() : ((review as any).createdAt?.toDate ? (review as any).createdAt.toDate().toLocaleDateString() : 'Recently')))}
+                      </p>
                     </div>
                   </div>
 

@@ -384,3 +384,25 @@ export interface PromoCode {
   description?: string;
   createdAt: any;
 }
+
+export type AdminRole = 'masterAdmin' | 'authorizedAdmin' | 'branchAdmin' | 'user';
+
+export interface AuthorizedAdmin {
+  id: string;
+  phoneNumber: string;
+  name?: string;
+  role: 'masterAdmin' | 'authorizedAdmin';
+  addedBy: string;
+  addedAt: string;
+  status: 'active' | 'revoked';
+  notes?: string;
+}
+
+export interface AuthorizedAdminsConfig {
+  primaryMasterAdmin: string;
+  primaryPhoneNumbers: string[];
+  authorizedPhones: string[];
+  secondaryAdmins: AuthorizedAdmin[];
+  updatedAt: any;
+  updatedBy: string;
+}

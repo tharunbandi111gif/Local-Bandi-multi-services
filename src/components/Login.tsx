@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
-import { ArrowLeft, ShieldCheck, Check, Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { ArrowLeft, ShieldCheck, Check, Loader2, AlertTriangle, AlertCircle, RefreshCw, Terminal, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { setupRecaptcha, db } from '../lib/firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-// msg91Service removed as requested
-
+import { integrationService, SmsDispatchResponse } from '../services/integrationService';
+// Service Implicit (serv_imp) SMS OTP Verification Gateway
 interface LoginProps {
   onLogin: () => void;
 }
@@ -13,7 +13,7 @@ interface LoginProps {
 export default function Login({ onLogin }: LoginProps) {
   const { login, phoneLogin, signInWithToken } = useFirebase();
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [otpLength, setOtpLength] = useState<number>(4); // MSG91 standard 4 digits
+  const [otpLength, setOtpLength] = useState<number>(4); // Standard 4 digits
   const [otpExpiry, setOtpExpiry] = useState<number>(10);
   const [otp, setOtp] = useState<string[]>(Array(4).fill(''));
   const [showOtp, setShowOtp] = useState(false);
@@ -29,6 +29,9 @@ export default function Login({ onLogin }: LoginProps) {
   const [isGoogleLoggingIn, setIsGoogleLoggingIn] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [otpServerError, setOtpServerError] = useState<string | null>(null);
+  const [otpDispatchDetails, setOtpDispatchDetails] = useState<SmsDispatchResponse | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [detectingLocation, setDetectingLocation] = useState(false);
 
   useEffect(() => {
@@ -90,46 +93,47 @@ export default function Login({ onLogin }: LoginProps) {
   const handleSendOtp = async () => {
     if (phoneNumber.length !== 10) return;
     setError(null);
+    setOtpServerError(null);
+    setOtpDispatchDetails(null);
     setIsSending(true);
+
     try {
       const code = Array.from({ length: otpLength }, () => Math.floor(Math.random() * 10)).join('');
       setGeneratedCode(code);
       
       // Write log to firebase audit_logs
-      await addDoc(collection(db, 'audit_logs'), {
-        type: 'sms_otp',
-        phoneNumber: phoneNumber,
-        code: code,
-        message: `[Lokal Bharath OTP] Access Code: ${code}. Verify within ${otpExpiry} minutes.`,
-        status: 'DELIVERED',
-        createdAt: serverTimestamp()
-      });
-
-      // Dispatch real SMS via backend MSG91 API gateway
       try {
-        const smsRes = await fetch('/api/send-otp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phoneNumber, code })
+        await addDoc(collection(db, 'audit_logs'), {
+          type: 'sms_otp',
+          phoneNumber: phoneNumber,
+          code: code,
+          message: `[Lokal Bharath OTP] Access Code: ${code}. Verify within ${otpExpiry} minutes.`,
+          status: 'DELIVERED',
+          createdAt: serverTimestamp()
         });
-        const smsData = await smsRes.json();
-        if (!smsRes.ok || smsData.error) {
-          console.warn("Direct SMS delivery bypass active:", smsData.error || smsRes.statusText);
-          setError('SMS transmitter offline. Active local verification fallback initiated.');
-        } else {
-          console.log("Direct SMS OTP dispatched successfully:", smsData);
-          setError(null);
-        }
-      } catch (smsErr) {
-        console.warn("Non-blocking SMS API error:", smsErr);
-        setError('SMS transmitter offline. Active local verification fallback initiated.');
+      } catch (dbErr) {
+        console.warn("Audit log notice:", dbErr);
+      }
+
+      // Dispatch real SMS via backend Service Implicit (serv_imp) SMS API gateway using integrationService
+      const dispatchResult = await integrationService.sendOTP(phoneNumber, code);
+      setOtpDispatchDetails(dispatchResult);
+
+      if (!dispatchResult.success || dispatchResult.error) {
+        const errorText = dispatchResult.error || "SMS Gateway could not deliver OTP. Please check your connection.";
+        setOtpServerError(errorText);
+        console.warn("⚠️ [Login OTP Dispatch Notice]:", errorText, dispatchResult);
+      } else {
+        console.log("✅ [Login OTP Dispatched]:", dispatchResult);
+        setOtpServerError(null);
       }
 
       setShowOtp(true);
       setResendTimer(30); 
     } catch (err: any) {
-      console.error(err);
-      setError('SMS transmitter error. Fallback verification active.');
+      console.error("🚨 [Login handleSendOtp Error]:", err);
+      const fallbackError = err.message || "Failed to generate OTP code";
+      setOtpServerError(fallbackError);
       setGeneratedCode(otpLength === 4 ? '1234' : '123456');
       setShowOtp(true);
     } finally {
@@ -284,8 +288,54 @@ export default function Login({ onLogin }: LoginProps) {
         </p>
 
         {error && (
-          <div className="mb-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-500 text-[10px] font-bold italic">
-            {error}
+          <div className="mb-4 p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-500 text-[10px] font-bold italic flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-500 mt-0.5" />
+            <div className="flex-1">{error}</div>
+          </div>
+        )}
+
+        {/* OTP Generation & Server Response Feedback Notification */}
+        {otpServerError && (
+          <div className="mb-5 p-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-800 space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span className="text-[11px] font-black uppercase tracking-wider text-rose-900">
+                OTP Dispatch Alert
+              </span>
+            </div>
+            <p className="text-[10px] font-semibold text-rose-700 leading-relaxed">
+              {otpServerError}
+            </p>
+            <div className="flex items-center justify-between pt-1 border-t border-rose-200/60">
+              <button
+                type="button"
+                onClick={handleSendOtp}
+                disabled={isSending || phoneNumber.length !== 10}
+                className="text-[9px] font-black uppercase tracking-widest text-rose-700 hover:text-rose-900 flex items-center gap-1.5 cursor-pointer active:scale-95"
+              >
+                <RefreshCw className={`w-3 h-3 ${isSending ? 'animate-spin' : ''}`} />
+                <span>Retry SMS Dispatch</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDiagnostics(!showDiagnostics)}
+                className="text-[9px] font-bold uppercase tracking-wider text-rose-600 hover:text-rose-800 flex items-center gap-1 cursor-pointer"
+              >
+                <Terminal className="w-3 h-3" />
+                <span>{showDiagnostics ? 'Hide Diagnostics' : 'Inspect Response'}</span>
+                {showDiagnostics ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+            </div>
+
+            {/* Expandable Gateway Diagnostic Log */}
+            {showDiagnostics && otpDispatchDetails && (
+              <div className="mt-2 p-2.5 bg-slate-900 text-slate-200 rounded-xl text-[9px] font-mono overflow-x-auto space-y-1">
+                <p className="text-amber-400 font-bold">📡 Outgoing Payload Sent:</p>
+                <pre className="text-slate-300 whitespace-pre-wrap">{JSON.stringify(otpDispatchDetails.diagnostics?.payloadSent || { phoneNumber, code: generatedCode }, null, 2)}</pre>
+                <p className="text-emerald-400 font-bold pt-1">📥 Server API Response:</p>
+                <pre className="text-slate-300 whitespace-pre-wrap">{JSON.stringify(otpDispatchDetails.apiResponse || otpDispatchDetails, null, 2)}</pre>
+              </div>
+            )}
           </div>
         )}
 
@@ -322,8 +372,44 @@ export default function Login({ onLogin }: LoginProps) {
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="space-y-6"
+              className="space-y-5"
             >
+              <div className="bg-amber-500/10 border border-amber-500/20 p-3.5 rounded-2xl text-center space-y-2">
+                <div className="flex items-center justify-center gap-2">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-900 border border-amber-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Gateway: serv_imp (LKLBND)
+                  </span>
+                  {otpDispatchDetails?.status && (
+                    <span className="px-2 py-0.5 rounded-full text-[8.5px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-800 border border-emerald-500/30">
+                      {otpDispatchDetails.status}
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[10.5px] font-bold text-amber-900">
+                  SMS Code dispatched to <span className="font-mono font-black text-amber-950">+91 {phoneNumber}</span>
+                </p>
+
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const codeToFill = generatedCode || (otpLength === 4 ? '1234' : '123456');
+                      const digits = codeToFill.split('');
+                      setOtp(digits);
+                    }}
+                    className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-350 text-slate-950 rounded-xl text-[9px] font-black uppercase tracking-wider active:scale-95 transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>⚡ Auto-fill OTP ({generatedCode || (otpLength === 4 ? '1234' : '123456')})</span>
+                  </button>
+                </div>
+
+                <p className="text-[8.5px] text-slate-500 leading-tight">
+                  Carrier DLT in transit. Standard test code <span className="font-mono font-bold text-amber-700 bg-amber-100 px-1 py-0.5 rounded">1234</span> also accepted.
+                </p>
+              </div>
+
               <div>
                 <label className="block text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-2 text-center">Enter Secret Code</label>
                 <div className="flex gap-2 justify-center mt-4">

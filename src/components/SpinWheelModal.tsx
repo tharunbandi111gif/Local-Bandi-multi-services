@@ -13,14 +13,14 @@ interface SpinWheelModalProps {
 }
 
 const WHEEL_SECTORS = [
-  { label: '100% FREE', pct: 15, color: '#f59e0b', textColor: '#0f172a' },
-  { label: '15% OFF', pct: 15, color: '#10b981', textColor: '#ffffff' },
-  { label: 'JACKPOT 100%', pct: 12, color: '#6366f1', textColor: '#ffffff' },
-  { label: '10% OFF', pct: 10, color: '#ec4899', textColor: '#ffffff' },
-  { label: 'FREE DEL', pct: 8, color: '#8b5cf6', textColor: '#ffffff' },
-  { label: '12% OFF', pct: 12, color: '#14b8a6', textColor: '#ffffff' },
-  { label: '100% CASHBACK', pct: 15, color: '#3b82f6', textColor: '#ffffff' },
-  { label: '8% OFF', pct: 8, color: '#f43f5e', textColor: '#ffffff' },
+  { label: '15% OFF', pct: 15, color: '#f59e0b', textColor: '#0f172a' },
+  { label: '12% OFF', pct: 12, color: '#10b981', textColor: '#ffffff' },
+  { label: '10% OFF', pct: 10, color: '#6366f1', textColor: '#ffffff' },
+  { label: '14% OFF', pct: 14, color: '#ec4899', textColor: '#ffffff' },
+  { label: '8% OFF', pct: 8, color: '#8b5cf6', textColor: '#ffffff' },
+  { label: '5% OFF', pct: 5, color: '#14b8a6', textColor: '#ffffff' },
+  { label: '100% OFFER', pct: 15, color: '#3b82f6', textColor: '#ffffff' },
+  { label: '1% OFF', pct: 1, color: '#f43f5e', textColor: '#ffffff' },
 ];
 
 export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
@@ -43,24 +43,21 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
 
   if (!isOpen) return null;
 
+  const isTodaySunday = new Date().getDay() === 0; // 0 = Sunday (00:00 - 23:59)
   const isLimitReached = isSundaySpecial && sundayClaimCount >= maxSundayClaims;
 
   const handleSpin = () => {
-    if (isSpinning || wonReward || isLimitReached) return;
+    if (isSpinning || wonReward || isLimitReached || !isTodaySunday) return;
 
     setIsSpinning(true);
 
-    // According to specs, actual discount granted is capped at 0% to 15% max (e.g. 15%, 12%, 10%, 8%)
-    // Randomly pick a realistic reward among 15%, 12%, 10%, 8%
-    const possiblePct = [15, 12, 10, 8];
+    // Real-time discount truly between 1% to 15% OFF
+    const possiblePct = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
     const chosenPct = possiblePct[Math.floor(Math.random() * possiblePct.length)];
 
     // Spin physics: 5 full rotations (1800 deg) + angle for sector
     const sectorAngle = 360 / WHEEL_SECTORS.length;
-    // Find index of sector matching chosenPct or land randomly
-    const targetSectorIndex = WHEEL_SECTORS.findIndex(s => s.pct === chosenPct) !== -1 
-      ? WHEEL_SECTORS.findIndex(s => s.pct === chosenPct) 
-      : 1;
+    const targetSectorIndex = Math.floor(Math.random() * WHEEL_SECTORS.length);
 
     const extraDegree = (WHEEL_SECTORS.length - targetSectorIndex) * sectorAngle - (sectorAngle / 2);
     const totalNewRotation = rotation + 1800 + (360 - (rotation % 360)) + extraDegree;
@@ -114,19 +111,16 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
           <div className="space-y-1.5 mb-4">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-500/40 text-amber-400 text-[10px] font-black uppercase tracking-widest font-mono">
               <Sparkles className="w-3.5 h-3.5 text-amber-400 fill-amber-400 animate-spin" />
-              <span>{isSundaySpecial ? 'SUNDAY LUCKY WHEEL (NO ORDER NEEDED)' : '1st Order Delivered Special'}</span>
+              <span>Sunday Special Reward</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 via-amber-400 to-amber-500 uppercase tracking-tight">
-              SPIN &amp; WIN TO FREE 100%!
+              100% OFFER GET
             </h2>
             <p className="text-[11px] text-slate-300 font-medium max-w-xs mx-auto">
-              {isSundaySpecial 
-                ? 'Sunday Special Offer! First 1,000 members can spin & win discount rewards today without order completion.'
-                : 'Congratulations on completing your first order! Spin the lucky wheel to claim your reward.'
-              }
+              Every Sunday Special! Spin the lucky wheel to unlock your guaranteed offer today.
             </p>
 
-            {isSundaySpecial && (
+            {isSundaySpecial && isTodaySunday && (
               <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/30 rounded-xl inline-block max-w-xs w-full">
                 <div className="flex items-center justify-between text-[10px] font-mono font-bold">
                   <span className="text-amber-400 uppercase">First 1,000 Sunday Members:</span>
@@ -215,15 +209,20 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
               </div>
 
               {/* Action Spin Button */}
-              {isLimitReached ? (
+              {!isTodaySunday ? (
+                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-center space-y-1">
+                  <p className="text-xs font-black text-amber-400 uppercase tracking-wide">Sunday Special Only (00:00 - 23:59)</p>
+                  <p className="text-[10px] text-slate-300">The Sunday Spin Wheel is active every Sunday from 00:00 to 23:59. Please come back on Sunday to spin &amp; win your offer!</p>
+                </div>
+              ) : isLimitReached ? (
                 <div className="p-3.5 bg-red-500/10 border border-red-500/30 rounded-2xl text-center space-y-1">
                   <p className="text-xs font-black text-red-400 uppercase tracking-wide">Sunday Limit Reached! (1000/1000)</p>
-                  <p className="text-[10px] text-slate-300">All 1,000 free Sunday spins have been claimed for today. Please come back next Sunday or complete your 1st order!</p>
+                  <p className="text-[10px] text-slate-300">All 1,000 free Sunday spins have been claimed for today. Please come back next Sunday!</p>
                 </div>
               ) : (
                 <button
                   onClick={handleSpin}
-                  disabled={isSpinning || isLimitReached}
+                  disabled={isSpinning || isLimitReached || !isTodaySunday}
                   className={`w-full py-3.5 px-6 rounded-2xl font-black text-xs uppercase tracking-widest transition-all cursor-pointer shadow-lg flex items-center justify-center gap-2 ${
                     isSpinning 
                       ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/5' 
@@ -279,7 +278,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                 </div>
               </div>
 
-              {/* Terms & Conditions Box (As requested: order 599 and above, 0 to 15% discount) */}
+              {/* Terms & Conditions Box */}
               <div className="p-3.5 bg-slate-950 rounded-2xl border border-white/10 text-left space-y-1.5">
                 <div className="flex items-center gap-1.5 text-[10.5px] font-black text-amber-400 uppercase tracking-wider">
                   <ShieldCheck className="w-4 h-4 text-amber-400" />
@@ -287,7 +286,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                 </div>
                 <ul className="text-[10px] text-slate-300 space-y-1 list-disc list-inside font-medium leading-relaxed">
                   <li>Valid on your next order with a minimum order value of <strong className="text-amber-400 font-bold">₹599 and above</strong>.</li>
-                  <li>Grants a maximum discount between <strong className="text-emerald-400 font-bold">0% to 15% OFF</strong> on total cart value.</li>
+                  <li>Grants a guaranteed discount between <strong className="text-emerald-400 font-bold">1% to 15% OFF</strong> on total cart value.</li>
                   <li>Use code <strong className="text-yellow-400 font-mono font-bold">{wonReward.code}</strong> at checkout.</li>
                 </ul>
               </div>

@@ -310,7 +310,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
           createdAt: serverTimestamp()
         });
 
-        // Dispatch real SMS via backend MSG91 API gateway
+        // Dispatch real SMS via backend Service Implicit SMS API gateway
         try {
           fetch('/api/send-otp', {
             method: 'POST',

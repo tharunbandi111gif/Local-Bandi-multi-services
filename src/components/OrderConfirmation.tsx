@@ -23,6 +23,8 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
   }, 0);
   const finalTotal = Math.round(total * 1.05) + (total > 500 ? 0 : 40);
 
+  const isSunday = new Date().getDay() === 0;
+
   useEffect(() => {
     const interval = setInterval(() => {
       setRiderPos(prev => {
@@ -114,33 +116,35 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
             </p>
           </div>
 
-          {/* 1ST ORDER DELIVERED SPIN & WIN BANNER */}
-          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950 p-5 border border-amber-400/40 shadow-xl space-y-3 text-left">
-            <div className="flex items-center justify-between">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/10 border border-amber-400/30 text-amber-400 text-[9px] font-black uppercase font-mono">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400 fill-amber-400 animate-spin" />
-                <span>1st Order Delivered Reward</span>
+          {/* SUNDAY SPECIAL SPIN & WIN BANNER */}
+          {isSunday && (
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950 p-5 border border-amber-400/40 shadow-xl space-y-3 text-left">
+              <div className="flex items-center justify-between">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/10 border border-amber-400/30 text-amber-400 text-[9px] font-black uppercase font-mono">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400 fill-amber-400 animate-spin" />
+                  <span>Sunday Special Reward</span>
+                </div>
+                <span className="text-[9.5px] font-mono font-extrabold text-amber-300">100% Offer Get</span>
               </div>
-              <span className="text-[9.5px] font-mono font-extrabold text-amber-300">100% Free Wheel</span>
-            </div>
 
-            <div>
-              <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
-                🎰 SPIN &amp; WIN TO FREE 100%!
-              </h3>
-              <p className="text-[11px] text-slate-300 font-medium leading-relaxed mt-0.5">
-                Spin the lucky round wheel to unlock your exclusive delivered order reward!
-              </p>
-            </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-white uppercase tracking-tight flex items-center gap-2">
+                  🎰 100% OFFER GET
+                </h3>
+                <p className="text-[11px] text-slate-300 font-medium leading-relaxed mt-0.5">
+                  Spin the lucky round wheel to unlock your exclusive Sunday offer!
+                </p>
+              </div>
 
-            <button
-              onClick={() => setShowSpinWheel(true)}
-              className="w-full py-3 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-300 text-slate-950 rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Zap className="w-4 h-4 fill-slate-950" />
-              <span>SPIN LUCKY WHEEL NOW</span>
-            </button>
-          </div>
+              <button
+                onClick={() => setShowSpinWheel(true)}
+                className="w-full py-3 bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-yellow-300 text-slate-950 rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Zap className="w-4 h-4 fill-slate-950" />
+                <span>SPIN LUCKY WHEEL NOW</span>
+              </button>
+            </div>
+          )}
 
           <div className="flex items-center justify-between pb-6 border-b border-gray-50">
             <div className="flex items-center gap-4">

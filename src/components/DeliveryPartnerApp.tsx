@@ -152,15 +152,83 @@ const getSafeCoords = (loc: any, fallback = DEFAULT_COORDS): google.maps.LatLngL
 interface RouteMapProps {
   origin: google.maps.LatLngLiteral;
   destination: google.maps.LatLngLiteral;
+  riderLocation?: google.maps.LatLngLiteral | null;
   onUpdateETA: (eta: string) => void;
 }
 
-function RouteMap({ origin, destination, onUpdateETA }: RouteMapProps) {
+function RouteMap({ origin, destination, riderLocation, onUpdateETA }: RouteMapProps) {
   const map = useMap();
   const routesLib = useMapsLibrary('routes');
   const polylinesRef = useRef<google.maps.Polyline[]>([]);
   const [trafficEnabled, setTrafficEnabled] = useState(true);
   const trafficLayerRef = useRef<any>(null);
+
+  // Smooth Rider Marker animation state
+  const [animRiderPos, setAnimRiderPos] = useState<google.maps.LatLngLiteral | null>(riderLocation || null);
+  const [heading, setHeading] = useState<number>(0);
+  const animFrameRef = useRef<number | null>(null);
+  const prevRiderPosRef = useRef<google.maps.LatLngLiteral | null>(riderLocation || null);
+
+  // Smooth animation loop whenever simulated coordinates change
+  useEffect(() => {
+    if (!riderLocation) {
+      setAnimRiderPos(null);
+      prevRiderPosRef.current = null;
+      return;
+    }
+
+    const startPos = animRiderPos || prevRiderPosRef.current || riderLocation;
+    const targetPos = riderLocation;
+
+    const dLng = targetPos.lng - startPos.lng;
+    const dLat = targetPos.lat - startPos.lat;
+    const distSq = dLng * dLng + dLat * dLat;
+
+    if (distSq > 0.0000000001) {
+      const angle = (Math.atan2(dLng, dLat) * 180) / Math.PI;
+      setHeading(angle);
+    }
+
+    if (distSq < 0.0000000001) {
+      setAnimRiderPos(targetPos);
+      prevRiderPosRef.current = targetPos;
+      return;
+    }
+
+    let startTime: number | null = null;
+    const duration = 1800; // 1.8s fluid interpolation for 2s coordinate updates
+
+    const step = (now: number) => {
+      if (!startTime) startTime = now;
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // Smooth cubic ease-out calculation
+      const ease = 1 - Math.pow(1 - progress, 3);
+
+      const currentLat = startPos.lat + (targetPos.lat - startPos.lat) * ease;
+      const currentLng = startPos.lng + (targetPos.lng - startPos.lng) * ease;
+
+      const interpolated = { lat: currentLat, lng: currentLng };
+      setAnimRiderPos(interpolated);
+      prevRiderPosRef.current = interpolated;
+
+      if (progress < 1) {
+        animFrameRef.current = requestAnimationFrame(step);
+      }
+    };
+
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+    }
+    animFrameRef.current = requestAnimationFrame(step);
+
+    return () => {
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
+    };
+  }, [riderLocation?.lat, riderLocation?.lng]);
 
   useEffect(() => {
     if (!map) return;
@@ -204,7 +272,14 @@ function RouteMap({ origin, destination, onUpdateETA }: RouteMapProps) {
     }).then(({ routes }) => {
       if (routes?.[0]) {
         const newPolylines = routes[0].createPolylines();
-        newPolylines.forEach(p => p.setMap(map));
+        newPolylines.forEach(p => {
+          p.setOptions({
+            strokeColor: '#3B82F6',
+            strokeWeight: 6,
+            strokeOpacity: 0.85
+          });
+          p.setMap(map);
+        });
         polylinesRef.current = newPolylines;
         
         if (routes[0].viewport) {
@@ -230,6 +305,30 @@ function RouteMap({ origin, destination, onUpdateETA }: RouteMapProps) {
       <AdvancedMarker position={destination}>
         <Pin background="#E11D48" glyphColor="#fff" />
       </AdvancedMarker>
+
+      {/* Smoothly Animated Rider Marker */}
+      {animRiderPos && (
+        <AdvancedMarker position={animRiderPos}>
+          <div className="relative flex items-center justify-center">
+            {/* Pulsing Radar Ring */}
+            <span className="absolute w-10 h-10 rounded-full bg-emerald-500/30 animate-ping" />
+            <span className="absolute w-7 h-7 rounded-full bg-emerald-500/40 border-2 border-emerald-400" />
+            
+            {/* Rider Bike Container with Directional Heading Rotation */}
+            <div 
+              className="relative w-9 h-9 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-2xl border-2 border-white transition-transform duration-300"
+              style={{ transform: `rotate(${heading}deg)` }}
+            >
+              <Bike className="w-5 h-5 stroke-[2.5]" />
+            </div>
+
+            {/* Live GPS Telemetry Tag */}
+            <div className="absolute -bottom-5 bg-slate-950/90 border border-emerald-500/50 px-2 py-0.5 rounded-full shadow-lg text-[8px] font-black text-emerald-400 font-mono tracking-widest whitespace-nowrap uppercase">
+              LIVE GPS
+            </div>
+          </div>
+        </AdvancedMarker>
+      )}
 
       {/* Floating Traffic Control Indicator Overlay */}
       <div className="absolute top-4 left-4 z-[9999] bg-slate-950/90 backdrop-blur-md border border-white/10 rounded-xl px-2.5 py-1.5 flex items-center gap-2 shadow-xl">
@@ -3086,13 +3185,9 @@ export default function DeliveryPartnerApp() {
                             <RouteMap 
                               origin={getSafeCoords(activeOrder.pickupLocation)} 
                               destination={getSafeCoords(activeOrder.deliveryLocation)} 
+                              riderLocation={riderLocation}
                               onUpdateETA={setEta}
                             />
-                            {riderLocation && (
-                              <AdvancedMarker position={riderLocation}>
-                                <Pin background="#10B981" glyphColor="#fff" />
-                              </AdvancedMarker>
-                            )}
                             <MapCenterController center={riderLocation} autoCenter={autoCenter} />
                           </Map>
                         </APIProvider>
@@ -3236,7 +3331,7 @@ export default function DeliveryPartnerApp() {
                   </div>
 
                   <div className="p-3 bg-slate-950 rounded-2xl border border-white/5 text-left font-mono">
-                    <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest block mb-1">Package Items ({activeOrder.items})</span>
+                    <span className="text-[8px] text-slate-500 font-bold uppercase tracking-widest block mb-1">Package Items ({Array.isArray(activeOrder.items) ? activeOrder.items.length : (typeof activeOrder.items === 'number' ? activeOrder.items : (activeOrder.items ? String(activeOrder.items) : 1))})</span>
                     <div className="space-y-1.5 pl-1.5">
                       {activeOrder.orderItems?.map((item, idx) => (
                         <div key={idx} className="flex justify-between text-xs font-extrabold text-slate-300">
@@ -3391,7 +3486,7 @@ export default function DeliveryPartnerApp() {
                                   <span className="font-black text-white uppercase">{ord.deliveryAddress.slice(0, 48)}...</span>
                                 </div>
                                 <div className="pt-1 flex justify-between text-[10px] font-black uppercase text-slate-400">
-                                  <span>Quantity: {ord.items} Items</span>
+                                  <span>Quantity: {Array.isArray(ord.items) ? ord.items.length : (typeof ord.items === 'number' ? ord.items : (ord.items ? String(ord.items) : 1))} Items</span>
                                   <span className={ord.paymentMethod === 'cod' ? 'text-amber-400' : 'text-emerald-400'}>
                                     ₹{ord.total} &bull; {ord.paymentMethod.toUpperCase()}
                                   </span>
@@ -4371,7 +4466,13 @@ export default function DeliveryPartnerApp() {
                       }`}>
                         {msg.text}
                         <p className={`text-[7.5px] mt-1.5 font-black uppercase opacity-70 tracking-widest ${msg.senderType === 'partner' ? 'text-right' : ''}`}>
-                          {msg.timestamp}
+                          {typeof msg.timestamp === 'string' 
+                            ? msg.timestamp 
+                            : msg.timestamp?.toDate 
+                              ? msg.timestamp.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                              : msg.timestamp?.seconds 
+                                ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+                                : 'Just now'}
                         </p>
                       </div>
                     </div>

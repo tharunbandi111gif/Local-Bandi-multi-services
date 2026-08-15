@@ -1014,8 +1014,18 @@ export default function FranchisePortal() {
                 </div>
 
                 {/* Audit notification fallback code helper */}
-                <div className="bg-indigo-500/10 border border-indigo-500/20 p-3 rounded-2xl text-[9px] text-indigo-300 font-mono tracking-tight leading-relaxed max-w-xs mx-auto">
-                  ⚡ Dev OTP Fallback: Enter code <span className="text-white font-bold bg-indigo-600 px-1.5 py-0.5 rounded">1234</span> or look up dynamic code in Admin Audit Logs.
+                <div className="bg-indigo-500/10 border border-indigo-500/20 p-3 rounded-2xl text-[9px] text-indigo-300 font-mono tracking-tight leading-relaxed max-w-xs mx-auto space-y-1.5">
+                  <p>⚡ Dispatched to +91 {adminPhone}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const codeToFill = generatedOtp || '1234';
+                      setEnteredOtp(codeToFill.split(''));
+                    }}
+                    className="px-2.5 py-1 bg-indigo-500 hover:bg-indigo-400 text-white rounded-lg text-[8.5px] font-black uppercase tracking-wider active:scale-95 transition-all cursor-pointer inline-flex items-center gap-1"
+                  >
+                    <span>Auto-fill OTP ({generatedOtp || '1234'})</span>
+                  </button>
                 </div>
 
                 <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 px-1 pt-2">

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, Truck, Bike, ShieldAlert, Layers, ChevronUp, X, ExternalLink, Building2 } from 'lucide-react';
+import { Users, Truck, Bike, ShieldAlert, Layers, ChevronUp, X, ExternalLink, Building2, Lock } from 'lucide-react';
 
 interface AppInfo {
   id: 'customer' | 'partner' | 'admin' | 'franchise';
@@ -13,6 +13,26 @@ interface AppInfo {
 
 export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'customer' | 'partner' | 'admin' | 'franchise' }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(() => {
+    return localStorage.getItem('admin_session_active') === 'true' || currentApp !== 'customer';
+  });
+
+  useEffect(() => {
+    const handleSessionChange = () => {
+      setIsAdminUnlocked(localStorage.getItem('admin_session_active') === 'true' || currentApp !== 'customer');
+    };
+    window.addEventListener('admin_session_updated', handleSessionChange);
+    window.addEventListener('storage', handleSessionChange);
+    return () => {
+      window.removeEventListener('admin_session_updated', handleSessionChange);
+      window.removeEventListener('storage', handleSessionChange);
+    };
+  }, [currentApp]);
+
+  // Completely hide standalone gateway switcher from regular customer view
+  if (!isAdminUnlocked && currentApp === 'customer') {
+    return null;
+  }
 
   const apps: AppInfo[] = [
     {
