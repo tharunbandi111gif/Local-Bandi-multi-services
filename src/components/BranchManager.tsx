@@ -6,7 +6,8 @@ import {
   CheckCircle2, AlertCircle, Trash2, 
   TrendingUp, IndianRupee, MoreVertical,
   Settings, Power, FileText, Ban, LayoutDashboard, UserCheck, Lock, Users, HeartHandshake, Heart,
-  Download, RefreshCw, ShieldCheck, Edit2, Ticket, Percent
+  Download, RefreshCw, ShieldCheck, Edit2, Ticket, Percent,
+  PhoneCall, ShieldAlert, Phone
 } from 'lucide-react';
 import { 
   collection, query, getDocs, limit,
@@ -16,7 +17,8 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useFirebase } from '../contexts/FirebaseContext';
-import { Branch } from '../types';
+import { Branch, SOSAlert } from '../types';
+import { SOSAlertIndicator } from './common/SOSAlertIndicator';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, 
   Tooltip, Legend, ResponsiveContainer, LineChart, Line
@@ -94,7 +96,9 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
-  const [activeTab, setActiveTab] = useState<'branches' | 'terms' | 'applications' | 'managers' | 'experience' | 'members' | 'promocodes' | 'analytics' | 'map' | 'audit' | 'support'>('branches');
+  const [activeTab, setActiveTab] = useState<'branches' | 'terms' | 'applications' | 'managers' | 'experience' | 'members' | 'promocodes' | 'analytics' | 'map' | 'audit' | 'support' | 'sos'>('branches');
+  const [sosAlerts, setSosAlerts] = useState<SOSAlert[]>([]);
+  const [sosFilter, setSosFilter] = useState<'ALL' | 'ACTIVE' | 'ACKNOWLEDGED' | 'RESOLVED'>('ALL');
   const [feedbacks, setFeedbacks] = useState<any[]>([]);
   const [franchiseApplications, setFranchiseApplications] = useState<any[]>([]);
   const [managers, setManagers] = useState<any[]>([]);
@@ -572,6 +576,54 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
     } catch (err) {
       console.error("Failed to send renewal reminder:", err);
       alert("Failed to send reminder: " + (err as Error).message);
+    }
+  };
+
+  // Real-time SOS Alerts Listener
+  useEffect(() => {
+    try {
+      const q = query(collection(db, 'sos_alerts'), orderBy('timestamp', 'desc'));
+      const unsub = onSnapshot(q, (snap) => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as SOSAlert));
+        // If user is branchAdmin, they can view all or branch-specific alerts
+        setSosAlerts(list);
+      }, (err) => {
+        console.error("SOS alerts listener error in BranchManager:", err);
+      });
+      return () => unsub();
+    } catch (e) {
+      console.error("Failed to attach SOS listener:", e);
+    }
+  }, []);
+
+  const handleAcknowledgeSosAlert = async (alertId: string) => {
+    try {
+      await updateDoc(doc(db, 'sos_alerts', alertId), {
+        status: 'ACKNOWLEDGED',
+        acknowledgedAt: new Date().toISOString(),
+        acknowledgedBy: userProfile?.name || masterAdminName || 'Branch Manager Admin'
+      });
+      await logAuditAction('SOS Acknowledged', `Acknowledged emergency SOS alert #${alertId}`);
+    } catch (err: any) {
+      console.error("Failed to acknowledge SOS alert:", err);
+      alert("Failed to acknowledge alert: " + err.message);
+    }
+  };
+
+  const handleResolveSosAlert = async (alertId: string) => {
+    try {
+      const note = prompt("Enter resolution notes / action taken:", "Verified with rider. Situation secured and resolved.");
+      if (note === null) return;
+      await updateDoc(doc(db, 'sos_alerts', alertId), {
+        status: 'RESOLVED',
+        resolvedAt: new Date().toISOString(),
+        resolvedBy: userProfile?.name || masterAdminName || 'Branch Manager Admin',
+        resolutionNotes: note
+      });
+      await logAuditAction('SOS Resolved', `Resolved emergency SOS alert #${alertId} with notes: ${note}`);
+    } catch (err: any) {
+      console.error("Failed to resolve SOS alert:", err);
+      alert("Failed to resolve alert: " + err.message);
     }
   };
 
@@ -1551,7 +1603,39 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
               )}
             </button>
           )}
+          <button 
+            onClick={() => setActiveTab('sos')}
+            className={`whitespace-nowrap px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all relative flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'sos' 
+                ? 'bg-rose-600 text-white shadow-lg shadow-rose-200' 
+                : sosAlerts.filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED').length > 0
+                  ? 'bg-rose-500 text-white animate-pulse border border-rose-600 shadow-md shadow-rose-200'
+                  : 'bg-slate-100 text-slate-400'
+            }`}
+          >
+            <span>🚨 SOS ({sosAlerts.filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED').length})</span>
+            {sosAlerts.filter(a => a.status === 'ACTIVE').length > 0 && (
+              <span className="w-2 h-2 bg-white rounded-full animate-ping" />
+            )}
+          </button>
         </div>
+
+      {/* PERSISTENT REAL-TIME SOS BANNER (Visible on all tabs when active distress exists) */}
+      {sosAlerts.filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED').length > 0 && activeTab !== 'sos' && (
+        <div className="px-6 pt-4 space-y-3">
+          {sosAlerts
+            .filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED')
+            .map(alert => (
+              <SOSAlertIndicator
+                key={alert.id}
+                alert={alert}
+                variant="banner"
+                onAcknowledge={handleAcknowledgeSosAlert}
+                onResolve={handleResolveSosAlert}
+              />
+            ))}
+        </div>
+      )}
 
 
       {activeTab === 'branches' ? (
@@ -3409,6 +3493,133 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
               )}
             </div>
 
+          </div>
+        </div>
+      ) : activeTab === 'sos' ? (
+        <div className="flex-1 px-6 py-8 space-y-6 pb-24">
+          {/* Hero Emergency Alert Hub Banner */}
+          <div className="bg-white p-6 rounded-[2.5rem] border border-rose-100 shadow-sm relative overflow-hidden">
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                  <p className="text-[10px] font-black text-rose-600 uppercase tracking-widest font-mono">
+                    Local Emergency Distress Response Node
+                  </p>
+                </div>
+                <h2 className="text-xl font-black text-slate-900 italic tracking-tight uppercase flex items-center gap-2">
+                  <span>🚨 SOS Emergency Dispatch Monitor</span>
+                </h2>
+                <p className="text-xs text-slate-500 max-w-xl leading-relaxed">
+                  Real-time distress transmissions dispatched from delivery partners during emergency panic sequences. Displays exact time coordinates transmitted to support team.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href="tel:112"
+                  className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-rose-200 transition-all active:scale-95"
+                >
+                  <PhoneCall className="w-4 h-4 animate-pulse" />
+                  <span>Call 112</span>
+                </a>
+                <a
+                  href="tel:108"
+                  className="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-2 shadow-md shadow-amber-200 transition-all active:scale-95"
+                >
+                  <PhoneCall className="w-4 h-4" />
+                  <span>Call 108</span>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {/* Metric Overview Counters */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white p-5 rounded-3xl border border-rose-100 shadow-sm">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Active Distress Signals</p>
+              <div className="flex items-center gap-2">
+                <span className="text-2xl font-black text-rose-600">
+                  {sosAlerts.filter(a => a.status === 'ACTIVE').length}
+                </span>
+                {sosAlerts.filter(a => a.status === 'ACTIVE').length > 0 && (
+                  <span className="px-2 py-0.5 bg-rose-100 text-rose-700 text-[8px] font-black uppercase rounded-full animate-pulse">
+                    URGENT
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white p-5 rounded-3xl border border-amber-100 shadow-sm">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Acknowledged / In Response</p>
+              <span className="text-2xl font-black text-amber-600">
+                {sosAlerts.filter(a => a.status === 'ACKNOWLEDGED').length}
+              </span>
+            </div>
+
+            <div className="bg-white p-5 rounded-3xl border border-emerald-100 shadow-sm">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Resolved & Safe</p>
+              <span className="text-2xl font-black text-emerald-600">
+                {sosAlerts.filter(a => a.status === 'RESOLVED').length}
+              </span>
+            </div>
+
+            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Signals Logged</p>
+              <span className="text-2xl font-black text-slate-700">{sosAlerts.length}</span>
+            </div>
+          </div>
+
+          {/* Filter Chips */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            {(['ALL', 'ACTIVE', 'ACKNOWLEDGED', 'RESOLVED'] as const).map(flt => {
+              const count = flt === 'ALL' 
+                ? sosAlerts.length 
+                : sosAlerts.filter(a => a.status === flt).length;
+              return (
+                <button
+                  key={flt}
+                  onClick={() => setSosFilter(flt)}
+                  className={`px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                    sosFilter === flt
+                      ? flt === 'ACTIVE'
+                        ? 'bg-rose-600 text-white shadow-md shadow-rose-200'
+                        : 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-100'
+                  }`}
+                >
+                  <span>{flt}</span>
+                  <span className="px-1.5 py-0.5 bg-black/10 rounded-md text-[9px] font-mono">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* List of SOS Alerts */}
+          <div className="space-y-4">
+            {sosAlerts
+              .filter(a => sosFilter === 'ALL' || a.status === sosFilter)
+              .map(alert => (
+                <SOSAlertIndicator
+                  key={alert.id}
+                  alert={alert}
+                  variant="card"
+                  onAcknowledge={handleAcknowledgeSosAlert}
+                  onResolve={handleResolveSosAlert}
+                />
+              ))}
+
+            {sosAlerts.filter(a => sosFilter === 'ALL' || a.status === sosFilter).length === 0 && (
+              <div className="bg-white border border-slate-100 rounded-[2.5rem] p-12 text-center space-y-3 shadow-sm">
+                <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                  <ShieldCheck className="w-8 h-8" />
+                </div>
+                <h3 className="text-base font-black text-slate-900 uppercase">Emergency Channel Clear</h3>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  No {sosFilter !== 'ALL' ? sosFilter.toLowerCase() : ''} emergency distress transmissions reported. All active delivery riders are operating in safe status.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       ) : null}

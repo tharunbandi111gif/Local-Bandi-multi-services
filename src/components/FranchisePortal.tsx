@@ -87,6 +87,22 @@ export default function FranchisePortal() {
   const [editingOrder, setEditingOrder] = useState<any | null>(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
 
+  // Hospital Booking Edit State
+  const [showHospitalBookingModal, setShowHospitalBookingModal] = useState(false);
+  const [editingHospitalBooking, setEditingHospitalBooking] = useState<any | null>(null);
+  const [hospitalBookingForm, setHospitalBookingForm] = useState({
+    patientName: '',
+    phone: '',
+    hospital: '',
+    slot: '',
+    age: '',
+    gender: 'Male',
+    amount: 220,
+    location: '',
+    reason: '',
+    status: 'pending'
+  });
+
   // Category Form State
   const [showCatModal, setShowCatModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<any>(null);
@@ -654,7 +670,7 @@ export default function FranchisePortal() {
     }
   };
 
-  const handleLocalUpdateHospitalBookingStatus = async (id: string, status: 'Approved' | 'Rejected' | 'pending') => {
+  const handleLocalUpdateHospitalBookingStatus = async (id: string, status: 'Approved' | 'Rejected' | 'pending' | 'Completed') => {
     try {
       await updateDoc(doc(db, 'hospital_bookings', id), {
         status,
@@ -663,6 +679,67 @@ export default function FranchisePortal() {
       alert(`Hospital Booking status updated to: ${status}`);
     } catch (err: any) {
       alert('Failed to update hospital booking status: ' + err.message);
+    }
+  };
+
+  const handleOpenEditHospitalBooking = (booking: any) => {
+    setEditingHospitalBooking(booking);
+    setHospitalBookingForm({
+      patientName: booking.patientName || '',
+      phone: booking.phone || '',
+      hospital: booking.hospital || booking.hospitalName || '',
+      slot: booking.slot || booking.dateTime || '',
+      age: booking.age ? String(booking.age) : '',
+      gender: booking.gender || 'Male',
+      amount: Number(booking.amount) || 220,
+      location: booking.location || booking.address || '',
+      reason: booking.reason || booking.disease || '',
+      status: booking.status || 'pending'
+    });
+    setShowHospitalBookingModal(true);
+  };
+
+  const handleSaveHospitalBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingHospitalBooking) return;
+    try {
+      await updateDoc(doc(db, 'hospital_bookings', editingHospitalBooking.id), {
+        patientName: hospitalBookingForm.patientName.trim(),
+        phone: hospitalBookingForm.phone.trim(),
+        hospital: hospitalBookingForm.hospital.trim(),
+        hospitalName: hospitalBookingForm.hospital.trim(),
+        slot: hospitalBookingForm.slot.trim(),
+        dateTime: hospitalBookingForm.slot.trim(),
+        age: hospitalBookingForm.age ? Number(hospitalBookingForm.age) : '',
+        gender: hospitalBookingForm.gender,
+        amount: Number(hospitalBookingForm.amount) || 220,
+        location: hospitalBookingForm.location.trim(),
+        address: hospitalBookingForm.location.trim(),
+        reason: hospitalBookingForm.reason.trim(),
+        disease: hospitalBookingForm.reason.trim(),
+        status: hospitalBookingForm.status,
+        updatedAt: serverTimestamp()
+      });
+      setShowHospitalBookingModal(false);
+      setEditingHospitalBooking(null);
+      alert('Hospital OP booking updated successfully!');
+    } catch (err: any) {
+      alert('Failed to update hospital booking: ' + err.message);
+    }
+  };
+
+  const handleDeleteHospitalBooking = async (id: string, name?: string) => {
+    if (window.confirm(`Are you sure you want to delete the hospital OP appointment for "${name || 'this patient'}"?`)) {
+      try {
+        await deleteDoc(doc(db, 'hospital_bookings', id));
+        if (editingHospitalBooking?.id === id) {
+          setShowHospitalBookingModal(false);
+          setEditingHospitalBooking(null);
+        }
+        alert('Hospital booking removed successfully.');
+      } catch (err: any) {
+        alert('Failed to delete booking: ' + err.message);
+      }
     }
   };
 
@@ -2149,31 +2226,56 @@ export default function FranchisePortal() {
                           <span className={`px-2.5 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-full ${
                             b.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-400' :
                             b.status === 'Rejected' ? 'bg-rose-500/10 text-rose-400' :
+                            b.status === 'Completed' ? 'bg-indigo-500/10 text-indigo-400' :
                             'bg-amber-500/10 text-amber-400'
                           }`}>
-                            {b.status}
+                            {b.status || 'pending'}
                           </span>
-                          <span className="px-2.5 py-0.5 bg-rose-500/10 text-rose-400 text-[9px] font-black uppercase tracking-widest rounded-full">{b.hospital || 'Hospital'}</span>
+                          <span className="px-2.5 py-0.5 bg-rose-500/10 text-rose-400 text-[9px] font-black uppercase tracking-widest rounded-full">{b.hospital || b.hospitalName || 'Hospital'}</span>
                         </div>
                         <h4 className="text-xs font-black text-white uppercase tracking-tight">{b.patientName || 'Anonymous'}</h4>
-                        <p className="text-[10px] text-slate-400">Slot: {b.slot || 'N/A'}</p>
+                        <p className="text-[10px] text-slate-400">Slot: {b.slot || b.dateTime || 'N/A'}</p>
                         <p className="text-[10px] text-slate-400">Age/Gender: {b.age || 'N/A'} yrs / {b.gender || 'N/A'}</p>
                         <p className="text-[10px] text-slate-400 font-mono">Phone: {b.phone}</p>
+                        {b.amount && <p className="text-[10px] font-black text-emerald-400">Fee: ₹{b.amount}</p>}
+                        {b.reason && <p className="text-[9px] text-slate-500 italic">"{b.reason}"</p>}
                       </div>
 
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleLocalUpdateHospitalBookingStatus(b.id, 'Approved')}
-                          className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer"
-                        >
-                          Approve OP
-                        </button>
-                        <button
-                          onClick={() => handleLocalUpdateHospitalBookingStatus(b.id, 'Rejected')}
-                          className="px-4 py-2 bg-rose-600/15 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black uppercase text-[9px] tracking-widest transition-all cursor-pointer"
-                        >
-                          Reject
-                        </button>
+                      <div className="space-y-2 pt-2 border-t border-white/5">
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleLocalUpdateHospitalBookingStatus(b.id, 'Approved')}
+                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[8.5px] tracking-widest transition-all cursor-pointer"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleLocalUpdateHospitalBookingStatus(b.id, 'Rejected')}
+                            className="flex-1 py-1.5 bg-rose-600/15 text-rose-400 hover:bg-rose-600 hover:text-white rounded-xl font-black uppercase text-[8.5px] tracking-widest transition-all cursor-pointer"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditHospitalBooking(b)}
+                            className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl font-black uppercase text-[8.5px] tracking-widest transition-all cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            <Edit className="w-3 h-3" />
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteHospitalBooking(b.id, b.patientName)}
+                            className="p-1.5 bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white rounded-xl font-black uppercase text-[8.5px] transition-all cursor-pointer flex items-center justify-center"
+                            title="Delete booking"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -2241,7 +2343,7 @@ export default function FranchisePortal() {
                   <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Banner Image URL</label>
                   <input
                     type="text"
-                    placeholder="https://images.unsplash.com/..."
+                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E"
                     value={catForm.image}
                     onChange={(e) => setCatForm({ ...catForm, image: e.target.value })}
                     className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
@@ -2530,6 +2632,165 @@ export default function FranchisePortal() {
                   <button
                     type="submit"
                     className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-950/40"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT HOSPITAL OP BOOKING MODAL */}
+      <AnimatePresence>
+        {showHospitalBookingModal && editingHospitalBooking && (
+          <div className="fixed inset-0 z-[10001] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 border border-white/10 p-6 rounded-[2.5rem] max-w-md w-full space-y-4 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-rose-400" />
+                  <h4 className="text-xs font-black uppercase tracking-wider text-white">✏️ Edit Hospital OP Booking</h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowHospitalBookingModal(false);
+                    setEditingHospitalBooking(null);
+                  }}
+                  className="text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveHospitalBooking} className="space-y-3.5 text-left">
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Patient Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={hospitalBookingForm.patientName}
+                    onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, patientName: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-rose-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Mobile Phone Number *</label>
+                  <input
+                    type="tel"
+                    required
+                    value={hospitalBookingForm.phone}
+                    onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, phone: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-rose-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Hospital / Clinic Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={hospitalBookingForm.hospital}
+                    onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, hospital: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-rose-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Slot / Date & Time</label>
+                    <input
+                      type="text"
+                      value={hospitalBookingForm.slot}
+                      onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, slot: e.target.value })}
+                      placeholder="e.g. 10:30 AM - Morning"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-rose-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">OP Fee (₹)</label>
+                    <input
+                      type="number"
+                      value={hospitalBookingForm.amount}
+                      onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, amount: Number(e.target.value) || 0 })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-emerald-400 outline-none focus:border-rose-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Age</label>
+                    <input
+                      type="number"
+                      value={hospitalBookingForm.age}
+                      onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, age: e.target.value })}
+                      placeholder="e.g. 34"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-rose-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Gender</label>
+                    <select
+                      value={hospitalBookingForm.gender}
+                      onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, gender: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-rose-500 cursor-pointer"
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Status</label>
+                  <select
+                    value={hospitalBookingForm.status}
+                    onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, status: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-rose-500 cursor-pointer"
+                  >
+                    <option value="pending">Pending Approval</option>
+                    <option value="Approved">Approved</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Rejected">Rejected</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Symptoms / Reason for Visit</label>
+                  <textarea
+                    rows={2}
+                    value={hospitalBookingForm.reason}
+                    onChange={(e) => setHospitalBookingForm({ ...hospitalBookingForm, reason: e.target.value })}
+                    placeholder="e.g. General checkup, fever since 2 days"
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-medium text-white outline-none focus:border-rose-500"
+                  />
+                </div>
+
+                <div className="flex gap-2.5 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHospitalBookingModal(false);
+                      setEditingHospitalBooking(null);
+                    }}
+                    className="flex-1 py-3 bg-slate-950 hover:bg-slate-900 border border-white/5 text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-rose-950/40 cursor-pointer"
                   >
                     Save Changes
                   </button>

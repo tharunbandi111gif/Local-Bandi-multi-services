@@ -531,13 +531,13 @@ export default function CategoryListing({
                       <MessageSquare className="w-3 h-3" /> Chat
                     </button>
                     <a
-                      href="tel:+919988776655"
+                      href="tel:+917416574197"
                       onClick={(e) => {
                         e.stopPropagation();
                       }}
                       className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors flex items-center justify-center gap-1 active:scale-95 text-center"
                     >
-                      <Phone className="w-3 h-3" /> Call
+                      <Phone className="w-3 h-3" /> Call (7416574197)
                     </a>
                   </div>
                 ) : isServiceCategory && (
@@ -801,10 +801,10 @@ export default function CategoryListing({
                     <MessageSquare className="w-4 h-4" /> Chat Support
                   </button>
                   <a
-                    href="tel:+919988776655"
+                    href="tel:+917416574197"
                     className="flex-1 py-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-emerald-900/30 transition-colors flex items-center justify-center gap-2 text-center"
                   >
-                    <Phone className="w-4 h-4" /> Call Support
+                    <Phone className="w-4 h-4" /> Call Support (7416574197)
                   </a>
                 </div>
               </div>

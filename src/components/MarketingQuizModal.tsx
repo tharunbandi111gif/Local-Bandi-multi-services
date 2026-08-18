@@ -60,10 +60,10 @@ export const DEFAULT_LOW_PRICE_QUIZ_QUESTIONS: QuizQuestion[] = [
   },
   {
     id: 4,
-    question: "What is the maximum discount offer percentage you can unlock on the 40-Sec Speed Quiz?",
-    options: ["100% OFF", "Up to 25% OFF + 100% Cashback Coins", "0% OFF", "5% OFF"],
+    question: "What rewards can you unlock by completing the Weekly 40-Sec Speed Quiz?",
+    options: ["100% OFF Everything", "Weekly Discount Coupons (Up to 15% OFF)", "0% OFF", "No rewards"],
     correctIndex: 1,
-    explanation: "Score 3/3 for 25% OFF, 2/3 for 15% OFF, and 8% OFF for participating + 100% Cashback Coins!",
+    explanation: "Score 3/3 for 15% OFF, 2/3 for 10% OFF, and 4% OFF for participating once every week!",
     category: "Quiz Offers"
   },
   {
@@ -75,6 +75,14 @@ export const DEFAULT_LOW_PRICE_QUIZ_QUESTIONS: QuizQuestion[] = [
     category: "Low Price Essentials"
   }
 ];
+
+export function getCurrentWeekKey(): string {
+  const now = new Date();
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+  const pastDaysOfYear = (now.getTime() - startOfYear.getTime()) / 86400000;
+  const weekNum = Math.ceil((pastDaysOfYear + startOfYear.getDay() + 1) / 7);
+  return `${now.getFullYear()}-W${weekNum}`;
+}
 
 export function getStoredQuizQuestions(): QuizQuestion[] {
   if (typeof window === 'undefined') return DEFAULT_LOW_PRICE_QUIZ_QUESTIONS;
@@ -96,16 +104,12 @@ interface MarketingQuizModalProps {
   isOpen: boolean;
   onClose: () => void;
   onApplyCoupon?: (couponCode: string) => void;
-  userCoins?: number;
-  onAddCoins?: (amount: number) => void;
 }
 
 export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
   isOpen,
   onClose,
-  onApplyCoupon,
-  userCoins = 0,
-  onAddCoins
+  onApplyCoupon
 }) => {
   const TOTAL_TIME = 40; // 40-second speed quiz
   const [gameState, setGameState] = useState<'intro' | 'playing' | 'completed' | 'timeout'>('intro');
@@ -116,6 +120,7 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [activeQuestionList, setActiveQuestionList] = useState<QuizQuestion[]>([]);
+  const [wasAlreadyClaimedThisWeek, setWasAlreadyClaimedThisWeek] = useState<boolean>(false);
 
   // Sound synthesis cue helper
   const playBeep = (freq: number = 440, type: OscillatorType = 'sine', duration: number = 0.15) => {
@@ -150,8 +155,21 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
     return () => window.removeEventListener('quiz_questions_updated', handleUpdate);
   }, []);
 
+  // Check weekly claim status on modal open
+  useEffect(() => {
+    if (isOpen) {
+      const currentWeek = getCurrentWeekKey();
+      const claimedWeek = typeof window !== 'undefined' ? localStorage.getItem('quiz_reward_claimed_week') : null;
+      setWasAlreadyClaimedThisWeek(claimedWeek === currentWeek);
+    }
+  }, [isOpen]);
+
   // Select 3 random questions when quiz starts
   const startQuiz = () => {
+    const currentWeek = getCurrentWeekKey();
+    const claimedWeek = typeof window !== 'undefined' ? localStorage.getItem('quiz_reward_claimed_week') : null;
+    setWasAlreadyClaimedThisWeek(claimedWeek === currentWeek);
+
     const questions = getStoredQuizQuestions();
     const shuffled = [...questions].sort(() => 0.5 - Math.random()).slice(0, Math.min(3, questions.length));
     setActiveQuestionList(shuffled);
@@ -218,56 +236,77 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
 
   const finishQuiz = (finalScore: number) => {
     setGameState('completed');
-    const coinsEarned = finalScore === 3 ? 50 : finalScore === 2 ? 25 : 10;
-    if (onAddCoins) {
-      onAddCoins(coinsEarned);
+    const currentWeek = getCurrentWeekKey();
+    const claimedWeek = typeof window !== 'undefined' ? localStorage.getItem('quiz_reward_claimed_week') : null;
+    const isFirstGameInWeek = claimedWeek !== currentWeek;
+
+    if (isFirstGameInWeek) {
+      // First official game of the week: award offer & save weekly timestamp
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('quiz_reward_claimed_week', currentWeek);
+      }
+      setWasAlreadyClaimedThisWeek(false);
+    } else {
+      setWasAlreadyClaimedThisWeek(true);
     }
     playBeep(1318.5, 'triangle', 0.4); // E6 note triumph
   };
 
-  // Determine Reward Code & Details (Below 25% discount rules: 3/3 => 25%, 2/3 => 15%, 1/3 => 8%)
+  // Determine Reward Code & Details (Updated Tiers: 3/3 => 15%, 2/3 => 10%, 1/3 => 4%)
   const getRewardDetails = () => {
+    if (wasAlreadyClaimedThisWeek) {
+      return {
+        title: "🎯 PRACTICE SESSION COMPLETED!",
+        subtitle: `Great score (${score}/3 in ${TOTAL_TIME - timeLeft}s)! You can practice and play as many times as you like. Your next weekly official discount offer unlocks next week!`,
+        couponCode: "PRACTICEMODE",
+        discountText: "Weekly Coupon Already Claimed • Next Unlock Next Week",
+        badgeColor: "bg-indigo-600",
+        badgeText: "Practice Mode Active",
+        isPractice: true
+      };
+    }
+
     if (gameState === 'timeout' && score < 1) {
       return {
         title: "Good Effort!",
         subtitle: "You ran out of time, but here is a special participant reward!",
-        couponCode: "QUIZ08OFF",
-        discountText: "FLAT 8% OFF on Next Order",
-        coins: 10,
+        couponCode: "QUIZ04OFF",
+        discountText: "FLAT 4% OFF on Next Order",
         badgeColor: "bg-amber-500",
-        badgeText: "Bronze Reward (8% OFF)"
+        badgeText: "Bronze Reward (4% OFF)",
+        isPractice: false
       };
     }
 
     if (score === 3) {
       return {
         title: "🎉 PERFECT 3/3 SCORE!",
-        subtitle: `Incredible speed! Solved in ${TOTAL_TIME - timeLeft}s! Unlocked Maximum 25% OFF Coupon!`,
-        couponCode: "QUIZ25OFF",
-        discountText: "FLAT 25% OFF on Order + 100% Cashback Coins",
-        coins: 50,
+        subtitle: `Incredible speed! Solved in ${TOTAL_TIME - timeLeft}s! Unlocked Weekly 15% OFF Coupon!`,
+        couponCode: "QUIZ15OFF",
+        discountText: "FLAT 15% OFF on Order",
         badgeColor: "bg-emerald-500",
-        badgeText: "Gold Grand Winner (25% OFF)"
+        badgeText: "Gold Grand Winner (15% OFF)",
+        isPractice: false
       };
     } else if (score === 2) {
       return {
         title: "🌟 GREAT JOB! 2/3 SCORE!",
-        subtitle: "Fast thinking! You won a 15% OFF Super Saver Discount Coupon!",
-        couponCode: "QUIZ15OFF",
-        discountText: "FLAT 15% OFF on Order + 25 Super Coins",
-        coins: 25,
+        subtitle: "Fast thinking! You won a 10% OFF Super Saver Discount Coupon!",
+        couponCode: "QUIZ10OFF",
+        discountText: "FLAT 10% OFF on Order",
         badgeColor: "bg-indigo-500",
-        badgeText: "Silver Winner (15% OFF)"
+        badgeText: "Silver Winner (10% OFF)",
+        isPractice: false
       };
     } else {
       return {
         title: "🎟️ SPEED PARTICIPANT!",
-        subtitle: "You won an 8% OFF Special Discount Coupon! Practice to score 3/3 tomorrow!",
-        couponCode: "QUIZ08OFF",
-        discountText: "FLAT 8% OFF on Order + 10 Super Coins",
-        coins: 10,
+        subtitle: "You won a 4% OFF Special Discount Coupon! Practice to score 3/3 next week!",
+        couponCode: "QUIZ04OFF",
+        discountText: "FLAT 4% OFF on Order",
         badgeColor: "bg-yellow-500",
-        badgeText: "Participant Reward (8% OFF)"
+        badgeText: "Participant Reward (4% OFF)",
+        isPractice: false
       };
     }
   };
@@ -275,6 +314,7 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
   const reward = getRewardDetails();
 
   const handleCopyCode = () => {
+    if (reward.isPractice) return;
     navigator.clipboard.writeText(reward.couponCode);
     setCopiedCode(true);
     playBeep(900, 'sine', 0.1);
@@ -282,7 +322,7 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
   };
 
   const handleApplyAndClose = () => {
-    if (onApplyCoupon) {
+    if (onApplyCoupon && !reward.isPractice) {
       onApplyCoupon(reward.couponCode);
     }
     onClose();
@@ -290,7 +330,7 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
 
   const handleShareWhatsApp = () => {
     const text = encodeURIComponent(
-      `⚡ I scored ${score}/3 in just ${TOTAL_TIME - timeLeft}s on the Khammam Super App 40-Sec Speed Quiz and won a ₹100 discount coupon (${reward.couponCode})! Can you beat my time? Play now on Khammam Super App!`
+      `⚡ I played the 40-Sec Speed Quiz on Local Bandi Super App and scored ${score}/3 in ${TOTAL_TIME - timeLeft}s! Can you beat my time? Try it now!`
     );
     window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
   };
@@ -354,8 +394,11 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
                 Low Price Trivia & Speed Challenge
               </h2>
               <p className="text-xs text-slate-300 max-w-sm mx-auto leading-relaxed">
-                Test your local low-price product knowledge & speed! Answer 3 questions in under <strong className="text-amber-400 font-black">40 seconds</strong> to win up to <strong className="text-emerald-400 font-black">25% OFF Discount Coupons</strong> + 100% Cashback Coins!
+                Test your local low-price product knowledge & speed! Answer 3 questions in under <strong className="text-amber-400 font-black">40 seconds</strong> to win up to <strong className="text-emerald-400 font-black">15% OFF Discount Coupons</strong>!
               </p>
+              <div className="text-[10px] text-amber-300/90 font-mono bg-amber-500/10 py-1 px-2.5 rounded-lg border border-amber-500/20 max-w-xs mx-auto">
+                🎁 1 Quiz Discount Offer per customer per week • Unlimited Free Practice Games!
+              </div>
             </div>
 
             {/* Prize Breakdown Grid */}
@@ -363,17 +406,17 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
               <div className="p-2 bg-slate-900 rounded-xl border border-emerald-500/30">
                 <Trophy className="w-4 h-4 text-emerald-400 mx-auto mb-1" />
                 <div className="text-[11px] font-black text-emerald-400">3/3 Score</div>
-                <div className="text-[9.5px] text-slate-400 font-mono mt-0.5">25% OFF + 50 Coins</div>
+                <div className="text-[9.5px] text-slate-400 font-mono mt-0.5">Flat 15% OFF</div>
               </div>
               <div className="p-2 bg-slate-900 rounded-xl border border-indigo-500/30">
                 <Sparkles className="w-4 h-4 text-indigo-400 mx-auto mb-1" />
                 <div className="text-[11px] font-black text-indigo-400">2/3 Score</div>
-                <div className="text-[9.5px] text-slate-400 font-mono mt-0.5">15% OFF + 25 Coins</div>
+                <div className="text-[9.5px] text-slate-400 font-mono mt-0.5">Flat 10% OFF</div>
               </div>
               <div className="p-2 bg-slate-900 rounded-xl border border-amber-500/30">
                 <Gift className="w-4 h-4 text-amber-400 mx-auto mb-1" />
                 <div className="text-[11px] font-black text-amber-400">1/3 Score</div>
-                <div className="text-[9.5px] text-slate-400 font-mono mt-0.5">8% OFF + 10 Coins</div>
+                <div className="text-[9.5px] text-slate-400 font-mono mt-0.5">Flat 4% OFF</div>
               </div>
             </div>
 
@@ -476,19 +519,11 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
               </p>
             </div>
 
-            {/* Score & Coins Summary */}
-            <div className="grid grid-cols-2 gap-3 bg-slate-950 p-4 rounded-2xl border border-white/10">
-              <div className="text-center">
-                <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">Questions Solved</div>
-                <div className="text-lg font-black text-amber-400">{score} / 3 Correct</div>
-              </div>
-              <div className="text-center">
-                <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">Super Coins Won</div>
-                <div className="text-lg font-black text-emerald-400 flex items-center justify-center gap-1">
-                  <Coins className="w-4 h-4 text-emerald-400 fill-emerald-400" />
-                  <span>+{reward.coins} Coins</span>
-                </div>
-              </div>
+            {/* Score Summary */}
+            <div className="bg-slate-950 p-4 rounded-2xl border border-white/10 text-center">
+              <div className="text-[10px] uppercase font-bold text-slate-400 font-mono">Speed Quiz Result</div>
+              <div className="text-xl font-black text-amber-400 mt-1">{score} / 3 Correct Answers</div>
+              <div className="text-xs text-emerald-400 font-bold mt-0.5">{reward.discountText}</div>
             </div>
 
             {/* Generated Promo Coupon Box */}
@@ -510,9 +545,9 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
                   <span>Offer Terms &amp; Conditions</span>
                 </div>
                 <ul className="text-[10px] text-slate-300 space-y-1 list-disc list-inside font-medium leading-relaxed">
-                  <li>Minimum order subtotal must be <strong className="text-amber-400 font-bold">₹499 or above</strong> at checkout.</li>
-                  <li>Discount percentage applies to <strong className="text-emerald-400 font-bold">ONLY 1 product priced below ₹100</strong> in your cart.</li>
-                  <li>Winner gets <strong className="text-yellow-400 font-bold">100% Cashback Super Coins</strong> added automatically!</li>
+                  <li>Minimum order subtotal must be <strong className="text-amber-400 font-bold">₹99 or above</strong> at checkout.</li>
+                  <li>Discount coupon unlocks once per week per customer.</li>
+                  <li>Instant discount applied directly on your basket total.</li>
                 </ul>
               </div>
 
@@ -585,17 +620,17 @@ export const MarketingQuizFloatingBanner: React.FC<MarketingQuizFloatingBannerPr
             <div>
               <div className="flex items-center gap-2">
                 <span className="bg-amber-500/20 text-amber-400 font-mono text-[9px] font-black px-2 py-0.5 rounded-md border border-amber-500/30 uppercase tracking-wider">
-                  ⚡ 40s Speed Quiz
+                  ⚡ Weekly Speed Quiz
                 </span>
-                <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
-                  <Coins className="w-3 h-3 fill-emerald-400" /> +50 Super Coins
+                <span className="text-[10px] text-amber-300 font-bold">
+                  1 Participation / Week
                 </span>
               </div>
               <h4 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight mt-0.5">
-                Play & Get Up to 100% Cashback &amp; 25% OFF!
+                Play & Unlock Weekly Discount Rewards!
               </h4>
               <p className="text-[10.5px] text-slate-400 leading-tight">
-                Answer 3 quick low-price product trivia questions in 40 seconds. Win 25%, 15% or 8% OFF!
+                Answer 3 quick low-price product trivia questions in 40 seconds to win exclusive discount coupons!
               </p>
             </div>
           </div>

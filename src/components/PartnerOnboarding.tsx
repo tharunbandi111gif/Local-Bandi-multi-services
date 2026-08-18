@@ -428,10 +428,12 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
       if (effectiveType === 'Vendor') {
         const vendorDocId = `vendor-${formData.phone || effectiveUserId}`;
         try {
-          await setDoc(doc(db, 'vendors'), {
+          await setDoc(doc(db, 'vendors', vendorDocId), {
             id: vendorDocId,
             userId: effectiveUserId,
             storeName: formData.businessName || formData.fullName || 'New Partner Vendor',
+            businessName: formData.businessName || formData.fullName || 'New Partner Vendor',
+            name: formData.businessName || formData.fullName || 'New Partner Vendor',
             ownerName: formData.fullName || '',
             phone: formData.phone || '',
             email: formData.email || '',
@@ -453,7 +455,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
               price: parseFloat(firstProduct.price) || 99,
               originalPrice: (parseFloat(firstProduct.price) || 99) * 1.25,
               category: firstProduct.category || formData.category || 'grocery',
-              image: firstProduct.image || 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=400&q=80',
+              image: firstProduct.image || 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
               vendorId: vendorDocId,
               vendorName: formData.businessName || formData.fullName || 'Partner Vendor',
               available: true,
@@ -1503,7 +1505,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                              className="bg-white/5 p-4 rounded-2xl border border-white/10 backdrop-blur-sm"
                            >
                               <div className="flex items-center justify-between mb-2">
-                                <p className="font-mono text-[10px] font-bold select-all opacity-80">{platformSettings?.upiId || '8790729816-4@ybl'}</p>
+                                <p className="font-mono text-[10px] font-bold select-all opacity-80">{platformSettings?.upiId || '7416574197@hdfc'}</p>
                                 <p className="text-xs font-bold text-indigo-400 uppercase">UPI ID</p>
                               </div>
                               <div className="bg-white/5 border border-dashed border-white/20 rounded-2xl p-4 text-center group relative cursor-pointer hover:bg-white/10 transition-all overflow-hidden mb-4">
@@ -1526,7 +1528,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
                                   />
                                </div>
                               <button 
-                                onClick={() => window.open(`upi://pay?pa=${platformSettings?.upiId || '8790729816-4@ybl'}&pn=Lokal%20Bharath&am=${platformSettings?.registrationFee || 499}&cu=INR`)}
+                                onClick={() => window.open(`upi://pay?pa=${platformSettings?.upiId || '7416574197@hdfc'}&pn=Local%20Bandi%20Multi%20Services&am=${platformSettings?.registrationFee || 499}&cu=INR`)}
                                 className="w-full py-3 bg-white text-gray-900 rounded-xl font-bold uppercase tracking-wider text-xs flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg"
                               >
                                 <Smartphone className="w-3 h-3" /> Pay with App

@@ -413,10 +413,10 @@ export default function ProductDetails({
             <MessageSquare className="w-5 h-5 text-white" /> Chat Support
           </motion.button>
           <a
-            href="tel:+919988776655"
+            href="tel:+917416574197"
             className="flex-1 py-5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-xl shadow-emerald-100 flex items-center justify-center gap-3 active:scale-[0.98] transition-all text-center"
           >
-            <Phone className="w-5 h-5 text-white" /> Call Support
+            <Phone className="w-5 h-5 text-white" /> Call Support (7416574197)
           </a>
         </div>
       ) : (
@@ -510,10 +510,10 @@ export default function ProductDetails({
                     <MessageSquare className="w-4 h-4" /> Chat Support
                   </button>
                   <a
-                    href="tel:+919988776655"
+                    href="tel:+917416574197"
                     className="flex-1 py-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-emerald-900/30 transition-colors flex items-center justify-center gap-2 text-center"
                   >
-                    <Phone className="w-4 h-4" /> Call Support
+                    <Phone className="w-4 h-4" /> Call Support (7416574197)
                   </a>
                 </div>
               </div>

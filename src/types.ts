@@ -99,6 +99,7 @@ export interface VendorProfile {
   branchId?: string;
   userId?: string;
   businessName: string;
+  storeName?: string;
   ownerName: string;
   phone: string;
   service: string;
@@ -406,3 +407,55 @@ export interface AuthorizedAdminsConfig {
   updatedAt: any;
   updatedBy: string;
 }
+
+export interface RoleDashboardCard {
+  id: string;
+  role: 'customer' | 'vendor' | 'delivery' | 'branchAdmin' | 'masterAdmin' | string;
+  title: string;
+  shortDescription: string;
+  badge: string;
+  badgeColor?: string;
+  isApproved: boolean;
+  statusLabel?: string;
+  screen: Screen;
+  targetId?: string;
+  externalUrl?: string;
+}
+
+export interface SOSAlert {
+  id: string;
+  source: 'rider' | 'customer' | 'vendor';
+  triggerType: string;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM';
+  status: 'ACTIVE' | 'ACKNOWLEDGED' | 'DISPATCHED' | 'RESOLVED';
+  userId?: string;
+  riderId?: string;
+  name: string;
+  phone: string;
+  vehicleType?: string;
+  vehicleNumber?: string;
+  branchId?: string;
+  branchName?: string;
+  latitude: number;
+  longitude: number;
+  coordinates: {
+    lat: number;
+    lng: number;
+  };
+  address?: string;
+  exactTime: string;
+  exactDate: string;
+  timestamp?: any;
+  createdAt?: any;
+  isoTimestamp: string;
+  supervisorName?: string;
+  supervisorPhone?: string;
+  transmittedLogs?: string[];
+  acknowledgedAt?: any;
+  acknowledgedBy?: string;
+  resolvedAt?: any;
+  resolvedBy?: string;
+  resolutionNotes?: string;
+  audioSirenActive?: boolean;
+}
+

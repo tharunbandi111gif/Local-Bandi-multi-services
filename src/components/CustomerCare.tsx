@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Phone, User, Briefcase, Bike, ChevronRight, MessageSquare, ShieldCheck, HeartHandshake, Clock, HelpCircle, Send, Search, CheckCheck, Camera, ShieldAlert, Globe } from 'lucide-react';
+import { X, Phone, User, Briefcase, Bike, ChevronRight, MessageSquare, ShieldCheck, HeartHandshake, Clock, HelpCircle, Send, Search, CheckCheck, Camera, ShieldAlert, Globe, Zap } from 'lucide-react';
+import { RiderQuickRepliesDrawer, QuickReplyChipsBar } from './RiderQuickRepliesDrawer';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, updateDoc, setDoc } from 'firebase/firestore';
 import { SupportMessage, LanguageCode } from '../types';
@@ -73,6 +74,7 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
   const [hasReviewedFaq, setHasReviewedFaq] = useState(false);
   const [messages, setMessages] = useState<SupportMessage[]>([]);
   const [message, setMessage] = useState('');
+  const [showQuickRepliesDrawer, setShowQuickRepliesDrawer] = useState(false);
   const [showSupportNumber, setShowSupportNumber] = useState(false);
   const [showCallbackPicker, setShowCallbackPicker] = useState(false);
   const [callbackTime, setCallbackTime] = useState('');
@@ -793,8 +795,35 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                           </motion.div>
                         )}
 
+                        {/* One-tap Quick Replies toolbar if Rider/Delivery Care */}
+                        {careType === 'delivery' && (
+                          <div className="pt-1">
+                            <QuickReplyChipsBar
+                              onSelectReply={(text, autoSend) => {
+                                if (autoSend) {
+                                  handleSendMessage(text);
+                                } else {
+                                  setMessage(text);
+                                }
+                              }}
+                              onOpenDrawer={() => setShowQuickRepliesDrawer(true)}
+                              theme="light"
+                            />
+                          </div>
+                        )}
+
                         {/* Text input row */}
                         <div className="relative flex items-center gap-2">
+                          {careType === 'delivery' && (
+                            <button
+                              type="button"
+                              onClick={() => setShowQuickRepliesDrawer(true)}
+                              className="p-3 bg-amber-50 hover:bg-amber-100 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50 rounded-2xl transition-all flex items-center justify-center cursor-pointer active:scale-95 shrink-0"
+                              title="Open Quick Replies Drawer"
+                            >
+                              <Zap className="w-5 h-5 fill-amber-500" />
+                            </button>
+                          )}
                           <input 
                             type="file"
                             ref={imageInputRef}
@@ -808,7 +837,7 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                               value={message}
                               onChange={(e) => setMessage(e.target.value)}
                               onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
-                              placeholder="Type your message to support..."
+                              placeholder={careType === 'delivery' ? "Ask support or select a Quick Reply above..." : "Type your message to support..."}
                               className="w-full bg-white dark:bg-slate-900 px-4 py-3 pr-11 rounded-2xl font-medium text-sm sm:text-base outline-none border border-gray-200 dark:border-slate-700 focus:border-indigo-500 dark:focus:border-indigo-500 transition-all shadow-xs resize-none min-h-[46px] max-h-[160px] dark:text-white font-sans"
                             />
                             <button 
@@ -834,6 +863,20 @@ export default function CustomerCare({ isOpen, onClose, supportPhone, secondaryP
                             <span>Send</span>
                           </button>
                         </div>
+
+                        {/* Quick Replies Drawer */}
+                        <RiderQuickRepliesDrawer
+                          isOpen={showQuickRepliesDrawer}
+                          onClose={() => setShowQuickRepliesDrawer(false)}
+                          onSelectReply={(text, autoSend) => {
+                            if (autoSend) {
+                              handleSendMessage(text);
+                            } else {
+                              setMessage(text);
+                            }
+                          }}
+                          theme="light"
+                        />
                       </div>
                     </div>
                   </motion.div>

@@ -24,8 +24,10 @@ import {
   Edit3,
   Check,
   X,
-  Globe
+  Globe,
+  Zap
 } from 'lucide-react';
+import { RiderQuickRepliesDrawer, QuickReplyChipsBar } from './RiderQuickRepliesDrawer';
 import { DeliveryOrder, DeliveryPartnerProfile, SupportMessage, LanguageCode } from '../types';
 import { LANGUAGES } from '../constants';
 import JoiningLetter from './JoiningLetter';
@@ -210,6 +212,7 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
     vehicleNumber: ''
   });
   const [chatMessage, setChatMessage] = useState('');
+  const [showQuickRepliesDrawer, setShowQuickRepliesDrawer] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [messages, setMessages] = useState<SupportMessage[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -251,7 +254,7 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
             userId: user.uid,
             name: 'Admin Logistics Hero',
             phone: user.phoneNumber?.replace('+91', '') || '9999999999',
-            photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400',
+            photo: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             status: 'Online',
             rating: 5.0,
             trips: 18,
@@ -301,7 +304,7 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
             userId: user.uid,
             name: 'Admin Logistics Hero',
             phone: user.phoneNumber?.replace('+91', '') || '9999999999',
-            photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400',
+            photo: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             status: 'Online',
             rating: 5.0,
             trips: 18,
@@ -322,7 +325,7 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
             userId: user.uid,
             name: 'Admin Logistics Hero',
             phone: user.phoneNumber?.replace('+91', '') || '9999999999',
-            photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400',
+            photo: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             status: 'Online',
             rating: 5.0,
             trips: 18,
@@ -472,16 +475,15 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
     }
   };
 
-  const handleSendMessage = React.useCallback((e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim() || !profile) return;
+  const handleSendDirectMessage = React.useCallback((textToSend: string) => {
+    if (!textToSend.trim() || !profile) return;
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const newMsg: SupportMessage = { 
       id: `msg-${Date.now()}`, 
       senderId: profile.id, 
-      senderName: profile.name,
-      senderType: 'partner',
-      text: chatMessage, 
+      senderName: profile.name, 
+      senderType: 'partner', 
+      text: textToSend, 
       timestamp: now 
     };
     const allChats = JSON.parse(localStorage.getItem('lokal_support_chats') || '{}');
@@ -496,9 +498,23 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
       console.warn('Storage quota exceeded for lokal_support_chats', e);
     }
     setMessages(prev => [...prev, newMsg]);
-    setChatMessage('');
     window.dispatchEvent(new CustomEvent('support_message_sent'));
-  }, [chatMessage, profile]);
+  }, [profile]);
+
+  const handleSendMessage = React.useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatMessage.trim()) return;
+    handleSendDirectMessage(chatMessage);
+    setChatMessage('');
+  }, [chatMessage, handleSendDirectMessage]);
+
+  const handleSelectQuickReply = React.useCallback((text: string, autoSend: boolean = true) => {
+    if (autoSend) {
+      handleSendDirectMessage(text);
+    } else {
+      setChatMessage(text);
+    }
+  }, [handleSendDirectMessage]);
 
   const handleStatusToggle = React.useCallback(async () => {
     if (!profile) return;
@@ -792,21 +808,44 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
           </div>
         </div>
 
-        <div className="p-6 bg-white border-t border-slate-100 shadow-[0_-10px_30px_rgba(0,0,0,0.02)] pb-28">
-          <form onSubmit={handleSendMessage} className="flex gap-3 bg-slate-50 p-2.5 rounded-[2.5rem] border border-slate-100 shadow-inner group focus-within:ring-4 focus-within:ring-indigo-100 transition-all">
+        <div className="p-4 bg-white border-t border-slate-100 shadow-[0_-10px_30px_rgba(0,0,0,0.02)] pb-28 space-y-2">
+          {/* Quick Replies Chips Bar */}
+          <QuickReplyChipsBar
+            onSelectReply={handleSelectQuickReply}
+            onOpenDrawer={() => setShowQuickRepliesDrawer(true)}
+            theme="light"
+          />
+
+          <form onSubmit={handleSendMessage} className="flex gap-2 bg-slate-50 p-2 rounded-[2.5rem] border border-slate-100 shadow-inner group focus-within:ring-4 focus-within:ring-indigo-100 transition-all">
+            <button
+              type="button"
+              onClick={() => setShowQuickRepliesDrawer(true)}
+              className="p-3 bg-amber-50 hover:bg-amber-100 text-amber-600 border border-amber-200 rounded-full transition-all flex items-center justify-center cursor-pointer active:scale-95 shadow-xs"
+              title="Open Quick Replies Drawer"
+            >
+              <Zap className="w-5 h-5 fill-amber-500" />
+            </button>
             <input 
               value={chatMessage}
               onChange={(e) => setChatMessage(e.target.value)}
-              placeholder="How can we help you today?"
-              className="flex-1 bg-transparent px-5 py-3 font-extrabold text-[15px] outline-none placeholder:text-slate-300 text-slate-900"
+              placeholder="Type message or choose quick reply..."
+              className="flex-1 bg-transparent px-3 py-3 font-extrabold text-[14px] outline-none placeholder:text-slate-400 text-slate-900"
             />
             <button 
               disabled={!chatMessage.trim()}
-              className="w-12 h-12 bg-indigo-600 text-white rounded-full active:scale-95 disabled:opacity-50 disabled:scale-100 transition-all shadow-lg flex items-center justify-center"
+              className="w-11 h-11 bg-indigo-600 text-white rounded-full active:scale-95 disabled:opacity-50 disabled:scale-100 transition-all shadow-lg flex items-center justify-center shrink-0"
             >
-              <Send className="w-5 h-5" />
+              <Send className="w-4 h-4" />
             </button>
           </form>
+
+          {/* Quick Replies Bottom Sheet / Drawer */}
+          <RiderQuickRepliesDrawer
+            isOpen={showQuickRepliesDrawer}
+            onClose={() => setShowQuickRepliesDrawer(false)}
+            onSelectReply={handleSelectQuickReply}
+            theme="light"
+          />
         </div>
 
         <QuickNav activeTab={activeTab} setActiveTab={setActiveTab} />

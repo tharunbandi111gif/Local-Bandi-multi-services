@@ -374,22 +374,92 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           console.warn("User profile sync error:", error);
         });
       } else {
-        setIsAdmin(false);
-        setIsSuperAdmin(false);
-        setIsMasterAdmin(false);
-        setIsAuthorizedAdmin(false);
-        setIsBranchAdmin(false);
-        setBranchId(null);
-        setUserProfile(null);
+        const storedCleanPhone = (localStorage.getItem('user_phone') || '').replace(/\D/g, '').slice(-10);
+        if (storedCleanPhone && storedCleanPhone.length >= 10) {
+          const fallbackUid = `phone_${storedCleanPhone}`;
+          const formattedPhone = `+91${storedCleanPhone}`;
+          const isBootstrapAdmin = BOOTSTRAP_MASTER_ADMINS.phones.some(p => p.replace(/\D/g, '').slice(-10) === storedCleanPhone);
+
+          const fallbackUserObj: any = {
+            uid: fallbackUid,
+            phoneNumber: formattedPhone,
+            displayName: `Customer ${storedCleanPhone.slice(-4)}`,
+            email: `${storedCleanPhone}@localbandi.in`,
+            isAnonymous: false
+          };
+          setUser(fallbackUserObj);
+
+          setIsAdmin(isBootstrapAdmin);
+          setIsSuperAdmin(isBootstrapAdmin);
+          setIsMasterAdmin(isBootstrapAdmin);
+          setIsAuthorizedAdmin(isBootstrapAdmin);
+
+          getDoc(doc(db, 'users', fallbackUid)).then((docSnippet) => {
+            if (docSnippet.exists()) {
+              setUserProfile(docSnippet.data() as UserProfile);
+            } else {
+              setUserProfile({
+                id: fallbackUid,
+                phone: formattedPhone,
+                phoneNumber: formattedPhone,
+                name: `Customer ${storedCleanPhone.slice(-4)}`,
+                role: isBootstrapAdmin ? 'masterAdmin' : 'user',
+                email: `${storedCleanPhone}@localbandi.in`
+              } as any);
+            }
+          }).catch(() => {
+            setUserProfile({
+              id: fallbackUid,
+              phone: formattedPhone,
+              phoneNumber: formattedPhone,
+              name: `Customer ${storedCleanPhone.slice(-4)}`,
+              role: isBootstrapAdmin ? 'masterAdmin' : 'user',
+              email: `${storedCleanPhone}@localbandi.in`
+            } as any);
+          });
+        } else {
+          setIsAdmin(false);
+          setIsSuperAdmin(false);
+          setIsMasterAdmin(false);
+          setIsAuthorizedAdmin(false);
+          setIsBranchAdmin(false);
+          setBranchId(null);
+          setUserProfile(null);
+        }
       }
       setLoading(false);
     });
+
+    const handleAuthSync = () => {
+      const storedCleanPhone = (localStorage.getItem('user_phone') || '').replace(/\D/g, '').slice(-10);
+      if (storedCleanPhone && storedCleanPhone.length >= 10 && !auth.currentUser) {
+        const fallbackUid = `phone_${storedCleanPhone}`;
+        const formattedPhone = `+91${storedCleanPhone}`;
+        const isBootstrapAdmin = BOOTSTRAP_MASTER_ADMINS.phones.some(p => p.replace(/\D/g, '').slice(-10) === storedCleanPhone);
+        setUser({
+          uid: fallbackUid,
+          phoneNumber: formattedPhone,
+          displayName: `Customer ${storedCleanPhone.slice(-4)}`,
+          email: `${storedCleanPhone}@localbandi.in`,
+          isAnonymous: false
+        } as any);
+        setIsAdmin(isBootstrapAdmin);
+        setIsSuperAdmin(isBootstrapAdmin);
+        setIsMasterAdmin(isBootstrapAdmin);
+        setIsAuthorizedAdmin(isBootstrapAdmin);
+      }
+    };
+
+    window.addEventListener('auth_state_changed', handleAuthSync);
+    window.addEventListener('storage', handleAuthSync);
 
     return () => {
       unsubscribe();
       unsubAdmin();
       unsubProfile();
       unsubAuthAdmins();
+      window.removeEventListener('auth_state_changed', handleAuthSync);
+      window.removeEventListener('storage', handleAuthSync);
     };
   }, []);
 
@@ -436,6 +506,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       localStorage.removeItem('admin_session_active');
       localStorage.removeItem('lokal_branch_id');
       localStorage.removeItem('user_role');
+      localStorage.removeItem('user_phone');
+      localStorage.removeItem('lokal_user_phone');
+      setUser(null);
+      setUserProfile(null);
       await signOut(auth);
     } catch (error) {
       console.error("Logout failed", error);

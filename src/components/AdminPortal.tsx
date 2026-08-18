@@ -10,7 +10,7 @@ import {
   Star, Check, X, Shield, Globe, AlertCircle, Home,
   Zap, Award, RotateCcw, Sparkles, Timer, Gift, Trophy,
   UserPlus, UserMinus, UserCheck, Smartphone, Key, AlertOctagon, CheckCircle2,
-  Lock, Unlock
+  Lock, Unlock, PhoneCall
 } from 'lucide-react';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -25,7 +25,9 @@ import { CATEGORIES, PRODUCTS } from '../constants';
 import LogisticsHeatmap from './LogisticsHeatmap';
 import OrderTrendsChart from './OrderTrendsChart';
 import { getStoredQuizQuestions, DEFAULT_LOW_PRICE_QUIZ_QUESTIONS, QuizQuestion } from './MarketingQuizModal';
-import { AuthorizedAdmin, AuthorizedAdminsConfig } from '../types';
+import { AuthorizedAdmin, AuthorizedAdminsConfig, SOSAlert } from '../types';
+import SOSAlertIndicator from './common/SOSAlertIndicator';
+import { AttractionCampaignsManager } from './AttractionCampaignsManager';
 
 export default function AdminPortal() {
   const { 
@@ -77,7 +79,13 @@ export default function AdminPortal() {
 
   const [adminPasscode, setAdminPasscode] = useState('');
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'ai_desk' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'sos' | 'ai_desk' | 'attractions' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz'>('dashboard');
+
+  // --- EMERGENCY SOS DISTRESS ALERTS STATES ---
+  const [sosAlerts, setSosAlerts] = useState<SOSAlert[]>([]);
+  const [selectedSosAlert, setSelectedSosAlert] = useState<SOSAlert | null>(null);
+  const [showSosModal, setShowSosModal] = useState(false);
+  const [sosFilter, setSosFilter] = useState<'ALL' | 'ACTIVE' | 'ACKNOWLEDGED' | 'RESOLVED'>('ALL');
 
   // --- QUIZ & TRIVIA CONTROL STATES ---
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>(() => getStoredQuizQuestions());
@@ -140,6 +148,26 @@ export default function AdminPortal() {
     name: '', price: '', originalPrice: '', unit: '', category: 'groceries', 
     image: '', description: '', isAvailable: true, vendorId: 'admin-store', branchId: 'khammam_main',
     subCategory: '', stock: ''
+  });
+
+  // Hospital Booking Edit/Delete & Filters State
+  const [showHospitalBookingModal, setShowHospitalBookingModal] = useState(false);
+  const [editingHospitalBooking, setEditingHospitalBooking] = useState<any | null>(null);
+  const [hospitalBookingFilter, setHospitalBookingFilter] = useState<'all' | 'pending' | 'Approved' | 'Completed' | 'Rejected'>('all');
+  const [hospitalBookingSearch, setHospitalBookingSearch] = useState('');
+  const [hospitalBookingForm, setHospitalBookingForm] = useState({
+    patientName: '',
+    phone: '',
+    hospital: '',
+    slot: '',
+    dateTime: '',
+    age: '',
+    gender: 'Male',
+    location: '',
+    reason: '',
+    disease: '',
+    amount: 220,
+    status: 'pending'
   });
 
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
@@ -246,7 +274,7 @@ export default function AdminPortal() {
   const [smsSenderId, setSmsSenderId] = useState('LKLBND');
   const [paymentGateway, setPaymentGateway] = useState<'razorpay' | 'paytm' | 'cashfree' | 'stripe'>('razorpay');
   const [paymentMode, setPaymentMode] = useState<'sandbox' | 'live'>('sandbox');
-  const [paymentUpiId, setPaymentUpiId] = useState('8790729816-4@ybl');
+  const [paymentUpiId, setPaymentUpiId] = useState('7416574197@hdfc');
   const [paymentHolder, setPaymentHolder] = useState('Local Bandi Multi Services');
 
   // --- FOUNDER CONTROL PANEL STATES ---
@@ -258,13 +286,13 @@ export default function AdminPortal() {
     title: '', discount: '', price: '', originalPrice: '', img: '', status: 'active', branchId: 'global'
   });
   const dealPresets = [
-    { name: 'Fresh Groceries', url: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&h=300&fit=crop' },
-    { name: 'Mixed Vegetables', url: 'https://images.unsplash.com/photo-1533900298318-6b8da08a523e?w=300&h=300&fit=crop' },
-    { name: 'Juicy Fruits Bag', url: 'https://images.unsplash.com/photo-1550989465-0adf9ea622e2?w=300&h=300&fit=crop' },
-    { name: 'Farm Fresh Eggs', url: 'https://images.unsplash.com/photo-1506976785307-8732e854ad03?w=300&h=300&fit=crop' },
-    { name: 'Fresh Farm Milk', url: 'https://images.unsplash.com/photo-1563636619-e9143da7973b?w=300&h=300&fit=crop' },
-    { name: 'Fresh Apples Basket', url: 'https://images.unsplash.com/photo-1560806887-1e4cd0b6cbd6?w=300&h=300&fit=crop' },
-    { name: 'Premium Rice Pack', url: 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=300&h=300&fit=crop' },
+    { name: 'Fresh Groceries', url: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
+    { name: 'Mixed Vegetables', url: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
+    { name: 'Juicy Fruits Bag', url: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
+    { name: 'Farm Fresh Eggs', url: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
+    { name: 'Fresh Farm Milk', url: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
+    { name: 'Fresh Apples Basket', url: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
+    { name: 'Premium Rice Pack', url: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
   ];
   const [reviews, setReviews] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
@@ -775,16 +803,17 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
   const handleSaveSmsConfig = async () => {
     try {
       await setDoc(doc(db, 'settings', 'sms_config'), {
-        provider: smsProvider,
-        key: smsKey,
-        apiKey: smsKey,
-        password: smsPassword,
-        accountType: smsAccountType,
+        provider: smsProvider || 'serv_imp',
+        companyName: 'MarketBuzzer Teleservices Pvt Ltd',
+        key: smsKey || 'rJCIC6J0',
+        apiKey: smsKey || 'rJCIC6J0',
+        password: smsPassword || 'mXdYj5Bc',
+        accountType: smsAccountType || 'serv_imp',
         matchTemplate: smsMatchTemplate,
-        senderId: smsSenderId,
+        senderId: smsSenderId || 'LKLBND',
         updatedAt: new Date().toISOString()
       });
-      triggerToast('📲 Service Implicit SMS OTP transmitter settings synced successfully!');
+      triggerToast('📲 MarketBuzzer Teleservices (serv_imp) SMS OTP transmitter settings synced successfully!');
     } catch (err: any) {
       triggerToast('❌ Error saving SMS configuration.');
     }
@@ -878,6 +907,39 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       triggerToast('❌ Error updating complaint parameters.');
     } finally {
       setIsUpdatingComplaint(false);
+    }
+  };
+
+  // --- EMERGENCY SOS DISTRESS ALERTS HANDLERS ---
+  const handleAcknowledgeSosAlert = async (alertId: string) => {
+    try {
+      const alertRef = doc(db, 'sos_alerts', alertId);
+      await updateDoc(alertRef, {
+        status: 'ACKNOWLEDGED',
+        acknowledgedAt: new Date().toISOString(),
+        acknowledgedBy: userProfile?.name || user?.phoneNumber || '+918790729816 (Tarun Bandi)',
+        updatedAt: new Date().toISOString()
+      });
+      triggerToast(`🛡️ Emergency SOS acknowledged! Support team intervention recorded.`);
+    } catch (err: any) {
+      console.error("Failed to acknowledge SOS alert:", err);
+      triggerToast(`❌ Error updating SOS alert: ${err.message || err}`);
+    }
+  };
+
+  const handleResolveSosAlert = async (alertId: string) => {
+    try {
+      const alertRef = doc(db, 'sos_alerts', alertId);
+      await updateDoc(alertRef, {
+        status: 'RESOLVED',
+        resolvedAt: new Date().toISOString(),
+        resolvedBy: userProfile?.name || user?.phoneNumber || '+918790729816 (Tarun Bandi)',
+        updatedAt: new Date().toISOString()
+      });
+      triggerToast(`✅ Emergency SOS marked as RESOLVED & partner safe.`);
+    } catch (err: any) {
+      console.error("Failed to resolve SOS alert:", err);
+      triggerToast(`❌ Error resolving SOS alert: ${err.message || err}`);
     }
   };
 
@@ -1042,7 +1104,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
             sub: 'Safe Car & Bus Rentals for All Vehicles', 
             desc: 'Professional drivers we have for halting as you wish',
             color: 'bg-slate-900', 
-            img: 'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?w=800&q=80',
+            img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             categoryId: 'travel',
             cta: 'Book Driver',
             createdAt: new Date().toISOString()
@@ -1053,7 +1115,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
             title: 'Fresh Farm Milk', 
             sub: 'Direct from local farms to your home', 
             color: 'bg-blue-600', 
-            img: 'https://images.unsplash.com/photo-1596733430284-f7437764b1a9?w=800&q=80',
+            img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             productId: 'd1',
             createdAt: new Date().toISOString()
           },
@@ -1063,7 +1125,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
             title: 'Mineral Water 20L', 
             sub: 'Pure & Certified Quality', 
             color: 'bg-cyan-600', 
-            img: 'https://images.unsplash.com/photo-1548839140-29a749e1cf4d?w=800&q=80',
+            img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             productId: 'w1',
             createdAt: new Date().toISOString()
           },
@@ -1073,7 +1135,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
             title: 'Expert Maid Services', 
             sub: 'Experienced Cooks & Sweepers', 
             color: 'bg-emerald-600', 
-            img: 'https://images.unsplash.com/photo-1581578731548-c64695ce6958?w=800&q=80',
+            img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             categoryId: 'maids',
             createdAt: new Date().toISOString()
           },
@@ -1083,7 +1145,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
             title: 'Maintenance Pro', 
             sub: 'Electricians, Plumbers, Painters', 
             color: 'bg-orange-600', 
-            img: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=800&q=80',
+            img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             categoryId: 'services',
             createdAt: new Date().toISOString()
           }
@@ -1109,7 +1171,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
             discount: '50% OFF',
             price: 199,
             originalPrice: 399,
-            img: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=300&h=300&fit=crop',
+            img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             status: 'active',
             createdAt: new Date().toISOString()
           },
@@ -1119,7 +1181,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
             discount: '40% OFF',
             price: 299,
             originalPrice: 499,
-            img: 'https://images.unsplash.com/photo-1533900298318-6b8da08a523e?w=300&h=300&fit=crop',
+            img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             status: 'active',
             createdAt: new Date().toISOString()
           },
@@ -1129,7 +1191,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
             discount: '30% OFF',
             price: 149,
             originalPrice: 249,
-            img: 'https://images.unsplash.com/photo-1550989465-0adf9ea622e2?w=300&h=300&fit=crop',
+            img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
             status: 'active',
             createdAt: new Date().toISOString()
           }
@@ -1262,7 +1324,21 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       console.warn("Authorized admins config sync error in AdminPortal:", err);
     });
 
-    // 21. Real-time session revocation listener
+    // 21. Sync Emergency SOS Distress Alerts
+    const unsubSOS = onSnapshot(collection(db, 'sos_alerts'), (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as SOSAlert));
+      // Sort newest first
+      list.sort((a, b) => {
+        const timeA = new Date(a.timestamp || a.createdAt || 0).getTime();
+        const timeB = new Date(b.timestamp || b.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+      setSosAlerts(list);
+    }, (err) => {
+      console.warn("SOS alerts sync error in AdminPortal:", err);
+    });
+
+    // 22. Real-time session revocation listener
     const handleRevokeEvent = (event: any) => {
       const reason = event?.detail?.reason || 'Administrative role removed from backend';
       console.warn("Admin session revoked via event:", reason);
@@ -1297,6 +1373,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       unsubComplaints();
       unsubHospitalBookings();
       unsubAuthorizedAdmins();
+      unsubSOS();
     };
   }, [isAdminAuthenticated, user]);
 
@@ -1479,20 +1556,6 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       triggerToast(`✓ Rider status updated successfully`);
     } catch (err) {
       console.error(err);
-    }
-  };
-
-  // Hospital OP Booking approvals
-  const handleUpdateHospitalBookingStatus = async (id: string, status: 'Approved' | 'Rejected' | 'pending') => {
-    try {
-      await updateDoc(doc(db, 'hospital_bookings', id), {
-        status,
-        updatedAt: serverTimestamp()
-      });
-      triggerToast(`✓ Hospital booking status updated to: ${status}`);
-    } catch (err) {
-      console.error(err);
-      triggerToast('❌ Error updating hospital booking status');
     }
   };
 
@@ -1980,34 +2043,119 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     try {
       const hName = hospitalForm.name.trim();
       const updated = {
-        ...hospitalPrices,
-        [hName]: {
-          price: Number(hospitalForm.price) || 0,
-          isActive: hospitalForm.isActive,
-          description: hospitalForm.description.trim(),
-          phone: hospitalForm.phone.trim()
-        }
+        ...hospitalPrices
+      };
+      if (editingHospital && editingHospital !== hName) {
+        delete updated[editingHospital];
+      }
+      updated[hName] = {
+        ...(hospitalPrices[editingHospital || hName] || {}),
+        price: Number(hospitalForm.price) || 0,
+        isActive: hospitalForm.isActive,
+        description: hospitalForm.description.trim(),
+        phone: hospitalForm.phone.trim(),
+        updatedAt: new Date().toISOString()
       };
       await setDoc(doc(db, 'settings', 'hospital_prices'), updated);
-      triggerToast(`✓ Hospital ${hName} saved dynamically`);
+      triggerToast(`✓ Hospital ${hName} saved successfully`);
       setShowHospitalModal(false);
       setEditingHospital(null);
       setHospitalForm({ name: '', price: '', isActive: true, description: '', phone: '' });
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('Failed saving hospital registry');
+      triggerToast(`❌ Failed saving hospital: ${e.message || e}`);
     }
   };
 
   const handleDeleteHospitalObj = async (name: string) => {
-    if (!confirm(`Delete ${name} hospital from master clinical directory?`)) return;
+    if (!confirm(`Delete "${name}" hospital from master clinical directory?`)) return;
     try {
       const updated = { ...hospitalPrices };
       delete updated[name];
       await setDoc(doc(db, 'settings', 'hospital_prices'), updated);
-      triggerToast('✓ Deleted hospital from active networks successfully');
-    } catch (e) {
+      triggerToast(`✓ Deleted "${name}" hospital from directory`);
+    } catch (e: any) {
       console.error(e);
+      triggerToast(`❌ Error deleting hospital: ${e.message || e}`);
+    }
+  };
+
+  // Hospital OP Bookings Handlers (Edit, Delete, Status Updates)
+  const handleUpdateHospitalBookingStatus = async (id: string, newStatus: 'Approved' | 'Rejected' | 'Completed' | 'pending') => {
+    try {
+      await updateDoc(doc(db, 'hospital_bookings', id), {
+        status: newStatus,
+        updatedAt: serverTimestamp()
+      });
+      triggerToast(`✓ OP Booking status updated to ${newStatus}`);
+    } catch (err: any) {
+      console.error(err);
+      triggerToast(`❌ Error updating booking status: ${err.message || err}`);
+    }
+  };
+
+  const handleOpenEditHospitalBooking = (booking: any) => {
+    setEditingHospitalBooking(booking);
+    setHospitalBookingForm({
+      patientName: booking.patientName || '',
+      phone: booking.phone || '',
+      hospital: booking.hospital || booking.hospitalName || '',
+      slot: booking.slot || booking.dateTime || '',
+      dateTime: booking.dateTime || booking.slot || '',
+      age: booking.age ? String(booking.age) : '',
+      gender: booking.gender || 'Male',
+      location: booking.location || booking.address || '',
+      reason: booking.reason || booking.disease || '',
+      disease: booking.disease || booking.reason || '',
+      amount: booking.amount ? Number(booking.amount) : 220,
+      status: booking.status || 'pending'
+    });
+    setShowHospitalBookingModal(true);
+  };
+
+  const handleSaveHospitalBooking = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingHospitalBooking) return;
+    try {
+      const updatedData: any = {
+        patientName: hospitalBookingForm.patientName.trim(),
+        phone: hospitalBookingForm.phone.trim(),
+        hospital: hospitalBookingForm.hospital.trim(),
+        hospitalName: hospitalBookingForm.hospital.trim(),
+        slot: hospitalBookingForm.slot.trim() || hospitalBookingForm.dateTime,
+        dateTime: hospitalBookingForm.dateTime || hospitalBookingForm.slot,
+        age: hospitalBookingForm.age ? Number(hospitalBookingForm.age) : null,
+        gender: hospitalBookingForm.gender,
+        location: hospitalBookingForm.location.trim(),
+        address: hospitalBookingForm.location.trim(),
+        reason: hospitalBookingForm.reason.trim(),
+        disease: hospitalBookingForm.disease.trim() || hospitalBookingForm.reason.trim(),
+        amount: Number(hospitalBookingForm.amount) || 0,
+        status: hospitalBookingForm.status,
+        updatedAt: serverTimestamp()
+      };
+      await updateDoc(doc(db, 'hospital_bookings', editingHospitalBooking.id), updatedData);
+      triggerToast(`✓ OP appointment booking updated for ${hospitalBookingForm.patientName}`);
+      setShowHospitalBookingModal(false);
+      setEditingHospitalBooking(null);
+    } catch (err: any) {
+      console.error("Error saving hospital booking:", err);
+      triggerToast(`❌ Error saving booking: ${err.message || err}`);
+    }
+  };
+
+  const handleDeleteHospitalBooking = async (bookingId: string, patientName?: string) => {
+    if (!window.confirm(`PERMANENTLY DELETE OP appointment record for "${patientName || 'this patient'}"? This action cannot be undone.`)) return;
+    try {
+      await deleteDoc(doc(db, 'hospital_bookings', bookingId));
+      triggerToast('✓ Hospital OP appointment booking deleted permanently');
+      if (editingHospitalBooking?.id === bookingId) {
+        setShowHospitalBookingModal(false);
+        setEditingHospitalBooking(null);
+      }
+    } catch (err: any) {
+      console.error("Error deleting hospital booking:", err);
+      triggerToast(`❌ Error deleting booking: ${err.message || err}`);
     }
   };
 
@@ -2244,7 +2392,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
         price: Number(itemForm.price),
         unit: itemForm.unit,
         category: itemForm.category,
-        image: itemForm.image || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=400',
+        image: itemForm.image || 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
         description: itemForm.description,
         isAvailable: itemForm.isAvailable,
         vendorId: itemForm.vendorId || 'admin-store',
@@ -2428,23 +2576,49 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {['dashboard', 'ai_desk', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz'].map((tab) => {
+          {['dashboard', 'sos', 'ai_desk', 'attractions', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz'].map((tab) => {
             const isPendingSupport = tab === 'support' && complaints.some(c => c.status === 'Pending');
+            const activeSosCount = sosAlerts.filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED').length;
+            const isSosTab = tab === 'sos';
+
             return (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab as any)}
                 className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all relative flex items-center gap-1.5 cursor-pointer ${
                   activeTab === tab 
-                    ? 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20 font-extrabold border border-yellow-300' 
-                    : tab === 'quiz'
-                      ? 'bg-amber-950/40 text-amber-400 border border-amber-500/30 font-bold hover:bg-amber-950/60'
-                      : tab === 'ai_desk'
-                        ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
+                    ? isSosTab 
+                      ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50 font-extrabold border border-rose-400'
+                      : tab === 'attractions'
+                        ? 'bg-gradient-to-r from-amber-400 to-yellow-400 text-slate-950 shadow-md shadow-amber-950/30 font-black border border-amber-300'
+                        : 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20 font-extrabold border border-yellow-300' 
+                    : isSosTab
+                      ? activeSosCount > 0
+                        ? 'bg-rose-950/60 text-rose-300 border border-rose-500/60 font-bold hover:bg-rose-900/60 animate-pulse'
                         : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
+                      : tab === 'attractions'
+                        ? 'bg-gradient-to-r from-amber-950/40 to-indigo-950/40 text-amber-300 border border-amber-500/40 font-black hover:border-amber-400/70 shadow-sm'
+                        : tab === 'quiz'
+                          ? 'bg-amber-950/40 text-amber-400 border border-amber-500/30 font-bold hover:bg-amber-950/60'
+                          : tab === 'ai_desk'
+                            ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
+                            : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
                 }`}
               >
-                <span>{tab === 'quiz' ? '⚡ 40s Quiz' : tab === 'ai_desk' ? '🧠 AI Developer Desk' : tab}</span>
+                <span>
+                  {tab === 'sos' 
+                    ? `🚨 SOS (${activeSosCount})` 
+                    : tab === 'attractions'
+                      ? '🎁 Attraction Campaigns'
+                      : tab === 'quiz' 
+                        ? '⚡ 40s Quiz' 
+                        : tab === 'ai_desk' 
+                          ? '🧠 AI Developer Desk' 
+                          : tab}
+                </span>
+                {isSosTab && activeSosCount > 0 && (
+                  <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping absolute -top-0.5 -right-0.5" />
+                )}
                 {isPendingSupport && (
                   <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping absolute -top-0.5 -right-0.5" />
                 )}
@@ -2476,6 +2650,23 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
 
       {/* Primary Terminal Contents body */}
       <div className="flex-1 p-6 max-w-7xl mx-auto w-full space-y-6">
+        
+        {/* GLOBAL PERSISTENT SOS TRIGGERED INDICATORS (Shows in all tabs if active distress signals exist) */}
+        {sosAlerts.filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED').length > 0 && activeTab !== 'sos' && (
+          <div className="space-y-3">
+            {sosAlerts
+              .filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED')
+              .map(alert => (
+                <SOSAlertIndicator
+                  key={alert.id}
+                  alert={alert}
+                  variant="banner"
+                  onAcknowledge={handleAcknowledgeSosAlert}
+                  onResolve={handleResolveSosAlert}
+                />
+              ))}
+          </div>
+        )}
         
         {/* TAB 1: DASHBOARD METRICS */}
         {activeTab === 'dashboard' && (
@@ -2690,6 +2881,136 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
                   {isMaintenanceMode ? 'Re-enable Live Systems' : 'Pause Live Systems (Downtime)'}
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: EMERGENCY SOS DISTRESS INCIDENT COMMAND CENTER */}
+        {activeTab === 'sos' && (
+          <div className="space-y-6">
+            <div className="bg-slate-900 border border-rose-500/30 p-6 rounded-[2.5rem] relative overflow-hidden shadow-[0_0_40px_rgba(244,63,94,0.1)]">
+              <div className="absolute top-0 right-0 p-6 opacity-10">
+                <ShieldAlert className="w-32 h-32 text-rose-500" />
+              </div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest font-mono">
+                  Real-time Emergency Distress Hub
+                </p>
+              </div>
+              <h2 className="text-xl font-black italic tracking-tight uppercase text-white flex items-center gap-2">
+                <span>🚨 Emergency SOS Incident Command Center</span>
+              </h2>
+              <p className="text-slate-400 text-xs mt-1.5 leading-relaxed max-w-2xl">
+                This console receives instantaneous distress transmissions from delivery partners in the field. Review the exact transmission timestamps and high-precision GPS coordinates dispatched during emergency panic sequences.
+              </p>
+            </div>
+
+            {/* Emergency Status Metrics Bar */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-slate-900 border border-rose-500/20 p-5 rounded-3xl">
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Active Distress Signals</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-black text-rose-400">
+                    {sosAlerts.filter(a => a.status === 'ACTIVE').length}
+                  </span>
+                  {sosAlerts.filter(a => a.status === 'ACTIVE').length > 0 && (
+                    <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 text-[8px] font-black uppercase rounded-full animate-pulse font-mono">
+                      URGENT
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-amber-500/20 p-5 rounded-3xl">
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Acknowledged / In Response</p>
+                <span className="text-2xl font-black text-amber-400">
+                  {sosAlerts.filter(a => a.status === 'ACKNOWLEDGED').length}
+                </span>
+              </div>
+
+              <div className="bg-slate-900 border border-emerald-500/20 p-5 rounded-3xl">
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Resolved & Secured</p>
+                <span className="text-2xl font-black text-emerald-400">
+                  {sosAlerts.filter(a => a.status === 'RESOLVED').length}
+                </span>
+              </div>
+
+              <div className="bg-slate-900 border border-white/5 p-5 rounded-3xl">
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Transmissions</p>
+                <span className="text-2xl font-black text-slate-200">{sosAlerts.length} total</span>
+              </div>
+            </div>
+
+            {/* Filter controls */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 p-4 rounded-2xl border border-white/5">
+              <div className="flex items-center gap-2 overflow-x-auto">
+                {(['ALL', 'ACTIVE', 'ACKNOWLEDGED', 'RESOLVED'] as const).map(flt => {
+                  const count = flt === 'ALL' 
+                    ? sosAlerts.length 
+                    : sosAlerts.filter(a => a.status === flt).length;
+                  return (
+                    <button
+                      key={flt}
+                      onClick={() => setSosFilter(flt)}
+                      className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                        sosFilter === flt
+                          ? flt === 'ACTIVE'
+                            ? 'bg-rose-600 text-white shadow-md shadow-rose-950/40'
+                            : 'bg-yellow-400 text-slate-950 shadow-md shadow-yellow-950/30 font-extrabold'
+                          : 'bg-slate-950 text-slate-400 hover:bg-slate-800 border border-white/5'
+                      }`}
+                    >
+                      <span>{flt}</span>
+                      <span className="px-1.5 py-0.2 bg-black/30 rounded-md text-[9px] font-mono">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <a
+                  href="tel:112"
+                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-rose-950/30 transition-all active:scale-95"
+                >
+                  <PhoneCall className="w-3.5 h-3.5 animate-pulse" />
+                  <span>Dial Emergency 112</span>
+                </a>
+                <a
+                  href="tel:108"
+                  className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-amber-950/30 transition-all active:scale-95"
+                >
+                  <PhoneCall className="w-3.5 h-3.5" />
+                  <span>Ambulance 108</span>
+                </a>
+              </div>
+            </div>
+
+            {/* List of SOS Alerts */}
+            <div className="space-y-4">
+              {sosAlerts
+                .filter(a => sosFilter === 'ALL' || a.status === sosFilter)
+                .map(alert => (
+                  <SOSAlertIndicator
+                    key={alert.id}
+                    alert={alert}
+                    variant="card"
+                    onAcknowledge={handleAcknowledgeSosAlert}
+                    onResolve={handleResolveSosAlert}
+                  />
+                ))}
+
+              {sosAlerts.filter(a => sosFilter === 'ALL' || a.status === sosFilter).length === 0 && (
+                <div className="bg-slate-900 border border-white/5 rounded-[2rem] p-12 text-center space-y-3">
+                  <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto">
+                    <ShieldCheck className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-base font-black text-white uppercase">All Channels Clear</h3>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto">
+                    No {sosFilter !== 'ALL' ? sosFilter.toLowerCase() : ''} emergency SOS distress alerts reported in the system. Delivery partners are operating normally.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -4184,44 +4505,211 @@ const reconcileDocSync = async (branchId, docBody) => {
 
               {/* Hospital OP Bookings Queue */}
               <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-black uppercase tracking-tight text-rose-400">Pending Hospital OPs ({hospitalBookings.filter(b => b.status === 'pending' || b.status === 'Pending').length})</h3>
-                  <Activity className="w-5 h-5 text-rose-400" />
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Activity className="w-5 h-5 text-rose-400" />
+                      <h3 className="text-sm font-black uppercase tracking-tight text-rose-400">
+                        Hospital OP Appointments ({hospitalBookings.length})
+                      </h3>
+                    </div>
+                    <p className="text-[10px] text-slate-400">Manage patient bookings, consultation approvals, and appointments</p>
+                  </div>
+
+                  {/* Status Filters */}
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-white/5 overflow-x-auto">
+                    {(['all', 'pending', 'Approved', 'Completed', 'Rejected'] as const).map((st) => {
+                      const count = st === 'all' 
+                        ? hospitalBookings.length 
+                        : hospitalBookings.filter(b => (b.status || 'pending').toLowerCase() === st.toLowerCase()).length;
+                      return (
+                        <button
+                          key={st}
+                          onClick={() => setHospitalBookingFilter(st)}
+                          className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+                            hospitalBookingFilter === st
+                              ? 'bg-rose-500 text-white shadow-md'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {st} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="space-y-3.5 max-h-[450px] overflow-y-auto pr-1">
-                  {hospitalBookings.filter(b => b.status === 'pending' || b.status === 'Pending').length === 0 ? (
+                {/* Search box */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={hospitalBookingSearch}
+                    onChange={(e) => setHospitalBookingSearch(e.target.value)}
+                    placeholder="Search by patient name, phone, hospital, or symptoms..."
+                    className="w-full bg-slate-950 border border-white/10 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500/50"
+                  />
+                  {hospitalBookingSearch && (
+                    <button
+                      onClick={() => setHospitalBookingSearch('')}
+                      className="absolute right-3 top-2.5 text-slate-400 hover:text-white text-xs cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-3.5 max-h-[500px] overflow-y-auto pr-1">
+                  {hospitalBookings
+                    .filter((b) => {
+                      if (hospitalBookingFilter !== 'all') {
+                        const statusMatch = (b.status || 'pending').toLowerCase() === hospitalBookingFilter.toLowerCase();
+                        if (!statusMatch) return false;
+                      }
+                      if (hospitalBookingSearch.trim()) {
+                        const q = hospitalBookingSearch.toLowerCase();
+                        const name = (b.patientName || '').toLowerCase();
+                        const phone = (b.phone || '').toLowerCase();
+                        const hosp = (b.hospital || b.hospitalName || '').toLowerCase();
+                        const reason = (b.reason || b.disease || '').toLowerCase();
+                        const loc = (b.location || b.address || '').toLowerCase();
+                        return name.includes(q) || phone.includes(q) || hosp.includes(q) || reason.includes(q) || loc.includes(q);
+                      }
+                      return true;
+                    }).length === 0 ? (
                     <div className="text-center p-8 bg-slate-950/60 rounded-3xl border border-white/5">
-                      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-none">✓ No pending Hospital OPs</p>
+                      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-none">
+                        No hospital OP records found for this filter
+                      </p>
                     </div>
                   ) : (
-                    hospitalBookings.filter(b => b.status === 'pending' || b.status === 'Pending').map((b) => (
-                      <div key={b.id} className="bg-slate-950/80 border border-white/5 p-4.5 rounded-2xl flex flex-col justify-between gap-4">
-                        <div>
-                          <div className="flex items-start justify-between">
-                            <h4 className="text-sm font-black text-white uppercase tracking-tight">{b.patientName || 'Anonymous Patient'}</h4>
-                            <span className="px-2.5 py-1 bg-rose-400/10 text-rose-400 text-[9px] font-black uppercase tracking-widest rounded-full">{b.hospital || 'Hospital'}</span>
+                    hospitalBookings
+                      .filter((b) => {
+                        if (hospitalBookingFilter !== 'all') {
+                          const statusMatch = (b.status || 'pending').toLowerCase() === hospitalBookingFilter.toLowerCase();
+                          if (!statusMatch) return false;
+                        }
+                        if (hospitalBookingSearch.trim()) {
+                          const q = hospitalBookingSearch.toLowerCase();
+                          const name = (b.patientName || '').toLowerCase();
+                          const phone = (b.phone || '').toLowerCase();
+                          const hosp = (b.hospital || b.hospitalName || '').toLowerCase();
+                          const reason = (b.reason || b.disease || '').toLowerCase();
+                          const loc = (b.location || b.address || '').toLowerCase();
+                          return name.includes(q) || phone.includes(q) || hosp.includes(q) || reason.includes(q) || loc.includes(q);
+                        }
+                        return true;
+                      })
+                      .map((b) => {
+                        const bStatus = (b.status || 'pending').toLowerCase();
+                        const isPending = bStatus === 'pending';
+                        const isApproved = bStatus === 'approved';
+                        const isCompleted = bStatus === 'completed';
+                        const isRejected = bStatus === 'rejected';
+
+                        return (
+                          <div key={b.id} className="bg-slate-950/80 border border-white/5 p-4.5 rounded-2xl flex flex-col justify-between gap-3 text-left">
+                            <div>
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <h4 className="text-sm font-black text-white uppercase tracking-tight">
+                                    {b.patientName || 'Anonymous Patient'}
+                                  </h4>
+                                  <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                    📞 {b.phone || 'No phone'} {b.age ? `• ${b.age} yrs` : ''} {b.gender ? `• ${b.gender}` : ''}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                  <span className="px-2 py-0.5 bg-rose-400/10 text-rose-400 text-[9px] font-black uppercase tracking-widest rounded-md border border-rose-400/20">
+                                    {b.hospital || b.hospitalName || 'Clinical Hub'}
+                                  </span>
+                                  <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md ${
+                                    isApproved ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' :
+                                    isCompleted ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/20' :
+                                    isRejected ? 'bg-rose-500/15 text-rose-400 border border-rose-500/20' :
+                                    'bg-amber-500/15 text-amber-300 border border-amber-500/20 animate-pulse'
+                                  }`}>
+                                    {b.status || 'Pending'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-white/5 text-[10px] text-slate-400">
+                                <div>
+                                  <span className="text-slate-500 font-bold block uppercase text-[8px]">Appointment Slot</span>
+                                  <span className="font-bold text-white">{b.slot || b.dateTime || 'Standard OPD'}</span>
+                                </div>
+                                <div>
+                                  <span className="text-slate-500 font-bold block uppercase text-[8px]">Fee / Total</span>
+                                  <span className="font-bold text-emerald-400">₹{b.amount || 220}</span>
+                                </div>
+                                {(b.location || b.address) && (
+                                  <div className="col-span-2">
+                                    <span className="text-slate-500 font-bold block uppercase text-[8px]">Location / Area</span>
+                                    <span className="text-slate-300">{b.location || b.address}</span>
+                                  </div>
+                                )}
+                                {(b.reason || b.disease) && (
+                                  <div className="col-span-2">
+                                    <span className="text-slate-500 font-bold block uppercase text-[8px]">Symptoms / Consultation Reason</span>
+                                    <span className="text-amber-300/90 italic">"{b.reason || b.disease}"</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Action Buttons: Status Updates + Edit + Delete */}
+                            <div className="flex items-center gap-1.5 pt-2 border-t border-white/5 flex-wrap">
+                              {isPending && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateHospitalBookingStatus(b.id, 'Approved')}
+                                  className="flex-1 py-1.5 px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-black uppercase text-[8.5px] tracking-wider active:scale-95 transition-all cursor-pointer text-center"
+                                >
+                                  ✓ Approve OP
+                                </button>
+                              )}
+
+                              {isApproved && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateHospitalBookingStatus(b.id, 'Completed')}
+                                  className="flex-1 py-1.5 px-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-black uppercase text-[8.5px] tracking-wider active:scale-95 transition-all cursor-pointer text-center"
+                                >
+                                  ✓ Mark Visited
+                                </button>
+                              )}
+
+                              {!isRejected && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateHospitalBookingStatus(b.id, 'Rejected')}
+                                  className="py-1.5 px-2.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white rounded-lg font-black uppercase text-[8.5px] tracking-wider active:scale-95 transition-all cursor-pointer border border-rose-500/20"
+                                >
+                                  Reject
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditHospitalBooking(b)}
+                                className="py-1.5 px-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg font-black uppercase text-[8.5px] tracking-wider active:scale-95 transition-all cursor-pointer border border-white/10 flex items-center gap-1"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                Edit
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteHospitalBooking(b.id, b.patientName)}
+                                className="py-1.5 px-2 bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white rounded-lg font-black uppercase text-[8.5px] tracking-wider active:scale-95 transition-all cursor-pointer border border-rose-500/20"
+                                title="Delete Booking"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
-                          <p className="text-[11px] text-slate-400 mt-2 font-medium">Slot: {b.slot || 'N/A'}</p>
-                          <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Age/Gender: {b.age || 'N/A'} yrs / {b.gender || 'N/A'}</p>
-                          <p className="text-[11px] text-slate-400 mt-0.5 font-medium">Phone: {b.phone}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => handleUpdateHospitalBookingStatus(b.id, 'Approved')}
-                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all shadow-md shadow-emerald-900/10"
-                          >
-                            Approve OP
-                          </button>
-                          <button 
-                            onClick={() => handleUpdateHospitalBookingStatus(b.id, 'Rejected')}
-                            className="px-4 py-2 bg-rose-600/15 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl font-black uppercase text-[9px] tracking-widest active:scale-95 transition-all"
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      </div>
-                    ))
+                        );
+                      })
                   )}
                 </div>
               </div>
@@ -5243,7 +5731,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                     <div className="flex items-center justify-between border-b border-white/5 pb-3">
                       <div>
                         <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">SMS Gateway Config</h3>
-                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">OTP secure transmitters controller</p>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">MarketBuzzer Teleservices Pvt Ltd • serv_imp Transmitter</p>
                       </div>
                       <span className="px-2 py-0.5 bg-yellow-400/10 text-yellow-500 text-[8.5px] font-black tracking-wider uppercase rounded-full">SMS-GATE</span>
                     </div>
@@ -5256,7 +5744,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                           onChange={(e: any) => setSmsProvider(e.target.value)}
                           className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white uppercase tracking-wider outline-none focus:border-yellow-500 text-slate-300"
                         >
-                          <option value="serv_imp">Service Implicit (serv_imp)</option>
+                          <option value="serv_imp">MarketBuzzer Teleservices (serv_imp)</option>
                           <option value="twilio">Twilio Programmable SMS</option>
                           <option value="plivo">Plivo Premium</option>
                         </select>
@@ -5293,6 +5781,31 @@ const reconcileDocSync = async (branchId, docBody) => {
                           placeholder="e.g. mXdYj5Bc"
                           className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
                         />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">DLT Sender ID (6-Chars)</label>
+                        <input
+                          type="text"
+                          value={smsSenderId}
+                          onChange={(e) => setSmsSenderId(e.target.value.toUpperCase().slice(0, 6))}
+                          placeholder="e.g. LKLBND"
+                          maxLength={6}
+                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white uppercase outline-none focus:border-yellow-500"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 pt-5">
+                        <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
+                          <input
+                            type="checkbox"
+                            checked={smsMatchTemplate}
+                            onChange={(e) => setSmsMatchTemplate(e.target.checked)}
+                            className="w-4 h-4 rounded text-yellow-400 bg-slate-950 border-white/10 focus:ring-yellow-400"
+                          />
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Enforce DLT Match Template</span>
+                        </label>
                       </div>
                     </div>
 
@@ -5350,7 +5863,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                           type="text"
                           value={paymentUpiId}
                           onChange={(e) => setPaymentUpiId(e.target.value)}
-                          placeholder="e.g. 8790729816@ybl"
+                          placeholder="e.g. 7416574197@hdfc"
                           className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
                         />
                       </div>
@@ -6841,7 +7354,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                         {/* Photo preview wrap */}
                         <div className="relative aspect-[3/2] bg-slate-950 rounded-[1.5rem] overflow-hidden border border-white/5 shadow-inner">
                           <img 
-                            src={deal.img || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=500&fit=crop'} 
+                            src={deal.img || 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E'} 
                             className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" 
                             referrerPolicy="no-referrer"
                             alt={deal.title} 
@@ -7072,6 +7585,14 @@ const reconcileDocSync = async (branchId, docBody) => {
           </div>
         )}
 
+        {/* TAB: ATTRACTION CAMPAIGNS (SCRATCH CARD, FLASH DROP, GROUP BUY POOL) */}
+        {activeTab === 'attractions' && (
+          <AttractionCampaignsManager 
+            adminEmail={user?.email || 'tharunbandi111@gmail.com'} 
+            onToast={triggerToast} 
+          />
+        )}
+
       </div>
 
       {/* Standalone footer layout */}
@@ -7200,7 +7721,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                     value={itemForm.image} 
                     onChange={(e) => setItemForm({...itemForm, image: e.target.value})}
                     className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold" 
-                    placeholder="https://images.unsplash.com/photo-..." 
+                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E" 
                   />
                 </div>
 
@@ -7340,7 +7861,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                     value={dealForm.img} 
                     onChange={(e) => setDealForm({...dealForm, img: e.target.value})}
                     className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-mono text-slate-300 placeholder-slate-700" 
-                    placeholder="https://images.unsplash.com/photo-..." 
+                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E" 
                   />
                   
                   {/* Preset helpers */}
@@ -7465,7 +7986,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                     value={categoryForm.image} 
                     onChange={(e) => setCategoryForm({...categoryForm, image: e.target.value})}
                     className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold" 
-                    placeholder="https://images.unsplash.com/photo-..." 
+                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E" 
                   />
                   <p className="text-[8px] text-slate-500 font-bold uppercase leading-snug">Provide an Unsplash graphic to render a rich picture tile for users (optional).</p>
                 </div>
@@ -7550,7 +8071,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                     value={bannerForm.image} 
                     onChange={(e) => setBannerForm({...bannerForm, image: e.target.value})}
                     className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold font-mono" 
-                    placeholder="https://images.unsplash.com/photo-..." 
+                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E" 
                   />
                 </div>
 
@@ -8696,6 +9217,215 @@ const reconcileDocSync = async (branchId, docBody) => {
                     className="flex-1 py-3 bg-gradient-to-r from-amber-400 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-slate-950 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-amber-500/20 cursor-pointer"
                   >
                     {editingQuizQuestion ? 'Save Changes' : 'Create Question'}
+                  </button>
+                </div>
+
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* HOSPITAL BOOKING EDIT MODAL */}
+      <AnimatePresence>
+        {showHospitalBookingModal && (
+          <div className="fixed inset-0 z-[10010] flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-slate-900 border border-rose-500/30 rounded-[2.5rem] p-6 max-w-lg w-full space-y-5 text-white shadow-2xl overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2.5 text-left">
+                  <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black uppercase tracking-tight text-white">
+                      Edit Hospital OP Booking Details
+                    </h3>
+                    <p className="text-[10px] text-slate-400">Update appointment info, patient phone, or visit status</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setShowHospitalBookingModal(false); setEditingHospitalBooking(null); }}
+                  className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white transition-all cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveHospitalBooking} className="space-y-3.5 text-left">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                      Patient Full Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={hospitalBookingForm.patientName}
+                      onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, patientName: e.target.value})}
+                      placeholder="e.g. Ramesh Reddy"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-rose-400 outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                      Phone Number *
+                    </label>
+                    <input
+                      type="tel"
+                      required
+                      value={hospitalBookingForm.phone}
+                      onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, phone: e.target.value})}
+                      placeholder="e.g. 9876543210"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-rose-400 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                      Hospital / Clinic *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={hospitalBookingForm.hospital}
+                      onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, hospital: e.target.value})}
+                      placeholder="e.g. Mamata General Hospital"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-rose-400 outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                      OP Slot / Time *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={hospitalBookingForm.slot}
+                      onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, slot: e.target.value, dateTime: e.target.value})}
+                      placeholder="e.g. Morning 10:00 AM - 12:00 PM"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-rose-400 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                      Patient Age
+                    </label>
+                    <input
+                      type="number"
+                      value={hospitalBookingForm.age}
+                      onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, age: e.target.value})}
+                      placeholder="e.g. 35"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-rose-400 outline-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                      Gender
+                    </label>
+                    <select
+                      value={hospitalBookingForm.gender}
+                      onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, gender: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-rose-400 outline-none"
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                      Fee (₹)
+                    </label>
+                    <input
+                      type="number"
+                      value={hospitalBookingForm.amount}
+                      onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, amount: Number(e.target.value)})}
+                      placeholder="220"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-emerald-400 focus:border-rose-400 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                    Location / Village / Colony
+                  </label>
+                  <input
+                    type="text"
+                    value={hospitalBookingForm.location}
+                    onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, location: e.target.value})}
+                    placeholder="e.g. Wyra Road, Khammam"
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-rose-400 outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                    Symptoms / Reason for Visit
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={hospitalBookingForm.reason}
+                    onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, reason: e.target.value, disease: e.target.value})}
+                    placeholder="e.g. General checkup, viral fever, routine pediatric check"
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-medium text-slate-200 focus:border-rose-400 outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">
+                    Appointment Status
+                  </label>
+                  <select
+                    value={hospitalBookingForm.status}
+                    onChange={(e) => setHospitalBookingForm({...hospitalBookingForm, status: e.target.value})}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-rose-400 outline-none"
+                  >
+                    <option value="pending">Pending (Waiting for review)</option>
+                    <option value="Approved">Approved (Confirmed with Clinic)</option>
+                    <option value="Completed">Completed (Patient Visited Clinic)</option>
+                    <option value="Rejected">Rejected (Cancelled)</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-2.5 pt-2">
+                  {editingHospitalBooking && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteHospitalBooking(editingHospitalBooking.id, editingHospitalBooking.patientName)}
+                      className="py-3 px-4 bg-rose-500/15 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/20 rounded-xl font-black uppercase text-[10px] tracking-widest cursor-pointer flex items-center justify-center gap-1 transition-all"
+                      title="Permanently Delete Booking"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => { setShowHospitalBookingModal(false); setEditingHospitalBooking(null); }}
+                    className="flex-1 py-3 bg-slate-950 text-slate-400 border border-white/5 rounded-xl font-black uppercase text-[10px] tracking-widest cursor-pointer hover:bg-slate-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-3 bg-rose-500 hover:bg-rose-400 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-950/40 cursor-pointer transition-all"
+                  >
+                    Save Changes
                   </button>
                 </div>
 

@@ -196,9 +196,9 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
       }
 
       // Using Direct UPI with the user's requested VPA
-      const upiId = paymentConfig?.upiId || '8790729816-4@ybl';
+      const upiId = paymentConfig?.upiId || '7416574197@hdfc';
       const holder = paymentConfig?.accountHolder || 'Local Bandi Multi Services';
-      window.open(`upi://pay?pa=${upiId}&pn=${holder}&am=${finalAmountIncludingTip}&cu=INR`);
+      window.open(`upi://pay?pa=${upiId}&pn=${encodeURIComponent(holder)}&am=${finalAmountIncludingTip}&cu=INR`);
       setLoading(true);
       setProcessingOrder(true);
       setTimeout(async () => {
@@ -472,7 +472,7 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                       <p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest leading-none">Beneficiary ID</p>
                       <button 
                         onClick={() => {
-                          navigator.clipboard.writeText('8790729816-4@ybl');
+                          navigator.clipboard.writeText(paymentConfig?.upiId || '7416574197@hdfc');
                           alert('UPI ID Copied!');
                         }}
                         className="text-[8px] font-bold text-white bg-white/10 px-2 py-1 rounded-md"
@@ -480,11 +480,11 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                         COPY
                       </button>
                     </div>
-                    <p className="font-mono text-sm font-black break-all">8790729816-4@ybl</p>
+                    <p className="font-mono text-sm font-black break-all">{paymentConfig?.upiId || '7416574197@hdfc'}</p>
                   </div>
 
                   <button 
-                    onClick={() => window.open(`upi://pay?pa=8790729816-4@ybl&pn=Local Bandi Multi Services&am=${finalAmountIncludingTip}&cu=INR`)}
+                    onClick={() => window.open(`upi://pay?pa=${paymentConfig?.upiId || '7416574197@hdfc'}&pn=${encodeURIComponent(paymentConfig?.accountHolder || 'Local Bandi Multi Services')}&am=${finalAmountIncludingTip}&cu=INR`)}
                     className="w-full py-4 bg-white text-indigo-600 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all shadow-lg flex items-center justify-center gap-2"
                   >
                     <Smartphone className="w-4 h-4" />

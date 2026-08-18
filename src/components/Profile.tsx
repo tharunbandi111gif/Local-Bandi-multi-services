@@ -6,10 +6,12 @@ import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Address, Transaction, LanguageCode, Screen } from '../types';
 import { translations } from '../translations';
 import { referralService } from '../lib/referral';
-import { useFirebase } from '../contexts/FirebaseContext';
+import { useFirebase, BOOTSTRAP_MASTER_ADMINS } from '../contexts/FirebaseContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { compressImage } from '../lib/imageUtils';
+import { DEFAULT_AVATAR } from '../utils/imagePlaceholders';
 import PartnerOnboarding from './PartnerOnboarding';
+import MyDashboardsSection from './MyDashboardsSection';
 
 interface ProfileProps {
   onBack: () => void;
@@ -20,15 +22,28 @@ interface ProfileProps {
 
 export default function Profile({ onBack, onNavigate, language, isAdmin: propIsAdmin }: ProfileProps) {
   const t = translations[language].profile;
-  const { user, userProfile: contextProfile, isAdmin: contextIsAdmin, logout, deactivateAccount } = useFirebase();
-  const isAdmin = propIsAdmin || contextIsAdmin || localStorage.getItem('admin_session_active') === 'true';
+  const { user, userProfile: contextProfile, isAdmin: contextIsAdmin, isMasterAdmin, isSuperAdmin, isBranchAdmin, logout, deactivateAccount } = useFirebase();
+  
+  const isMaster = Boolean(
+    isMasterAdmin || 
+    isSuperAdmin || 
+    (contextProfile?.role === 'masterAdmin') ||
+    (user?.email && BOOTSTRAP_MASTER_ADMINS.emails.some(e => e.toLowerCase() === user.email?.toLowerCase())) ||
+    (user?.phoneNumber && BOOTSTRAP_MASTER_ADMINS.phones.some(p => user.phoneNumber?.replace(/\D/g, '').includes(p.replace(/\D/g, '').slice(-10))))
+  );
+  
+  const isAdmin = propIsAdmin || contextIsAdmin || isMaster;
   const { theme, toggleTheme } = useTheme();
+  
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   
   const isDeliveryPartnerOriginal = contextProfile?.role === 'delivery' || localStorage.getItem('isDeliveryPartner') === 'true';
   const isVendorOriginal = contextProfile?.role === 'vendor' || localStorage.getItem('isVendor') === 'true';
 
   const [vendorProfile, setVendorProfile] = useState<any | null>(null);
   const [deliveryProfile, setDeliveryProfile] = useState<any | null>(null);
+  const [userManagedBranch, setUserManagedBranch] = useState<any | null>(null);
   const [vendorApplication, setVendorApplication] = useState<any | null>(null);
   const [deliveryApplication, setDeliveryApplication] = useState<any | null>(null);
   const [isLoadingPartners, setIsLoadingPartners] = useState(true);
@@ -79,6 +94,16 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
       }
     });
 
+    // Listen to managed branch (by adminId)
+    const bQueryUser = query(collection(db, 'branches'), where('adminId', '==', user.uid));
+    const unsubBranch = onSnapshot(bQueryUser, (snapshot) => {
+      if (!snapshot.empty) {
+        setUserManagedBranch({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      } else {
+        setUserManagedBranch(null);
+      }
+    }, () => setUserManagedBranch(null));
+
     // Listen to partner applications
     const appQuery = query(
       collection(db, 'partner_applications'),
@@ -103,9 +128,34 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
     return () => {
       unsubVendor();
       unsubDelivery();
+      unsubBranch();
       unsubApps();
     };
   }, [user]);
+
+  // Real-time approval evaluations for dynamic RBAC profile cards
+  const isVendorApproved = Boolean(
+    isMaster ||
+    (vendorProfile && (vendorProfile.status === 'Approved' || vendorProfile.status === 'Active')) ||
+    (vendorApplication && vendorApplication.status === 'Approved') ||
+    contextProfile?.role === 'vendor' ||
+    localStorage.getItem('isVendor') === 'true'
+  );
+
+  const isDeliveryApproved = Boolean(
+    isMaster ||
+    (deliveryProfile && ['Approved', 'Online', 'Offline', 'On Trip', 'Active'].includes(deliveryProfile.status)) ||
+    (deliveryApplication && deliveryApplication.status === 'Approved') ||
+    contextProfile?.role === 'delivery' ||
+    localStorage.getItem('isDeliveryPartner') === 'true'
+  );
+
+  const isBranchAdminApproved = Boolean(
+    isMaster ||
+    isBranchAdmin ||
+    contextProfile?.role === 'branchAdmin' ||
+    Boolean(userManagedBranch)
+  );
 
   const [view, setView] = useState<'main' | 'addresses' | 'refer' | 'wallet' | 'editProfile'>('main');
 
@@ -174,7 +224,7 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
     name: contextProfile?.name || user?.displayName || 'Lokal User',
     email: contextProfile?.email || user?.email || '',
     phone: contextProfile?.phone || '',
-    photo: (contextProfile as any)?.photo || user?.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&h=400&fit=crop',
+    photo: (contextProfile as any)?.photo || user?.photoURL || DEFAULT_AVATAR,
     fullAddress: (contextProfile as any)?.fullAddress || ''
   });
 
@@ -212,7 +262,7 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
         name: contextProfile.name || user?.displayName || 'Lokal User',
         email: contextProfile.email || user?.email || '',
         phone: contextProfile.phone || '',
-        photo: (contextProfile as any).photo || user?.photoURL || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&h=400&fit=crop',
+        photo: (contextProfile as any).photo || user?.photoURL || DEFAULT_AVATAR,
         fullAddress: (contextProfile as any).fullAddress || ''
       };
       setUserProfile(updated);
@@ -562,20 +612,44 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
   const [showPartnerOnboarding, setShowPartnerOnboarding] = useState(false);
   const [defaultPartnerType, setDefaultPartnerType] = useState<string | undefined>(undefined);
 
+  const handlePerformSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await logout();
+    } catch (err) {
+      console.error("Sign out error:", err);
+    } finally {
+      localStorage.removeItem('admin_session_active');
+      localStorage.removeItem('lokal_maintenance_mode');
+      localStorage.removeItem('activeDeliveryProfile');
+      localStorage.removeItem('approvedVendors');
+      localStorage.removeItem('localInventory');
+      localStorage.removeItem('user_role');
+      localStorage.removeItem('user_addresses');
+      localStorage.removeItem('lokal_branch_id');
+      localStorage.removeItem('isDeliveryPartner');
+      localStorage.removeItem('isVendor');
+      window.dispatchEvent(new Event('storage'));
+      setIsSigningOut(false);
+      setShowSignOutConfirm(false);
+      onNavigate('login');
+    }
+  };
+
   const menuItems = [
-    ...((isAdmin) ? [{ 
-      icon: ShieldCheck, 
-      label: 'Founder Dashboard', 
-      sub: 'Manage App & Approvals', 
-      onClick: () => {
-        window.location.href = '/admin';
-      }
-    }] : []),
-    ...((isAdmin) ? [
+    ...(isMaster ? [
+      { 
+        icon: ShieldCheck, 
+        label: 'Founder Dashboard', 
+        sub: 'Manage App & Approvals (Master Admin Only)', 
+        onClick: () => {
+          window.location.href = '/admin';
+        }
+      },
       { 
         icon: Briefcase, 
         label: 'Vendors Dash', 
-        sub: 'Admin Override Access',
+        sub: 'Admin Override Access (Master Admin Only)',
         onClick: async () => {
           onNavigate('vendor', 'admin-store');
         } 
@@ -583,10 +657,20 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
       { 
         icon: Bike, 
         label: 'Delivery Console', 
-        sub: 'Admin Override Access',
+        sub: 'Admin Override Access (Master Admin Only)',
         onClick: async () => {
           onNavigate('delivery', 'admin-rider');
         } 
+      },
+      { 
+        icon: Package, 
+        label: 'Manual Order Testing', 
+        sub: 'Simulate a real order flow (Master Admin Only)',
+        onClick: () => {
+          onNavigate('home');
+          // We'll handle this in Home.tsx via a custom event or localStorage
+          localStorage.setItem('runTestOrder', 'true');
+        }
       }
     ] : []),
     { 
@@ -604,16 +688,6 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
     { icon: Wallet, label: t.lokalWallet, sub: `Balance: ₹${walletBalance}`, onClick: () => setView('wallet') },
     { icon: Gift, label: t.referAndEarn, sub: 'Get ₹15 for every friend', onClick: () => setView('refer') },
     { icon: Bell, label: t.notifications, sub: 'Order updates and offers', onClick: () => onNavigate('notifications') },
-    { 
-      icon: Package, 
-      label: 'Manual Order Testing', 
-      sub: 'Simulate a real order flow',
-      onClick: () => {
-        onNavigate('home');
-        // We'll handle this in Home.tsx via a custom event or localStorage
-        localStorage.setItem('runTestOrder', 'true');
-      }
-    },
     { 
       icon: Share2, 
       label: 'Invite Partners', 
@@ -650,18 +724,6 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
       sub: `Instant Q&A | Support Desk`,
       onClick: () => {
         window.dispatchEvent(new CustomEvent('open_customer_care'));
-      }
-    },
-    {
-      icon: LogOut,
-      label: 'Sign Out',
-      sub: 'Securely exit your account',
-      danger: true,
-      onClick: async () => {
-        if (window.confirm('Are you sure you want to sign out?')) {
-          await logout();
-          onNavigate('login');
-        }
       }
     },
   ];
@@ -1313,6 +1375,21 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
           </div>
         </div>
 
+        {/* Dynamic Role-Based Dashboards (Rules 1-16) */}
+        <MyDashboardsSection 
+          isMaster={isMaster}
+          isVendorApproved={isVendorApproved}
+          isDeliveryApproved={isDeliveryApproved}
+          isBranchAdminApproved={isBranchAdminApproved}
+          vendorProfileId={vendorProfile?.id}
+          deliveryProfileId={deliveryProfile?.id}
+          vendorProfile={vendorProfile}
+          deliveryProfile={deliveryProfile}
+          onNavigate={onNavigate}
+          userPhone={userProfile.phone || user?.phoneNumber || ''}
+          userName={userProfile.name}
+        />
+
         {/* Active Order Tracking - Real-time tracking shortcut */}
         {activeOrder && (
           <div className="px-6 mb-4">
@@ -1431,19 +1508,8 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.8 }}
-            onClick={async () => {
-              if (window.confirm("Are you sure you want to logout?")) {
-                await logout();
-                localStorage.removeItem('admin_session_active');
-                localStorage.removeItem('lokal_maintenance_mode');
-                localStorage.removeItem('activeDeliveryProfile');
-                localStorage.removeItem('approvedVendors');
-                localStorage.removeItem('localInventory');
-                window.dispatchEvent(new Event('storage'));
-                onNavigate('login');
-              }
-            }}
-            className="w-full flex items-center gap-4 p-5 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-[2.5rem] transition-all text-left text-rose-500 mt-10 border border-transparent hover:border-rose-100 dark:hover:border-rose-500/20 group"
+            onClick={() => setShowSignOutConfirm(true)}
+            className="w-full flex items-center gap-4 p-5 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-[2.5rem] transition-all text-left text-rose-500 mt-10 border border-transparent hover:border-rose-100 dark:hover:border-rose-500/20 group cursor-pointer"
           >
             <div className="bg-rose-50 dark:bg-rose-500/10 p-4 rounded-2xl group-hover:bg-white dark:group-hover:bg-slate-800 transition-colors shadow-sm">
               <LogOut className="w-5 h-5" />
@@ -1452,6 +1518,50 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
           </motion.button>
         </div>
       </div>
+
+      {/* Sign Out Confirmation Modal */}
+      <AnimatePresence>
+        {showSignOutConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 rounded-[2.5rem] p-6 max-w-sm w-full border border-gray-100 dark:border-slate-800 shadow-2xl text-center space-y-4"
+            >
+              <div className="w-16 h-16 bg-rose-50 dark:bg-rose-500/10 rounded-3xl flex items-center justify-center mx-auto text-rose-500">
+                <LogOut className="w-8 h-8" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-gray-900 dark:text-white italic">Sign Out of Account?</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">You will need to sign in with your phone or email to access your orders and wallet.</p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={isSigningOut}
+                  onClick={() => setShowSignOutConfirm(false)}
+                  className="flex-1 py-3.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300 font-black rounded-2xl text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSigningOut}
+                  onClick={handlePerformSignOut}
+                  className="flex-1 py-3.5 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-2xl text-xs uppercase tracking-wider shadow-lg shadow-rose-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {isSigningOut ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    'Sign Out'
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Edit Profile View */}
       <AnimatePresence>

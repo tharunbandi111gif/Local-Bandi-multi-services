@@ -403,7 +403,7 @@ service cloud.firestore {
     // --- Settings ---
     match /settings/{settingId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || settingId == 'sunday_spin_counter';
     }
 
     // --- Admins collection (Internal) ---
@@ -463,6 +463,15 @@ service cloud.firestore {
 
     // --- Support Complaints ---
     match /support_complaints/{complaintId} {
+      allow list: if isSignedIn();
+      allow get: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // --- SOS Emergency Alerts ---
+    match /sos_alerts/{alertId} {
       allow list: if isSignedIn();
       allow get: if isSignedIn();
       allow create: if isSignedIn();

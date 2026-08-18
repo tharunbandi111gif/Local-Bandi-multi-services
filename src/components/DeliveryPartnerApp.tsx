@@ -51,14 +51,24 @@ import {
   Sun,
   Share2,
   Info,
-  Loader2
+  Loader2,
+  Zap,
+  ChevronDown,
+  Calendar,
+  Download,
+  FileSpreadsheet,
+  Eye,
+  EyeOff
 } from 'lucide-react';
+import { RiderQuickRepliesDrawer, QuickReplyChipsBar } from './RiderQuickRepliesDrawer';
 import { APIProvider, Map, AdvancedMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import LiveMap, { tileCache } from './LiveMap';
 import { LowConnectivityGuardModal, ProactiveLowSignalAlertBanner } from './LowConnectivityGuard';
 import { AreaChart, Area, XAxis, YAxis, Tooltip as ChartTooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar, Cell } from 'recharts';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { RiderLevelHeaderBadge, RiderLevelProgressCard, TipTrendDashboardCard } from './RiderLevelAndTipTrend';
+import SOSAlertIndicator from './common/SOSAlertIndicator';
+import { SOSAlert } from '../types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
   collection, 
@@ -348,6 +358,65 @@ function RouteMap({ origin, destination, riderLocation, onUpdateETA }: RouteMapP
   );
 }
 
+interface AnimatedMotionTipBarProps {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  index?: number;
+  hoveredIndex?: number | null;
+  fill?: string;
+  payload?: any;
+}
+
+const AnimatedMotionTipBar: React.FC<AnimatedMotionTipBarProps> = (props) => {
+  const { x, y, width, height, index, hoveredIndex } = props;
+  const isHovered = hoveredIndex === index;
+  const isDimmed = hoveredIndex !== null && hoveredIndex !== undefined && !isHovered;
+
+  if (x === undefined || y === undefined || width === undefined || height === undefined || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const cx = x + width / 2;
+  const cy = y + height;
+
+  return (
+    <motion.g
+      initial={false}
+      animate={{
+        scale: isHovered ? 1.05 : 1,
+        opacity: isDimmed ? 0.45 : 1,
+      }}
+      transition={{
+        type: 'spring',
+        stiffness: 400,
+        damping: 25,
+      }}
+      style={{
+        originX: `${cx}px`,
+        originY: `${cy}px`,
+        transformOrigin: `${cx}px ${cy}px`,
+        cursor: 'pointer',
+      }}
+    >
+      <motion.rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        rx={4}
+        ry={4}
+        animate={{
+          fill: isHovered ? '#FBBF24' : (index !== undefined && index % 2 === 0 ? '#F59E0B' : '#D97706'),
+          filter: isHovered ? 'drop-shadow(0 6px 14px rgba(245, 158, 11, 0.75)) brightness(1.2)' : 'none',
+        }}
+        transition={{ duration: 0.15 }}
+      />
+    </motion.g>
+  );
+};
+
 interface MapCenterControllerProps {
   center: google.maps.LatLngLiteral | null;
   autoCenter: boolean;
@@ -454,6 +523,7 @@ export default function DeliveryPartnerApp() {
 
   // Tabs navigation
   const [activeTab, setActiveTab] = useState<'jobs' | 'earnings' | 'profile' | 'support'>('jobs');
+  const [showQuickRepliesDrawer, setShowQuickRepliesDrawer] = useState(false);
 
   // Auto-Offline and Active Delivery States
   const [autoOfflineMinutes, setAutoOfflineMinutes] = useState<number>(30);
@@ -549,39 +619,92 @@ export default function DeliveryPartnerApp() {
   const [earningsStartDate, setEarningsStartDate] = useState<string>('');
   const [earningsEndDate, setEarningsEndDate] = useState<string>('');
   const [tipTrendInterval, setTipTrendInterval] = useState<'daily' | 'weekly'>('daily');
+  const [showPendingEarnings, setShowPendingEarnings] = useState<boolean>(true);
+  const [exportingCsv, setExportingCsv] = useState<boolean>(false);
 
-  // Generate memoized 60 days historical settlement payout timeline
+  // Operational Branch Locations for Multi-Branch Settlement Filtering
+  const RIDER_BRANCH_LOCATIONS = React.useMemo(() => [
+    { id: 'khammam_main', name: 'Khammam Center Hub', code: 'KM-507001', city: 'Khammam', shortName: 'Khammam', badgeColor: 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10' },
+    { id: 'suryapet_main', name: 'Suryapet Area Hub', code: 'SP-508213', city: 'Suryapet', shortName: 'Suryapet', badgeColor: 'border-blue-500/30 text-blue-400 bg-blue-500/10' },
+    { id: 'warangal_east', name: 'Warangal Town Hub', code: 'WG-506001', city: 'Warangal', shortName: 'Warangal', badgeColor: 'border-amber-500/30 text-amber-400 bg-amber-500/10' },
+    { id: 'kothagudem_hub', name: 'Kothagudem Mining Zone', code: 'KG-507101', city: 'Kothagudem', shortName: 'Kothagudem', badgeColor: 'border-purple-500/30 text-purple-400 bg-purple-500/10' },
+    { id: 'hyderabad_east', name: 'Hyderabad Outer Ring', code: 'HYD-500068', city: 'Hyderabad', shortName: 'Hyderabad', badgeColor: 'border-rose-500/30 text-rose-400 bg-rose-500/10' },
+  ], []);
+
+  const [selectedBranches, setSelectedBranches] = useState<string[]>([
+    'khammam_main', 'suryapet_main', 'warangal_east', 'kothagudem_hub', 'hyderabad_east'
+  ]);
+  const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState<boolean>(false);
+  const branchDropdownRef = useRef<HTMLDivElement>(null);
+  const [hoveredTipIndex, setHoveredTipIndex] = useState<number | null>(null);
+
+  // Close branch dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (branchDropdownRef.current && !branchDropdownRef.current.contains(event.target as Node)) {
+        setIsBranchDropdownOpen(false);
+      }
+    };
+    if (isBranchDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isBranchDropdownOpen]);
+
+  // Generate memoized 60 days historical settlement payout timeline with multi-branch breakdown
   const rawPayoutHistory = React.useMemo(() => {
     const data = [];
     const baseDate = new Date(2026, 5, 10); // June 10, 2026
+    const branchKeys = ['khammam_main', 'suryapet_main', 'warangal_east', 'kothagudem_hub', 'hyderabad_east'];
+    const branchWeights = [0.42, 0.26, 0.16, 0.10, 0.06];
+
     for (let i = 59; i >= 0; i--) {
       const d = new Date(baseDate);
       d.setDate(baseDate.getDate() - i);
       const isWeekend = d.getDay() === 0 || d.getDay() === 6;
       
-      const baseFee = 220 + Math.floor(Math.sin((60 - i) * 0.35) * 110) + Math.floor(Math.random() * 50) + (60 - i) * 6;
-      const tips = Math.floor(baseFee * (isWeekend ? 0.22 : 0.12));
-      const settled = baseFee + tips;
+      const dayBaseFee = 220 + Math.floor(Math.sin((60 - i) * 0.35) * 110) + Math.floor(Math.random() * 50) + (60 - i) * 6;
+      const dayTips = Math.floor(dayBaseFee * (isWeekend ? 0.22 : 0.12));
+      const dayPendingBase = Math.max(0, 90 + Math.floor(Math.cos((60 - i) * 0.22) * 35) - (60 - i) * 0.5);
+      const dayPendingTips = Math.floor(dayPendingBase * 0.12);
+      const totalTrips = isWeekend ? 8 : 5;
+
+      // Distribute amounts across the branches
+      const branchBreakdown: Record<string, { Settled: number; Pending: number; Tips: number; BaseFee: number; trips: number; branchName: string; shortName: string }> = {};
       
-      const pendingBase = Math.max(0, 90 + Math.floor(Math.cos((60 - i) * 0.22) * 35) - (60 - i) * 0.5);
-      const pendingTips = Math.floor(pendingBase * 0.12);
-      const pending = pendingBase + pendingTips;
+      branchKeys.forEach((bKey, idx) => {
+        const weight = branchWeights[idx];
+        const bBase = Math.max(0, Math.round(dayBaseFee * weight));
+        const bTips = Math.max(0, Math.round(dayTips * weight));
+        const bPendingBase = Math.max(0, Math.round(dayPendingBase * weight));
+        const bPendingTips = Math.max(0, Math.round(dayPendingTips * weight));
+        const bTrips = Math.max(idx === 0 ? 1 : 0, Math.round(totalTrips * weight));
+        const branchMeta = RIDER_BRANCH_LOCATIONS.find(b => b.id === bKey);
+
+        branchBreakdown[bKey] = {
+          Settled: bBase + bTips,
+          Pending: bPendingBase + bPendingTips,
+          Tips: bTips + bPendingTips,
+          BaseFee: bBase + bPendingBase,
+          trips: bTrips,
+          branchName: branchMeta?.name || bKey,
+          shortName: branchMeta?.shortName || bKey
+        };
+      });
       
       data.push({
         id: `pay_${60 - i}`,
         dateObj: d,
         dateStr: d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
         date: d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-        Settled: Number(settled.toFixed(0)),
-        Pending: Number(pending.toFixed(0)),
-        Tips: Number((tips + pendingTips).toFixed(0)),
-        BaseFee: Number((baseFee + pendingBase).toFixed(0)),
-        trips: isWeekend ? 8 : 5,
+        branchBreakdown,
         status: i === 0 ? 'Processing' : 'Settled'
       });
     }
     return data;
-  }, []);
+  }, [RIDER_BRANCH_LOCATIONS]);
 
   const filteredPayoutData = React.useMemo(() => {
     let result = [...rawPayoutHistory];
@@ -611,8 +734,38 @@ export default function DeliveryPartnerApp() {
       }
     }
     
-    return result;
-  }, [rawPayoutHistory, earningsDaysFilter, earningsStartDate, earningsEndDate]);
+    // Aggregate data specifically matching the selected branch locations
+    return result.map(item => {
+      let settledSum = 0;
+      let pendingSum = 0;
+      let tipsSum = 0;
+      let baseFeeSum = 0;
+      let tripsSum = 0;
+      const activeBranches: Array<{ id: string; name: string; shortName: string }> = [];
+
+      selectedBranches.forEach(bId => {
+        const bData = item.branchBreakdown[bId];
+        if (bData) {
+          settledSum += bData.Settled;
+          pendingSum += bData.Pending;
+          tipsSum += bData.Tips;
+          baseFeeSum += bData.BaseFee;
+          tripsSum += bData.trips;
+          activeBranches.push({ id: bId, name: bData.branchName, shortName: bData.shortName });
+        }
+      });
+
+      return {
+        ...item,
+        Settled: settledSum,
+        Pending: pendingSum,
+        Tips: tipsSum,
+        BaseFee: baseFeeSum,
+        trips: tripsSum,
+        activeBranches
+      };
+    });
+  }, [rawPayoutHistory, earningsDaysFilter, earningsStartDate, earningsEndDate, selectedBranches]);
 
   const chartDataToShow = React.useMemo(() => {
     return [...filteredPayoutData].sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime());
@@ -649,6 +802,61 @@ export default function DeliveryPartnerApp() {
     }
     return list;
   }, [filteredPayoutData, earningsSortOption]);
+
+  // Export filtered settlements data as standard CSV report
+  const handleExportSettlementsCSV = () => {
+    if (!sortedBreakdownData || sortedBreakdownData.length === 0) {
+      alert("⚠️ No settlement records found for the active branch and date range filter.");
+      return;
+    }
+
+    setExportingCsv(true);
+    try {
+      const headers = [
+        "Settlement ID",
+        "Date",
+        "Settled Amount (INR)",
+        "Pending Balance (INR)",
+        "Base Delivery Pay (INR)",
+        "Customer Tips (INR)",
+        "Trips Completed",
+        "Contributing Branches",
+        "Settlement Status"
+      ];
+
+      const rows = sortedBreakdownData.map(item => {
+        const branchList = (item.activeBranches || []).map((b: any) => b.shortName || b.name || b).join('; ') || 'All Active Branches';
+        return [
+          `"${item.id}"`,
+          `"${item.dateStr || item.date}"`,
+          item.Settled ?? 0,
+          item.Pending ?? 0,
+          item.BaseFee ?? 0,
+          item.Tips ?? 0,
+          item.trips ?? 0,
+          `"${branchList.replace(/"/g, '""')}"`,
+          `"${item.status || 'Settled'}"`
+        ];
+      });
+
+      const csvString = [headers.join(","), ...rows.map(r => r.join(","))].join("\r\n");
+      const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const dateSuffix = new Date().toISOString().slice(0, 10);
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Rider_Settlement_Ledger_${earningsDaysFilter}_${dateSuffix}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("CSV Export failed:", err);
+      alert("Failed to export settlements report. Please retry.");
+    } finally {
+      setTimeout(() => setExportingCsv(false), 500);
+    }
+  };
 
   // Auto-Center state and simulated rider coordinate updates during navigation
   const [autoCenter, setAutoCenter] = useState<boolean>(true);
@@ -929,6 +1137,7 @@ export default function DeliveryPartnerApp() {
   const [isTriggeringSOS, setIsTriggeringSOS] = useState(false);
   const [sosStatus, setSosStatus] = useState<'idle' | 'locating' | 'dispatching' | 'completed'>('idle');
   const [sosLogs, setSosLogs] = useState<string[]>([]);
+  const [lastTransmittedSOSAlert, setLastTransmittedSOSAlert] = useState<SOSAlert | null>(null);
   const [sirenVolume, setSirenVolume] = useState<number>(0.5); // adjustable alarm siren volume range [0, 1]
   const [sirenMode, setSirenMode] = useState<'Continuous' | 'Pulse'>('Continuous'); // Alarm siren wave patterns
   const [pulseSpeed, setPulseSpeed] = useState<'Slow' | 'Medium' | 'High'>('Medium'); // Speed presets for pulse sound alternation
@@ -1595,7 +1804,7 @@ export default function DeliveryPartnerApp() {
         phone: cleanPhone,
         vehicleType: vehicleType,
         vehicleNumber: vehicleNumber || 'TS-04-TEMP',
-        photo: user.photoURL || 'https://images.unsplash.com/photo-1540569014015-19a7be504e3a?w=400&h=400&fit=crop',
+        photo: user.photoURL || 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
         status: autoApp ? 'Online' : 'Pending',
         isOnline: autoApp,
         earnings: 0,
@@ -1744,8 +1953,49 @@ export default function DeliveryPartnerApp() {
       const msgText = `🚨 EMERGENCY PANIC ALERT 🚨\nRider: ${riderProfile.name}\nVehicle: ${riderProfile.vehicleNumber}\nLocation: https://maps.google.com/?q=${lat},${lng} (${streetAddress})\nSTATUS: Assistance Requested IMMEDIATELY.`;
       setSosLogs(prev => [...prev, `📧 Routing high-priority emergency SMS payload...`, `📱 SMS TRANSMITTED SUCCESSFULLY to ${managerPhone}!`]);
 
-      // Step 5: Log security dossier to support_chats database
+      // Step 5: Log security dossier to support_chats & create sos_alerts record
       setSosStatus('completed');
+      const exactTimeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+      const exactDateStr = new Date().toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+      const isoTimestampStr = new Date().toISOString();
+
+      const sosAlertPayload: SOSAlert = {
+        id: '',
+        source: 'rider',
+        triggerType: isAutoSimulated ? 'Collision Detector Telemetry Spike (32.4 m/s²)' : 'Manual Panic Button',
+        severity: 'CRITICAL',
+        status: 'ACTIVE',
+        riderId: riderProfile.id,
+        name: riderProfile.name,
+        phone: riderProfile.phone,
+        vehicleType: riderProfile.vehicleType || 'Motorcycle',
+        vehicleNumber: riderProfile.vehicleNumber || 'TS-04-XX-1234',
+        branchId: riderProfile.branchId || 'khammam_main',
+        branchName: branchLabel,
+        latitude: lat,
+        longitude: lng,
+        coordinates: { lat, lng },
+        address: streetAddress,
+        exactTime: exactTimeStr,
+        exactDate: exactDateStr,
+        isoTimestamp: isoTimestampStr,
+        supervisorName: managerName,
+        supervisorPhone: managerPhone,
+        transmittedLogs: [
+          `🚨 Transmitted Time: ${exactTimeStr} (${exactDateStr})`,
+          `📍 Precise GPS: ${lat.toFixed(6)}°N, ${lng.toFixed(6)}°E`,
+          `🗺️ Location: ${streetAddress}`,
+          `📱 SMS Dispatch Delivered to ${managerPhone} (${managerName})`
+        ]
+      };
+
+      const sosDocRef = await addDoc(collection(db, 'sos_alerts'), {
+        ...sosAlertPayload,
+        timestamp: serverTimestamp()
+      });
+
+      setLastTransmittedSOSAlert({ ...sosAlertPayload, id: sosDocRef.id });
+
       await addDoc(collection(db, 'support_chats'), {
         userId: riderProfile.id,
         userName: `🚨 SOS Alarm: ${riderProfile.name}`,
@@ -1758,13 +2008,18 @@ export default function DeliveryPartnerApp() {
             senderId: riderProfile.id,
             senderName: riderProfile.name,
             senderType: 'deliveryPartner',
-            text: `⚠️ [PANIC TRIGGER] Security SOS activated at location lat: ${lat}, lng: ${lng} (${streetAddress}). Urgent dispatch requested!`,
+            text: `⚠️ [PANIC TRIGGER] Security SOS activated at exact time ${exactTimeStr} at precise GPS coordinates lat: ${lat.toFixed(6)}, lng: ${lng.toFixed(6)} (${streetAddress}). Urgent dispatch requested!`,
             timestamp: new Date().toISOString()
           }
         ],
         updatedAt: serverTimestamp()
       });
-      setSosLogs(prev => [...prev, `🛡️ Incident file encrypted and synchronized with Support Operations Portal.`]);
+      setSosLogs(prev => [
+        ...prev, 
+        `⏰ Exact Transmitted Time: ${exactTimeStr}`,
+        `🛰️ Exact Coordinates Transmitted: ${lat.toFixed(6)}°N, ${lng.toFixed(6)}°E`,
+        `🛡️ Incident file encrypted and synchronized with Support Operations Portal.`
+      ]);
 
     } catch (err) {
       console.error("SOS Trigger failure", err);
@@ -2057,10 +2312,9 @@ export default function DeliveryPartnerApp() {
     }
   };
 
-  // Chat send
-  const handleSendChatMessage = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatMessage.trim() || !riderProfile) return;
+  // Direct message send (for quick replies or manual form submission)
+  const handleSendDirectMessage = (textToSend: string) => {
+    if (!textToSend.trim() || !riderProfile) return;
 
     const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const payload = {
@@ -2068,7 +2322,7 @@ export default function DeliveryPartnerApp() {
       senderId: riderProfile.id,
       senderName: riderProfile.name,
       senderType: 'partner',
-      text: chatMessage,
+      text: textToSend,
       timestamp: stamp
     };
 
@@ -2087,7 +2341,6 @@ export default function DeliveryPartnerApp() {
     
     localStorage.setItem('lokal_support_chats', JSON.stringify(allChats));
     setMessages(prev => [...prev, payload]);
-    setChatMessage('');
 
     // Trigger synthetic response for live dispatch feeling
     setTimeout(() => {
@@ -2096,7 +2349,7 @@ export default function DeliveryPartnerApp() {
         senderId: 'admin',
         senderName: 'Lokal Operator',
         senderType: 'admin',
-        text: `Logged message: "${chatMessage.slice(0, 15)}...". Our logistics hub will coordinate with active store regarding this route immediately. Stay safe on duty.`,
+        text: `Logged message: "${textToSend.slice(0, 20)}...". Our logistics hub will coordinate with active store regarding this route immediately. Stay safe on duty.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       myChat.messages.push(dispatcherPayload);
@@ -2105,6 +2358,23 @@ export default function DeliveryPartnerApp() {
       setMessages(prev => [...prev, dispatcherPayload]);
       window.dispatchEvent(new CustomEvent('support_message_received'));
     }, 1500);
+  };
+
+  // Chat send form handler
+  const handleSendChatMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatMessage.trim()) return;
+    handleSendDirectMessage(chatMessage);
+    setChatMessage('');
+  };
+
+  // Quick reply select handler
+  const handleSelectQuickReply = (text: string, autoSend: boolean = true) => {
+    if (autoSend) {
+      handleSendDirectMessage(text);
+    } else {
+      setChatMessage(text);
+    }
   };
 
   // Open profile form edit
@@ -2839,6 +3109,15 @@ export default function DeliveryPartnerApp() {
                 </button>
               </div>
 
+              {/* ACTIVE EMERGENCY SOS TRANSMITTED INDICATOR BANNER */}
+              {lastTransmittedSOSAlert && (
+                <SOSAlertIndicator 
+                  alert={lastTransmittedSOSAlert} 
+                  variant="banner" 
+                  onResolve={() => setLastTransmittedSOSAlert(null)}
+                />
+              )}
+
               {/* RIDER LEVEL & RANK SYSTEM PROGRESS CARD */}
               <RiderLevelProgressCard completedTrips={riderProfile?.trips || 124} />
 
@@ -3561,19 +3840,138 @@ export default function DeliveryPartnerApp() {
 
               {/* SETTLEMENT TIMELINE HISTORICAL AREA CHART */}
               <div className="bg-slate-900 border border-white/5 p-4 rounded-3xl space-y-3" id="earnings-settlement-timeline-container">
-                <div className="flex flex-col gap-3 md:flex-row md:justify-between md:items-center">
+                <div className="flex flex-col gap-3 lg:flex-row lg:justify-between lg:items-center">
                   <div>
                     <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest block font-mono">Performance &amp; Ledger</span>
                     <h5 className="text-xs font-black text-white uppercase font-sans">Settlement Timeline &amp; Progress</h5>
                   </div>
                   
-                  {/* Select filters */}
+                  {/* Select filters, Branch Multi-Select, Pending Toggle & Export CSV */}
                   <div className="flex items-center gap-2 flex-wrap">
+                    {/* Branch Multi-Select Dropdown Filter */}
+                    <div className="relative" ref={branchDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => setIsBranchDropdownOpen(!isBranchDropdownOpen)}
+                        className={`flex items-center gap-1.5 border text-[9px] font-bold uppercase rounded-lg px-2.5 py-1.5 focus:outline-none cursor-pointer transition-all active:scale-95 ${
+                          selectedBranches.length === 0
+                            ? 'bg-red-500/10 border-red-500/30 text-red-300'
+                            : selectedBranches.length < RIDER_BRANCH_LOCATIONS.length
+                            ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300'
+                            : 'bg-slate-950 hover:bg-slate-900 border-white/15 text-slate-200 hover:border-indigo-400'
+                        }`}
+                        title="Filter settlements by operational branch location"
+                        id="settlement-branch-multiselect-btn"
+                      >
+                        <Building className="w-3 h-3 text-indigo-400" />
+                        <span>
+                          {selectedBranches.length === RIDER_BRANCH_LOCATIONS.length
+                            ? `All Branches (${RIDER_BRANCH_LOCATIONS.length})`
+                            : selectedBranches.length === 0
+                            ? '0 Branches Selected'
+                            : `${selectedBranches.length} of ${RIDER_BRANCH_LOCATIONS.length} Branches`}
+                        </span>
+                        <ChevronDown className={`w-3 h-3 text-slate-400 transition-transform duration-200 ${isBranchDropdownOpen ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {/* Multi-Select Dropdown Panel */}
+                      <AnimatePresence>
+                        {isBranchDropdownOpen && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                            transition={{ duration: 0.15 }}
+                            className="absolute right-0 sm:left-0 sm:right-auto mt-2 w-72 bg-slate-950 border border-white/15 rounded-2xl p-3 shadow-2xl z-50 space-y-2.5 backdrop-blur-xl"
+                          >
+                            <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                              <div className="flex items-center gap-1.5">
+                                <Building className="w-3.5 h-3.5 text-indigo-400" />
+                                <span className="text-[10px] font-black uppercase text-white tracking-wider">Branch Isolation</span>
+                              </div>
+                              <span className="text-[8px] font-mono text-indigo-400 font-bold bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                                {selectedBranches.length}/{RIDER_BRANCH_LOCATIONS.length} Active
+                              </span>
+                            </div>
+
+                            {/* Quick Select / Reset Actions */}
+                            <div className="flex items-center justify-between gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBranches(RIDER_BRANCH_LOCATIONS.map(b => b.id))}
+                                className="flex-1 py-1 px-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-lg text-[8px] font-black uppercase tracking-wider transition-colors cursor-pointer text-center"
+                              >
+                                Select All
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBranches([])}
+                                className="flex-1 py-1 px-2 bg-slate-900 hover:bg-slate-800 text-slate-400 border border-white/10 rounded-lg text-[8px] font-black uppercase tracking-wider transition-colors cursor-pointer text-center"
+                              >
+                                Clear All
+                              </button>
+                            </div>
+
+                            {/* Branch Options List */}
+                            <div className="space-y-1 max-h-48 overflow-y-auto pr-0.5 scrollbar-thin scrollbar-thumb-slate-800">
+                              {RIDER_BRANCH_LOCATIONS.map((branch) => {
+                                const isChecked = selectedBranches.includes(branch.id);
+                                return (
+                                  <div
+                                    key={branch.id}
+                                    onClick={() => {
+                                      if (isChecked) {
+                                        setSelectedBranches(selectedBranches.filter(id => id !== branch.id));
+                                      } else {
+                                        setSelectedBranches([...selectedBranches, branch.id]);
+                                      }
+                                    }}
+                                    className={`p-2 rounded-xl border flex items-center justify-between cursor-pointer transition-all select-none ${
+                                      isChecked 
+                                        ? 'bg-indigo-500/10 border-indigo-500/30 text-white' 
+                                        : 'bg-slate-900/40 border-white/5 text-slate-400 hover:bg-slate-900'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <div className={`w-4 h-4 rounded-md flex items-center justify-center border transition-all ${
+                                        isChecked ? 'bg-indigo-500 border-indigo-400 text-slate-950' : 'border-slate-700 bg-slate-950'
+                                      }`}>
+                                        {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+                                      </div>
+                                      <div>
+                                        <p className="text-[9px] font-bold leading-tight">{branch.name}</p>
+                                        <p className="text-[7.5px] font-mono text-slate-500">{branch.code} &bull; {branch.city}</p>
+                                      </div>
+                                    </div>
+                                    <span className={`text-[7px] font-mono font-black uppercase px-1.5 py-0.5 rounded border ${branch.badgeColor}`}>
+                                      {branch.shortName}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Dropdown Footer */}
+                            <div className="pt-2 border-t border-white/10 flex justify-between items-center">
+                              <span className="text-[7.5px] text-slate-500 font-mono">Cross-branch sync active</span>
+                              <button
+                                type="button"
+                                onClick={() => setIsBranchDropdownOpen(false)}
+                                className="py-1 px-3 bg-white text-slate-950 rounded-lg text-[8px] font-black uppercase tracking-wider hover:bg-slate-200 transition-all cursor-pointer"
+                              >
+                                Apply Filter
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
                     {/* Range Filter */}
                     <select
                       value={earningsDaysFilter}
                       onChange={(e) => setEarningsDaysFilter(e.target.value)}
-                      className="bg-slate-950 text-slate-300 border border-white/10 text-[9px] font-bold uppercase rounded-lg px-2 py-1 focus:outline-none cursor-pointer focus:border-indigo-400"
+                      className="bg-slate-950 text-slate-300 border border-white/10 text-[9px] font-bold uppercase rounded-lg px-2 py-1.5 focus:outline-none cursor-pointer focus:border-indigo-400"
                     >
                       <option value="7">Last 7 Days</option>
                       <option value="15">Last 15 Days</option>
@@ -3588,14 +3986,99 @@ export default function DeliveryPartnerApp() {
                     <select
                       value={earningsSortOption}
                       onChange={(e) => setEarningsSortOption(e.target.value)}
-                      className="bg-slate-950 text-slate-300 border border-white/10 text-[9px] font-bold uppercase rounded-lg px-2 py-1 focus:outline-none cursor-pointer focus:border-indigo-400"
+                      className="bg-slate-950 text-slate-300 border border-white/10 text-[9px] font-bold uppercase rounded-lg px-2 py-1.5 focus:outline-none cursor-pointer focus:border-indigo-400"
                     >
                       <option value="date_desc">Latest First</option>
                       <option value="date_asc">Oldest First</option>
                       <option value="payout_desc">Highest Payout</option>
                       <option value="payout_asc">Lowest Payout</option>
                     </select>
+
+                    {/* Pending Earnings Show/Hide Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setShowPendingEarnings(!showPendingEarnings)}
+                      id="toggle-pending-earnings-btn"
+                      title={showPendingEarnings ? "Hide pending earnings from timeline" : "Show pending earnings in timeline"}
+                      className={`flex items-center gap-1.5 text-[9px] font-bold uppercase rounded-lg px-2.5 py-1.5 border transition-all cursor-pointer active:scale-95 ${
+                        showPendingEarnings
+                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25 shadow-sm'
+                          : 'bg-slate-950 border-white/10 text-slate-400 hover:text-slate-200 hover:border-white/20'
+                      }`}
+                    >
+                      {showPendingEarnings ? (
+                        <>
+                          <Eye className="w-3 h-3 text-amber-400" />
+                          <span>Pending: Shown</span>
+                        </>
+                      ) : (
+                        <>
+                          <EyeOff className="w-3 h-3 text-slate-500" />
+                          <span>Pending: Hidden</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Export as CSV Button */}
+                    <button
+                      type="button"
+                      onClick={handleExportSettlementsCSV}
+                      disabled={exportingCsv || sortedBreakdownData.length === 0}
+                      id="export-settlements-csv-btn"
+                      title="Export filtered settlements report as CSV spreadsheet"
+                      className="flex items-center gap-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-[9px] font-black uppercase rounded-lg px-2.5 py-1.5 transition-all active:scale-95 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                      <Download className={`w-3 h-3 text-emerald-400 ${exportingCsv ? 'animate-bounce' : ''}`} />
+                      <span>{exportingCsv ? 'Exporting...' : 'Export CSV'}</span>
+                    </button>
                   </div>
+                </div>
+
+                {/* Active Branch Chips Bar */}
+                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                  <span className="text-[7.5px] font-mono font-black uppercase text-slate-500 mr-1 flex items-center gap-1">
+                    <Building className="w-2.5 h-2.5 text-slate-500" />
+                    Branches:
+                  </span>
+                  {selectedBranches.length === 0 ? (
+                    <span className="text-[8px] font-mono text-red-400 bg-red-500/10 px-2 py-0.5 rounded-full border border-red-500/20">
+                      ⚠️ No branches selected &bull; Click &apos;All Branches&apos; dropdown above to select
+                    </span>
+                  ) : selectedBranches.length === RIDER_BRANCH_LOCATIONS.length ? (
+                    <span className="text-[8px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                      ✓ All 5 Branches Included
+                    </span>
+                  ) : (
+                    selectedBranches.map(bId => {
+                      const branch = RIDER_BRANCH_LOCATIONS.find(b => b.id === bId);
+                      if (!branch) return null;
+                      return (
+                        <span
+                          key={branch.id}
+                          className="inline-flex items-center gap-1 text-[7.5px] font-mono font-black uppercase px-2 py-0.5 rounded-full bg-slate-950 border border-white/10 text-slate-300"
+                        >
+                          {branch.shortName}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedBranches(selectedBranches.filter(id => id !== branch.id))}
+                            className="text-slate-500 hover:text-red-400 cursor-pointer ml-0.5"
+                            title={`Remove ${branch.shortName}`}
+                          >
+                            &times;
+                          </button>
+                        </span>
+                      );
+                    })
+                  )}
+                  {selectedBranches.length > 0 && selectedBranches.length < RIDER_BRANCH_LOCATIONS.length && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBranches(RIDER_BRANCH_LOCATIONS.map(b => b.id))}
+                      className="text-[7.5px] font-mono text-indigo-400 hover:underline cursor-pointer ml-1"
+                    >
+                      Reset All
+                    </button>
+                  )}
                 </div>
 
                 {earningsDaysFilter === 'custom' && (
@@ -3681,31 +4164,49 @@ export default function DeliveryPartnerApp() {
                         animationDuration={800}
                         animationEasing="ease-in-out"
                       />
-                      <Area 
-                        type="monotone" 
-                        dataKey="Pending" 
-                        stroke="#F59E0B" 
-                        strokeWidth={1.5} 
-                        strokeDasharray="3 3" 
-                        fillOpacity={1} 
-                        fill="url(#colorPending)" 
-                        name="Pending" 
-                        isAnimationActive={true}
-                        animationDuration={800}
-                        animationEasing="ease-in-out"
-                      />
+                      {showPendingEarnings && (
+                        <Area 
+                          type="monotone" 
+                          dataKey="Pending" 
+                          stroke="#F59E0B" 
+                          strokeWidth={1.5} 
+                          strokeDasharray="3 3" 
+                          fillOpacity={1} 
+                          fill="url(#colorPending)" 
+                          name="Pending" 
+                          isAnimationActive={true}
+                          animationDuration={800}
+                          animationEasing="ease-in-out"
+                        />
+                      )}
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
                 
-                <div className="flex justify-center gap-6 pt-1 text-[8px] font-mono font-black uppercase tracking-wider">
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block" />
-                    <span className="text-slate-400">Paid/Settled</span>
+                <div className="flex justify-between items-center pt-1 text-[8px] font-mono font-black uppercase tracking-wider flex-wrap gap-2">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block" />
+                      <span className="text-slate-300">Paid/Settled</span>
+                    </div>
+                    {showPendingEarnings ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-1.5 rounded bg-amber-500 inline-block border border-dashed border-amber-600" />
+                        <span className="text-amber-400">Pending Cycles</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 opacity-40">
+                        <span className="w-2.5 h-1.5 rounded bg-slate-700 inline-block border border-dashed border-slate-600" />
+                        <span className="text-slate-500 line-through">Pending Cycles (Hidden)</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-1.5 rounded bg-amber-500 inline-block border border-dashed border-amber-600" />
-                    <span className="text-slate-400">Pending Cycles</span>
+
+                  <div className="text-[7.5px] font-mono text-slate-400">
+                    Settled Sum: <span className="text-emerald-400 font-bold">₹{chartDataToShow.reduce((acc, c) => acc + (c.Settled || 0), 0).toLocaleString()}</span>
+                    {showPendingEarnings && (
+                      <> &bull; Pending: <span className="text-amber-400 font-bold">₹{chartDataToShow.reduce((acc, c) => acc + (c.Pending || 0), 0).toLocaleString()}</span></>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3767,12 +4268,18 @@ export default function DeliveryPartnerApp() {
                   </div>
                 </div>
 
-                {/* Recharts Bar Chart Visualizing Tip Trends */}
-                <div className="h-44 w-full">
+                {/* Interactive Animated Recharts Bar Chart Visualizing Tip Trends */}
+                <div className="h-48 w-full relative">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart 
                       data={tipTrendInterval === 'daily' ? chartDataToShow : weeklyTipsData} 
-                      margin={{ top: 10, right: 5, left: -25, bottom: 0 }}
+                      margin={{ top: 12, right: 5, left: -25, bottom: 0 }}
+                      onMouseMove={(state) => {
+                        if (state && state.activeTooltipIndex !== undefined) {
+                          setHoveredTipIndex(Number(state.activeTooltipIndex));
+                        }
+                      }}
+                      onMouseLeave={() => setHoveredTipIndex(null)}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
                       <XAxis 
@@ -3796,34 +4303,90 @@ export default function DeliveryPartnerApp() {
                         tickFormatter={(v) => `₹${v}`}
                       />
                       <ChartTooltip 
-                        contentStyle={{ 
-                          backgroundColor: '#090d16', 
-                          borderColor: 'rgba(255,255,255,0.08)',
-                          borderRadius: '12px',
-                          fontSize: '10px',
-                          fontFamily: 'monospace',
-                          color: '#fff'
+                        content={(props) => {
+                          const { active, payload } = props;
+                          if (!active || !payload || !payload.length) return null;
+                          const data = payload[0]?.payload;
+                          if (!data) return null;
+
+                          const tips = data.Tips || 0;
+                          const settled = data.Settled || (tips + (data.BaseFee || 0));
+                          const baseFee = data.BaseFee || Math.max(0, settled - tips);
+                          const trips = data.trips || 1;
+                          const avgTip = trips > 0 ? Math.round(tips / trips) : 0;
+                          const tipShare = settled > 0 ? Math.round((tips / settled) * 100) : 0;
+                          const activeBranchList = data.activeBranches || [];
+
+                          return (
+                            <div className="bg-slate-950/95 backdrop-blur-xl border border-amber-500/40 p-3 rounded-2xl shadow-2xl shadow-amber-950/50 text-left font-sans min-w-[220px] max-w-[270px] pointer-events-none z-50 animate-in fade-in zoom-in-95 duration-150">
+                              {/* Header */}
+                              <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2">
+                                <div className="flex items-center gap-1.5">
+                                  <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                                  <span className="text-[10px] font-black text-white font-mono uppercase">{data.dateStr || data.date}</span>
+                                </div>
+                                <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono">
+                                  {tipShare}% Share
+                                </span>
+                              </div>
+
+                              {/* Main Tip Hero */}
+                              <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-2 mb-2 flex items-center justify-between">
+                                <div>
+                                  <span className="text-[7px] font-black uppercase tracking-wider text-amber-400/80 font-mono block">Customer Tips</span>
+                                  <span className="text-base font-black text-amber-400 font-mono">₹{tips.toLocaleString()}</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className="text-[7px] font-black uppercase tracking-wider text-slate-400 font-mono block">Avg / Trip</span>
+                                  <span className="text-xs font-black text-emerald-400 font-mono">₹{avgTip}</span>
+                                </div>
+                              </div>
+
+                              {/* Breakdown Grid */}
+                              <div className="space-y-1 font-mono text-[8.5px] border-b border-white/10 pb-2 mb-2">
+                                <div className="flex justify-between items-center text-slate-400">
+                                  <span>Base Pay:</span>
+                                  <span className="text-white font-bold">₹{baseFee.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-slate-400">
+                                  <span>Trips Done:</span>
+                                  <span className="text-white font-bold">{trips} Delivery Trips</span>
+                                </div>
+                                <div className="flex justify-between items-center text-slate-300 pt-1 border-t border-white/5 font-black">
+                                  <span>Gross Day Earnings:</span>
+                                  <span className="text-emerald-400">₹{settled.toLocaleString()}</span>
+                                </div>
+                              </div>
+
+                              {/* Active Contributing Branches */}
+                              {activeBranchList && activeBranchList.length > 0 && (
+                                <div className="space-y-1">
+                                  <span className="text-[7px] font-black uppercase text-slate-500 tracking-wider block font-mono">Active Branches:</span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {activeBranchList.slice(0, 3).map((b: any, i: number) => (
+                                      <span key={i} className="text-[7px] font-mono font-bold px-1.5 py-0.2 rounded bg-white/5 border border-white/10 text-slate-300">
+                                        {b.shortName || b.name || b}
+                                      </span>
+                                    ))}
+                                    {activeBranchList.length > 3 && (
+                                      <span className="text-[7px] font-mono px-1 text-slate-500">+{activeBranchList.length - 3}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
                         }}
-                        labelClassName="text-white font-black"
                       />
                       <Bar 
                         dataKey="Tips" 
-                        fill="#F59E0B" 
-                        radius={[4, 4, 0, 0]}
                         name="Customer Tips (₹)"
+                        shape={(barProps: any) => (
+                          <AnimatedMotionTipBar {...barProps} hoveredIndex={hoveredTipIndex} />
+                        )}
                         isAnimationActive={true}
-                        animationDuration={800}
-                      >
-                        {(tipTrendInterval === 'daily' ? chartDataToShow : weeklyTipsData).map((entry, index) => (
-                          <Cell 
-                            key={`cell-${index}`} 
-                            className="cursor-pointer transition-opacity"
-                            fill={index % 2 === 0 ? '#F59E0B' : '#D97706'} 
-                            fillOpacity={0.85}
-                            id={`tip-bar-cell-${index}`}
-                          />
-                        ))}
-                      </Bar>
+                        animationDuration={600}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -3844,14 +4407,14 @@ export default function DeliveryPartnerApp() {
                 <div className="max-h-60 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
                   {sortedBreakdownData.length === 0 ? (
                     <div className="text-center py-8 text-xs text-slate-500 font-mono uppercase tracking-wider">
-                      No logs matches the selected range filter
+                      No logs match the selected branch and range filter
                     </div>
                   ) : (
                     sortedBreakdownData.map((item) => (
                       <div key={item.id} className="bg-slate-950 p-2.5 rounded-xl border border-white/5 flex justify-between items-center gap-3 hover:border-white/10 transition-all">
                         <div className="space-y-1">
                           <p className="text-xs font-black text-white font-mono">{item.dateStr}</p>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-[8.5px] font-mono text-slate-500 uppercase tracking-wider font-bold">Trips: {item.trips}</span>
                             <span className="w-1 h-1 rounded-full bg-slate-700" />
                             <span className={`text-[8.5px] font-black uppercase px-2 py-0.5 rounded font-mono ${
@@ -3861,6 +4424,11 @@ export default function DeliveryPartnerApp() {
                             }`}>
                               {item.status}
                             </span>
+                            {item.activeBranches && item.activeBranches.length > 0 && (
+                              <span className="text-[7.5px] font-mono text-indigo-400 bg-indigo-500/10 px-1.5 py-0.2 rounded border border-indigo-500/20">
+                                {item.activeBranches.length} Branch{item.activeBranches.length > 1 ? 'es' : ''}
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -4179,7 +4747,7 @@ export default function DeliveryPartnerApp() {
                 <>
                   <div className="bg-slate-900 p-5 rounded-[2.2rem] border border-white/5 flex items-center gap-4 text-left">
                     <div className="w-16 h-16 rounded-2xl overflow-hidden border border-white/10 shadow bg-slate-850">
-                       <img src={riderProfile.photo || "https://images.unsplash.com/photo-1540569014015-19a7be504e3a?w=400&h=400&fit=crop"} className="w-full h-full object-cover" alt="" />
+                       <img src={riderProfile.photo || "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E"} className="w-full h-full object-cover" alt="" />
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
@@ -4481,12 +5049,26 @@ export default function DeliveryPartnerApp() {
                 </div>
               </div>
 
+              {/* One-Tap Quick Replies Chips Toolbar */}
+              <QuickReplyChipsBar
+                onSelectReply={handleSelectQuickReply}
+                onOpenDrawer={() => setShowQuickRepliesDrawer(true)}
+                theme="dark"
+              />
+
               <form onSubmit={handleSendChatMessage} className="p-1 bg-slate-905 border border-white/5 rounded-2xl flex gap-2 pt-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowQuickRepliesDrawer(true)}
+                  className="px-3 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 rounded-xl transition-all flex items-center justify-center cursor-pointer active:scale-95"
+                  title="Open Quick Replies Drawer"
+                >
+                  <Zap className="w-4 h-4 fill-amber-400" />
+                </button>
                 <input 
                   value={chatMessage}
-                  required
                   onChange={(e) => setChatMessage(e.target.value)}
-                  placeholder="Ask about active orders, coordinates, or cash settlements..."
+                  placeholder="Ask dispatch, coords, or pick a quick reply..."
                   className="flex-1 bg-slate-900 border border-white/5 rounded-xl px-4 py-3 text-xs font-bold text-white outline-none placeholder:text-slate-505"
                 />
                 <button
@@ -4497,6 +5079,14 @@ export default function DeliveryPartnerApp() {
                   <Send className="w-4 h-4" />
                 </button>
               </form>
+
+              {/* Rider Quick Replies Drawer Modal */}
+              <RiderQuickRepliesDrawer
+                isOpen={showQuickRepliesDrawer}
+                onClose={() => setShowQuickRepliesDrawer(false)}
+                onSelectReply={handleSelectQuickReply}
+                theme="dark"
+              />
             </div>
           )}
 
@@ -4522,6 +5112,32 @@ export default function DeliveryPartnerApp() {
                   <h3 className="text-xl font-black tracking-wider text-rose-500 uppercase italic">SECURITY ALARM DISPATCHED</h3>
                   <p className="text-xs text-slate-400">Automated distress protocols have been triggered dynamically</p>
                 </div>
+
+                {/* EXACT TIME & PRECISE COORDINATES TRANSMITTED INDICATOR */}
+                {lastTransmittedSOSAlert && (
+                  <div className="bg-slate-950/90 border border-rose-500/30 rounded-2xl p-3.5 text-left space-y-2">
+                    <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
+                      <span className="text-[9px] font-black uppercase text-rose-400 tracking-wider flex items-center gap-1 font-mono">
+                        🚨 Transmitted to Support Team
+                      </span>
+                      <span className="text-[8px] bg-rose-500/20 text-rose-300 font-bold px-1.5 py-0.5 rounded font-mono animate-pulse">
+                        LIVE ENCRYPTED
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                      <div>
+                        <span className="text-slate-500 block text-[8px] uppercase">Exact Time:</span>
+                        <span className="text-white font-extrabold">{lastTransmittedSOSAlert.exactTime}</span>
+                        <span className="text-slate-400 block text-[8px]">{lastTransmittedSOSAlert.exactDate}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 block text-[8px] uppercase">Precise Coordinates:</span>
+                        <span className="text-emerald-400 font-extrabold">{lastTransmittedSOSAlert.latitude?.toFixed(5)}°N, {lastTransmittedSOSAlert.longitude?.toFixed(5)}°E</span>
+                        <span className="text-slate-400 block text-[8px] truncate">{lastTransmittedSOSAlert.address}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Simulated Console Logs Terminal */}
                 <div className="bg-slate-950 rounded-2xl p-4 text-left font-mono text-[10px] space-y-2 max-h-[140px] overflow-y-auto border border-white/5 scrollbar-thin scrollbar-thumb-slate-800">

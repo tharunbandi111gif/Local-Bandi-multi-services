@@ -50,6 +50,7 @@ import { isPointInBranchBoundaries, getCoordsFromAddress } from './lib/geofencin
 
 import { SafeZone } from './components/common/SafeZone';
 import FloatingAppSwitcher from './components/common/FloatingAppSwitcher';
+import AccessDenied from './components/AccessDenied';
 
 function AppModeSelector({ onSelect }: { onSelect: (mode: 'customer' | 'partner' | 'rider' | 'admin') => void }) {
   return (
@@ -287,9 +288,9 @@ function AppContent() {
               
               // Bootstrap some products for admin-store
               const bootstrapProducts = [
-                { name: 'Pure Homemade Ghee', price: 650, unit: '500ml', category: 'dairy', image: 'https://images.unsplash.com/photo-1589927986089-35812388d1f4?w=400&h=400&fit=crop', description: 'Hand-churned pure buffalo milk ghee.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' },
-                { name: 'Authentic Sambar Powder', price: 90, unit: '100g', category: 'groceries', image: 'https://images.unsplash.com/photo-1596040033229-a9821ebd058d?w=400&h=400&fit=crop', description: 'Traditional family recipe masala.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' },
-                { name: 'Fresh Dosa Batter', price: 45, unit: '1kg', category: 'dairy', image: 'https://images.unsplash.com/photo-1589301773827-97d94613079b?w=400&h=400&fit=crop', description: 'Stone-ground fresh batter for crispy dosas.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' }
+                { name: 'Pure Homemade Ghee', price: 650, unit: '500ml', category: 'dairy', image: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E', description: 'Hand-churned pure buffalo milk ghee.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' },
+                { name: 'Authentic Sambar Powder', price: 90, unit: '100g', category: 'groceries', image: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E', description: 'Traditional family recipe masala.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' },
+                { name: 'Fresh Dosa Batter', price: 45, unit: '1kg', category: 'dairy', image: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E', description: 'Stone-ground fresh batter for crispy dosas.', isAvailable: true, vendorId: 'admin-store', createdAt: serverTimestamp(), branchId: 'khammam_main' }
               ];
 
               for (const p of bootstrapProducts) {
@@ -462,8 +463,11 @@ function AppContent() {
   useEffect(() => {
     // Auto-redirect based on auth state
     if (!loading && !isLoggingOut) {
-      if (user) {
-        // Only redirect TO home if we're on login/splash AND not trying to log out
+      const storedPhone = localStorage.getItem('user_phone') || localStorage.getItem('lokal_user_phone');
+      const isUserAuthenticated = !!user || !!storedPhone;
+
+      if (isUserAuthenticated) {
+        // Only redirect TO home/location if we're on login/splash AND not trying to log out
         // We'll rely on currentScreen state
         if (currentScreen === 'login' || currentScreen === 'splash') {
           if (location === 'Select Location') {
@@ -1253,7 +1257,7 @@ function AppContent() {
                 ...item,
                 price: item.price || 0,
                 name: item.name || 'Legacy Item',
-                image: item.image || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=400',
+                image: item.image || 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
                 category: item.category || 'groceries',
                 quantity: item.quantity || 1
               } as CartItem);
@@ -1325,7 +1329,14 @@ function AppContent() {
           }}
         /></SafeZone>;
       case 'login':
-        return <SafeZone name="Login"><Login onLogin={() => navigateTo('location')} /></SafeZone>;
+        return <SafeZone name="Login"><Login onLogin={() => {
+          const loc = localStorage.getItem('lokal_user_location') || location;
+          if (loc && loc !== 'Select Location') {
+            navigateTo('home');
+          } else {
+            navigateTo('location');
+          }
+        }} /></SafeZone>;
       case 'location':
         return <SafeZone name="Location"><LocationSelection 
           onSelect={handleLocationSelect} 
@@ -1357,26 +1368,13 @@ function AppContent() {
           currentBranch={currentBranch}
         /></SafeZone>;
       case 'branchManager':
-        if (!isSuperAdmin && !isBranchAdmin) return <SafeZone name="Home"><Home 
-          location={location}
-          language={selectedLanguage}
-          onCategoryClick={viewCategory}
-          onProductClick={viewItem}
-          cartCount={cart.reduce((acc, i) => acc + i.quantity, 0)}
-          wishlistCount={wishlist.length}
-          onNavigate={(s, id) => navigateTo(s as any, id)}
-          user={user}
-          userProfile={userProfile}
-          isAdmin={isAdmin}
-          onAdminAuth={setPasscodeAuthenticated}
-          localInventory={localInventory}
-          setLocalInventory={setLocalInventory}
-          setShowCustomerCare={setShowCustomerCare}
-          hospitalPrices={hospitalPrices}
-          setHospitalPrices={setHospitalPrices}
-          currentBranchId={currentBranchId}
-          currentBranch={currentBranch}
-        /></SafeZone>;
+        if (!isSuperAdmin && !isBranchAdmin && !isAdmin && userProfile?.role !== 'branchAdmin') {
+          return (
+            <SafeZone name="Access Denied">
+              <AccessDenied requiredRole="Branch Admin" onNavigate={(s) => navigateTo(s as Screen)} />
+            </SafeZone>
+          );
+        }
         return <SafeZone name="Branch Manager"><BranchManager onBack={() => navigateTo('home')} masterAdminName="Tarun Bandi" /></SafeZone>;
       case 'category':
         return <SafeZone name="Category Listing"><CategoryListing 
@@ -1704,29 +1702,43 @@ function AppContent() {
           }}
         /></SafeZone>;
       case 'delivery':
+        const isDeliveryAuthorized = Boolean(
+          isAdmin || 
+          isSuperAdmin || 
+          userProfile?.role === 'delivery' || 
+          localStorage.getItem('isDeliveryPartner') === 'true'
+        );
+        if (!isDeliveryAuthorized) {
+          return (
+            <SafeZone name="Access Denied">
+              <AccessDenied requiredRole="Delivery Partner" onNavigate={(s) => navigateTo(s as Screen)} />
+            </SafeZone>
+          );
+        }
         const dProfileId = selectedOrderId || (isAdmin ? 'admin-rider' : undefined);
         return <SafeZone name="Delivery"><DeliveryDashboard profileId={dProfileId} onBack={() => navigateTo('profile')} isAdmin={isAdmin} /></SafeZone>;
       case 'vendor':
+        const isVendorAuthorized = Boolean(
+          isAdmin || 
+          isSuperAdmin || 
+          userProfile?.role === 'vendor' || 
+          localStorage.getItem('isVendor') === 'true' ||
+          Boolean(activeVendorProfile)
+        );
+        if (!isVendorAuthorized) {
+          return (
+            <SafeZone name="Access Denied">
+              <AccessDenied requiredRole="Vendor Partner" onNavigate={(s) => navigateTo(s as Screen)} />
+            </SafeZone>
+          );
+        }
         const vProfileId = selectedOrderId || (activeVendorProfile?.id) || (isAdmin ? 'admin-store' : undefined);
         return vProfileId ? (
           <SafeZone name="Vendor Dashboard"><VendorDashboard profileId={vProfileId} onBack={() => navigateTo(isAdmin ? 'home' : 'profile')} isAdmin={isAdmin} /></SafeZone>
         ) : (
-          <SafeZone name="Home"><Home 
-            location={location}
-            language={selectedLanguage}
-            onCategoryClick={viewCategory}
-            onProductClick={viewItem}
-            cartCount={cart.reduce((acc, i) => acc + i.quantity, 0)}
-            wishlistCount={wishlist.length}
-            onNavigate={(s, id) => navigateTo(s as any, id)}
-            user={user}
-            userProfile={userProfile}
-            isAdmin={isAdmin}
-            onAdminAuth={setPasscodeAuthenticated}
-            localInventory={localInventory}
-            setLocalInventory={setLocalInventory}
-            hospitalPrices={hospitalPrices}
-          /></SafeZone>
+          <SafeZone name="Access Denied">
+            <AccessDenied requiredRole="Vendor Partner" onNavigate={(s) => navigateTo(s as Screen)} />
+          </SafeZone>
         );
       case 'marriageBureau':
         return <SafeZone name="Marriage Bureau"><MarriageBureau 

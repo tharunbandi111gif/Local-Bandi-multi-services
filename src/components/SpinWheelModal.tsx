@@ -46,8 +46,9 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
   const isTodaySunday = new Date().getDay() === 0; // 0 = Sunday (00:00 - 23:59)
   const isLimitReached = isSundaySpecial && sundayClaimCount >= maxSundayClaims;
 
-  const handleSpin = () => {
-    if (isSpinning || wonReward || isLimitReached || !isTodaySunday) return;
+  const handleSpin = (isTest = false) => {
+    if (isSpinning || wonReward) return;
+    if (!isTest && (isLimitReached || (!isTodaySunday && isSundaySpecial))) return;
 
     setIsSpinning(true);
 
@@ -73,11 +74,15 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
         label: `FLAT ${chosenPct}% OFF ON ORDER`
       };
       setWonReward(rewardObj);
-      if (onRewardWon) {
-        onRewardWon(code, chosenPct);
-      }
-      if (onSpinSuccess) {
-        onSpinSuccess();
+      try {
+        if (onRewardWon) {
+          onRewardWon(code, chosenPct);
+        }
+        if (onSpinSuccess && !isTest) {
+          onSpinSuccess();
+        }
+      } catch (err) {
+        console.warn("Spin callback error handled:", err);
       }
     }, 3800);
   };
@@ -210,9 +215,28 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
 
               {/* Action Spin Button */}
               {!isTodaySunday ? (
-                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-center space-y-1">
-                  <p className="text-xs font-black text-amber-400 uppercase tracking-wide">Sunday Special Only (00:00 - 23:59)</p>
-                  <p className="text-[10px] text-slate-300">The Sunday Spin Wheel is active every Sunday from 00:00 to 23:59. Please come back on Sunday to spin &amp; win your offer!</p>
+                <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-center space-y-3">
+                  <div>
+                    <p className="text-xs font-black text-amber-400 uppercase tracking-wide">Sunday Special Live Event (00:00 - 23:59)</p>
+                    <p className="text-[10px] text-slate-300 mt-0.5">The full live claim rewards trigger every Sunday. You can try a test spin now to test the wheel!</p>
+                  </div>
+                  <button
+                    onClick={() => handleSpin(true)}
+                    disabled={isSpinning}
+                    className="w-full py-2.5 px-4 rounded-xl font-black text-[11px] uppercase tracking-wider bg-gradient-to-r from-amber-400 to-yellow-400 text-slate-950 shadow-md hover:scale-[1.02] active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    {isSpinning ? (
+                      <>
+                        <RotateCcw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Spinning Test Wheel...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3.5 h-3.5" />
+                        <span>Test Spin (Preview Mode)</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               ) : isLimitReached ? (
                 <div className="p-3.5 bg-red-500/10 border border-red-500/30 rounded-2xl text-center space-y-1">
@@ -221,7 +245,7 @@ export const SpinWheelModal: React.FC<SpinWheelModalProps> = ({
                 </div>
               ) : (
                 <button
-                  onClick={handleSpin}
+                  onClick={() => handleSpin(false)}
                   disabled={isSpinning || isLimitReached || !isTodaySunday}
                   className={`w-full py-3.5 px-6 rounded-2xl font-black text-xs uppercase tracking-widest transition-all cursor-pointer shadow-lg flex items-center justify-center gap-2 ${
                     isSpinning 

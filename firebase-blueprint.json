@@ -234,9 +234,34 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "customerName", "category", "description", "status", "createdAt"]
+    },
+    "SOSAlert": {
+      "title": "SOSAlert",
+      "description": "Emergency SOS distress signal transmitted during a panic sequence.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "type": "string" },
+        "triggerType": { "type": "string" },
+        "severity": { "type": "string" },
+        "status": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "exactTime": { "type": "string" },
+        "exactDate": { "type": "string" },
+        "isoTimestamp": { "type": "string" }
+      },
+      "required": ["id", "name", "phone", "latitude", "longitude", "exactTime"]
     }
   },
   "firestore": {
+    "/sos_alerts/{alertId}": {
+      "schema": "SOSAlert",
+      "description": "Real-time emergency SOS distress alerts with exact time and coordinates."
+    },
     "/support_complaints/{complaintId}": {
       "schema": "SupportComplaint",
       "description": "Customer support complaints."
