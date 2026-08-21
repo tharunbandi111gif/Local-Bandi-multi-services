@@ -543,6 +543,80 @@ function AppContent() {
     setCurrentScreen('home');
   }, [user]);
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(() => localStorage.getItem('lokal_maintenance_mode') === 'true');
+  const [globalAnnouncement, setGlobalAnnouncement] = useState<string | null>(null);
+
+  // Robust Master Admin Real-Time Synchronization Listener with Snapshot Monitoring
+  useEffect(() => {
+    if (!db) return;
+
+    const startTime = Date.now();
+    console.log("⚡ [Master Admin Sync]: Initializing Firestore snapshot listeners for real-time dashboard updates...");
+
+    // 1. Listen to settings/system_sync for instant Master Admin broadcasts
+    const unsubSystemSync = onSnapshot(doc(db, 'settings', 'system_sync'), { includeMetadataChanges: true }, (snap) => {
+      const receiveTime = Date.now();
+      const isFromCache = snap?.metadata?.fromCache ?? false;
+      const hasPendingWrites = snap?.metadata?.hasPendingWrites ?? false;
+
+      if (snap?.exists?.()) {
+        const data = snap.data();
+        const updateLatency = data?.timestamp ? (receiveTime - Number(data.timestamp)) : (receiveTime - startTime);
+
+        console.log(`⚡ [Master Admin Real-Time Sync]: Snapshot update (${isFromCache ? 'Cached' : 'Live'}, latency: ${Math.max(0, updateLatency)}ms):`, data);
+        
+        if (data && typeof data.maintenanceMode === 'boolean') {
+          setIsMaintenanceMode(data.maintenanceMode);
+          localStorage.setItem('lokal_maintenance_mode', String(data.maintenanceMode));
+          window.dispatchEvent(new Event('maintenance_mode_changed'));
+        }
+        if (data?.announcement) {
+          setGlobalAnnouncement(data.announcement);
+        }
+        if (data?.action === 'ADMIN_ROLE_UPDATED' || data?.action === 'SESSION_REVOKED') {
+          window.dispatchEvent(new CustomEvent('admin_session_updated', { detail: data }));
+        }
+        if (data?.timestamp || data?.action) {
+          window.dispatchEvent(new CustomEvent('system_sync_event', { detail: { ...data, fromCache: isFromCache, hasPendingWrites } }));
+          window.dispatchEvent(new Event('storage'));
+        }
+      }
+    }, (err) => {
+      console.warn("Master admin system_sync snapshot notice:", err);
+    });
+
+    const unsubMaintenance = onSnapshot(doc(db, 'settings', 'maintenance'), (snap) => {
+      if (snap?.exists?.()) {
+        const data = snap.data();
+        const active = Boolean(data?.active || data?.enabled || data?.isMaintenanceMode);
+        console.log("⚡ [Master Admin Sync]: Maintenance mode snapshot:", active);
+        setIsMaintenanceMode(active);
+        localStorage.setItem('lokal_maintenance_mode', String(active));
+        window.dispatchEvent(new Event('maintenance_mode_changed'));
+      }
+    }, (err) => {
+      console.warn("Maintenance mode snapshot notice:", err);
+    });
+
+    const unsubGlobalConfig = onSnapshot(doc(db, 'settings', 'global_config'), (snap) => {
+      if (snap?.exists?.()) {
+        const config = snap.data();
+        console.log("⚡ [Master Admin Sync]: Global config updated:", config);
+        if (config?.supportPhone) {
+          localStorage.setItem('lokal_support_phone', config.supportPhone);
+        }
+        window.dispatchEvent(new CustomEvent('global_config_updated', { detail: config }));
+      }
+    }, (err) => {
+      console.warn("Global config snapshot notice:", err);
+    });
+
+    return () => {
+      unsubSystemSync();
+      unsubMaintenance();
+      unsubGlobalConfig();
+    };
+  }, []);
+
   const [hospitalPrices, setHospitalPrices] = useState<Record<string, { price: number; isActive: boolean }>>({
     'Govt Hospital': { price: 0, isActive: true },
     'KIMS Hospital': { price: 300, isActive: true },

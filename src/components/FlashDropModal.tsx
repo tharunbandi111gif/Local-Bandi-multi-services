@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Flame, Clock, Zap, Check, Copy, ShoppingBag, ArrowRight, X, Sparkles, Tag, ChevronRight } from 'lucide-react';
-import { FlashDropConfig, getLocalAttractionConfig } from '../types/attractionCampaigns';
+import { Flame, Clock, Zap, Check, Copy, ShoppingBag, ArrowRight, X, Sparkles, Tag, ChevronRight, AlertCircle, Info } from 'lucide-react';
+import { 
+  FlashDropConfig, 
+  getLocalAttractionConfig,
+  isGoldenHourActive,
+  getGoldenHourTimerSeconds,
+  getNextGoldenHourSlotText
+} from '../types/attractionCampaigns';
 
 interface FlashDropModalProps {
   isOpen: boolean;
@@ -25,21 +31,25 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
   const [copied, setCopied] = useState(false);
   const [isApplied, setIsApplied] = useState(false);
   const [addedItemIds, setAddedItemIds] = useState<string[]>([]);
-  const [timeLeft, setTimeLeft] = useState(14 * 60 + 45);
+  const [goldenHourState, setGoldenHourState] = useState(getGoldenHourTimerSeconds());
 
   const activeConfig = config || getLocalAttractionConfig().flashDrop;
   const promoCode = 'GOLDEN50';
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setTimeLeft(prev => (prev > 0 ? prev - 1 : 0));
+      setGoldenHourState(getGoldenHourTimerSeconds());
     }, 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const minutes = Math.floor(timeLeft / 60);
-  const seconds = timeLeft % 60;
-  const formattedTime = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  const totalSecs = Math.max(0, goldenHourState.seconds);
+  const hours = Math.floor(totalSecs / 3600);
+  const minutes = Math.floor((totalSecs % 3600) / 60);
+  const seconds = totalSecs % 60;
+  const formattedTime = hours > 0 
+    ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+    : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 
   const handleApplyCoupon = () => {
     if (onApplyPromo) {
@@ -63,7 +73,7 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
           unit: '2 Litre Bottle',
           mrp: 198,
           price: 99,
-          discount: '50% OFF',
+          discount: '50% OFF (Up to ₹50)',
           image: 'https://images.unsplash.com/photo-1585421514284-efb74c2b69ba?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
           stock: '8 left in stock'
         },
@@ -74,7 +84,7 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
           unit: '1 Litre Squeeze Bottle',
           mrp: 150,
           price: 75,
-          discount: '50% OFF',
+          discount: '50% OFF (Up to ₹50)',
           image: 'https://images.unsplash.com/photo-1583947215259-38e31be8751f?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
           stock: '12 left in stock'
         },
@@ -85,7 +95,7 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
           unit: '1 Litre Ergonomic Pack',
           mrp: 220,
           price: 110,
-          discount: '50% OFF',
+          discount: '50% OFF (Up to ₹50)',
           image: 'https://images.unsplash.com/photo-1517677208171-0bc6725a3e60?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
           stock: '6 left in stock'
         }
@@ -100,6 +110,7 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
         originalPrice: item.mrp,
         image: item.image,
         category: item.category,
+        isFlashDrop: true,
         quantity: 1
       });
       setAddedItemIds(prev => [...prev, item.id]);
@@ -127,24 +138,30 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
               <X className="w-5 h-5" />
             </button>
 
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/40 text-amber-300 text-[10px] font-black uppercase tracking-wider backdrop-blur-md border border-amber-400/30">
                 <Flame className="w-3.5 h-3.5 fill-amber-400 text-amber-400 animate-pulse" />
-                {activeConfig.badge || 'Golden Hour Drop'}
+                {goldenHourState.isActive ? '⚡ Golden Hour Active' : '⏰ Golden Hour Slots'}
               </span>
 
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/50 text-white text-[11px] font-mono font-black border border-white/20">
-                <Clock className="w-3.5 h-3.5 text-amber-300 animate-spin" />
-                <span>{formattedTime}</span>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/50 text-yellow-300 text-[11px] font-mono font-black border border-white/20">
+                <Clock className="w-3.5 h-3.5 text-amber-300" />
+                <span>{goldenHourState.label}: {formattedTime}</span>
               </div>
             </div>
 
             <h3 className="text-2xl font-black italic uppercase tracking-tight text-white leading-tight">
-              {activeConfig.title || 'Flat 50% Off Flash Rush'}
+              {activeConfig.title || 'Flat 50% Golden Hour Drop'}
             </h3>
             <p className="text-xs text-orange-100 font-medium mt-1">
-              {activeConfig.description || 'Exclusive 50% Instant Discount on Chicken, Biryani, Groceries & Tiffins!'}
+              Active 6:00 AM – 8:00 AM & 4:00 PM – 7:00 PM everyday! Applies strictly to selected items (Floor Cleaner, Dish Wash, Fabric Conditioner) up to ₹50 maximum.
             </p>
+          </div>
+
+          {/* Golden Hour Rules & Notice */}
+          <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-2 text-[11px] text-amber-200">
+            <Info className="w-4 h-4 text-amber-400 shrink-0" />
+            <span><strong>Rules:</strong> Selected products only • Max discount ₹50 • Morning 6–8 AM & Evening 4–7 PM.</span>
           </div>
 
           {/* Golden Coupon Action Ribbon */}
@@ -159,11 +176,11 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
                     {promoCode}
                   </span>
                   <span className="text-[10px] font-bold bg-amber-400/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-400/30 uppercase">
-                    Flat 50% OFF
+                    50% OFF (Up to ₹50)
                   </span>
                 </div>
                 <p className="text-[10.5px] text-slate-400">
-                  {isApplied ? '✅ Coupon applied to your checkout session' : 'Min order ₹99 • Valid for 15 minutes'}
+                  {isApplied ? '✅ Coupon applied for eligible items at checkout' : 'Min order ₹99 • Valid during active Golden Hour slots'}
                 </p>
               </div>
             </div>
@@ -180,12 +197,12 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
                 {isApplied ? (
                   <>
                     <Check className="w-4 h-4" />
-                    <span>50% Applied</span>
+                    <span>50% Code Applied</span>
                   </>
                 ) : (
                   <>
                     <Zap className="w-4 h-4 fill-slate-950" />
-                    <span>Apply 50% OFF</span>
+                    <span>Apply GOLDEN50</span>
                   </>
                 )}
               </button>
@@ -197,9 +214,9 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
             <div className="flex items-center justify-between pb-1">
               <h4 className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                Featured 50% Flash Items ({flashItems.length})
+                Eligible Golden Hour Products ({flashItems.length})
               </h4>
-              <span className="text-[10px] text-amber-400 font-bold">⚡ Limited Stock</span>
+              <span className="text-[10px] text-amber-400 font-bold">⚡ Max ₹50 OFF</span>
             </div>
 
             <div className="space-y-2.5">
@@ -270,7 +287,7 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
               }}
               className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <span>Explore All Categories</span>
+              <span>View More Products</span>
               <ChevronRight className="w-4 h-4" />
             </button>
 
@@ -285,7 +302,7 @@ export const FlashDropModal: React.FC<FlashDropModalProps> = ({
               className="flex-1 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-lg flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
             >
               <ShoppingBag className="w-4 h-4 fill-slate-950" />
-              <span>Checkout @ 50% OFF</span>
+              <span>Go to Cart</span>
             </button>
           </div>
         </motion.div>

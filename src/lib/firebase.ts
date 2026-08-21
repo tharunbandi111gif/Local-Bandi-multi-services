@@ -1,5 +1,13 @@
 import { initializeApp, getApp, getApps } from 'firebase/app';
-import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, ConfirmationResult } from 'firebase/auth';
+import { 
+  getAuth, 
+  RecaptchaVerifier, 
+  signInWithPhoneNumber, 
+  ConfirmationResult,
+  setPersistence,
+  browserLocalPersistence,
+  inMemoryPersistence
+} from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -18,6 +26,14 @@ export const db = initializeFirestore(app, {
 } as any, firebaseConfig.firestoreDatabaseId);
 
 export const auth = getAuth(app);
+
+// Configure robust local persistence for auth state across iframe and multi-tab reloads
+if (typeof window !== 'undefined') {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn("Could not set browserLocalPersistence, attempting inMemoryPersistence fallback:", err);
+    setPersistence(auth, inMemoryPersistence).catch(console.error);
+  });
+}
 
 export const setupRecaptcha = (containerId: string) => {
   if (typeof window === 'undefined') return null;

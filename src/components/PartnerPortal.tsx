@@ -1296,7 +1296,11 @@ export default function PartnerPortal() {
       // Verify against either generated code, or the common fallback 1234 for development
       if (code === generatedOtp || code === '1234' || generatedOtp === '1234') {
         localStorage.setItem('otp_logged_phone', loginPhone);
-        await signInAnon();
+        try {
+          await signInAnon();
+        } catch {
+          // fallback context handles state
+        }
         if (auth.currentUser) {
           await setDoc(doc(db, 'users', auth.currentUser.uid), {
             id: auth.currentUser.uid,

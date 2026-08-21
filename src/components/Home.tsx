@@ -9945,54 +9945,9 @@ export default function Home({
           )}
         </div>
 
-        {/* 3. Categories Grid - PRIMARY NAVIGATION */}
+        {/* 3. Categories Grid - PRIMARY NAVIGATION (SHOWN FIRST) */}
         {!searchQuery && (
           <>
-            {/* 🎰 SPIN & WIN LUCKY WHEEL SUNDAY SPECIAL PROMO BANNER (SUNDAYS ONLY) */}
-            {isTodaySunday && (
-              <div className="mb-4 p-4 rounded-3xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 shadow-xl relative overflow-hidden border border-amber-300">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 relative z-10">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-slate-950 flex items-center justify-center text-amber-400 shadow-md border border-amber-400/40 shrink-0">
-                      <Sparkles className="w-6 h-6 animate-spin text-amber-400 fill-amber-400" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className="bg-slate-950 text-amber-400 text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full font-mono border border-amber-400/30">
-                          🔥 SUNDAY SPECIAL LIVE
-                        </span>
-                        <span className="bg-slate-950/80 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full font-mono border border-white/20">
-                          First 1,000 Members • {sundaySpinCount}/1000 Claimed
-                        </span>
-                      </div>
-                      <h3 className="text-base font-black uppercase tracking-tight text-slate-950 leading-tight">
-                        100% OFFER GET
-                      </h3>
-                      <p className="text-[10px] text-slate-900 font-extrabold leading-tight mt-0.5">
-                        Every Sunday Special! No order required for the first 1,000 members. Spin the lucky wheel to get your offer!
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setShowSpinWheelModal(true)}
-                    className="w-full sm:w-auto px-5 py-2.5 bg-slate-950 hover:bg-slate-900 text-amber-400 text-xs font-black uppercase tracking-wider rounded-2xl shadow-lg border border-amber-400/40 transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <span>SPIN NOW</span>
-                    <ChevronRight className="w-4 h-4 text-amber-400" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* ⚡ 40-SEC SPEED QUIZ MARKETING CAMPAIGN BANNER */}
-            <MarketingQuizFloatingBanner onOpenQuiz={() => setShowMarketingQuizModal(true)} />
-
-            {/* 🎁 CUSTOMER ATTRACTION: GOLDEN HOUR FLASH DROP + MYSTERY SCRATCH CARD + NEIGHBORHOOD GROUP POOL */}
-            <CommunityPoolBanner 
-              onOpenScratchCard={() => setShowScratchCardModal(true)} 
-              onOpenFlashDeal={() => setShowFlashDropModal(true)}
-            />
-
             <section>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Explore Categories</h3>
@@ -10074,6 +10029,51 @@ export default function Home({
               })()}
             </motion.div>
           </section>
+
+            {/* 🎁 CUSTOMER ATTRACTION: GOLDEN HOUR FLASH DROP + MYSTERY SCRATCH CARD + NEIGHBORHOOD GROUP POOL (RENDERED AFTER CATEGORIES) */}
+            <CommunityPoolBanner 
+              onOpenScratchCard={() => setShowScratchCardModal(true)} 
+              onOpenFlashDeal={() => setShowFlashDropModal(true)}
+            />
+
+            {/* ⚡ 40-SEC SPEED QUIZ MARKETING CAMPAIGN BANNER */}
+            <MarketingQuizFloatingBanner onOpenQuiz={() => setShowMarketingQuizModal(true)} />
+
+            {/* 🎰 SPIN & WIN LUCKY WHEEL SUNDAY SPECIAL PROMO BANNER (SUNDAYS ONLY) */}
+            {isTodaySunday && (
+              <div className="mb-4 p-4 rounded-3xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 shadow-xl relative overflow-hidden border border-amber-300">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 relative z-10">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-950 flex items-center justify-center text-amber-400 shadow-md border border-amber-400/40 shrink-0">
+                      <Sparkles className="w-6 h-6 animate-spin text-amber-400 fill-amber-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="bg-slate-950 text-amber-400 text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full font-mono border border-amber-400/30">
+                          🔥 SUNDAY SPECIAL LIVE
+                        </span>
+                        <span className="bg-slate-950/80 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full font-mono border border-white/20">
+                          First 1,000 Members • {sundaySpinCount}/1000 Claimed
+                        </span>
+                      </div>
+                      <h3 className="text-base font-black uppercase tracking-tight text-slate-950 leading-tight">
+                        100% OFFER GET
+                      </h3>
+                      <p className="text-[10px] text-slate-900 font-extrabold leading-tight mt-0.5">
+                        Every Sunday Special! No order required for the first 1,000 members. Spin the lucky wheel to get your offer!
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowSpinWheelModal(true)}
+                    className="w-full sm:w-auto px-5 py-2.5 bg-slate-950 hover:bg-slate-900 text-amber-400 text-xs font-black uppercase tracking-wider rounded-2xl shadow-lg border border-amber-400/40 transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <span>SPIN NOW</span>
+                    <ChevronRight className="w-4 h-4 text-amber-400" />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Emergency Quick Actions */}
             <section className="bg-rose-50 p-6 rounded-[2.5rem] border border-rose-100 space-y-4">

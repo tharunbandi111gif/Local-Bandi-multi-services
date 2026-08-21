@@ -133,6 +133,13 @@ export const integrationService = {
   },
 
   /**
+   * Quick health check utility for SMS gateway
+   */
+  async checkSmsGatewayHealth(silent = true): Promise<DiagnosticReport | null> {
+    return this.diagnoseMarketBuzzerEndpoints(silent);
+  },
+
+  /**
    * Fetches the current SMS & OTP gateway configuration from the server.
    */
   async getOtpConfig() {

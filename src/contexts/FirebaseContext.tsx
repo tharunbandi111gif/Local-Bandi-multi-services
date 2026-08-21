@@ -436,6 +436,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         const fallbackUid = `phone_${storedCleanPhone}`;
         const formattedPhone = `+91${storedCleanPhone}`;
         const isBootstrapAdmin = BOOTSTRAP_MASTER_ADMINS.phones.some(p => p.replace(/\D/g, '').slice(-10) === storedCleanPhone);
+        
         setUser({
           uid: fallbackUid,
           phoneNumber: formattedPhone,
@@ -443,10 +444,34 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           email: `${storedCleanPhone}@localbandi.in`,
           isAnonymous: false
         } as any);
+        
         setIsAdmin(isBootstrapAdmin);
         setIsSuperAdmin(isBootstrapAdmin);
         setIsMasterAdmin(isBootstrapAdmin);
         setIsAuthorizedAdmin(isBootstrapAdmin);
+
+        getDoc(doc(db, 'users', fallbackUid)).then((docSnippet) => {
+          if (docSnippet.exists()) {
+            const data = docSnippet.data() as UserProfile;
+            setUserProfile(data);
+            setIsBranchAdmin(data.role === 'branchAdmin' || (data as any).isBranchAdmin === true);
+            setBranchId(data.branchId || null);
+          } else {
+            setUserProfile({
+              id: fallbackUid,
+              phone: formattedPhone,
+              phoneNumber: formattedPhone,
+              name: `Customer ${storedCleanPhone.slice(-4)}`,
+              role: isBootstrapAdmin ? 'masterAdmin' : 'user',
+              email: `${storedCleanPhone}@localbandi.in`,
+              createdAt: new Date().toISOString()
+            } as any);
+          }
+        }).catch((err) => {
+          console.warn("handleAuthSync profile retrieval fallback note:", err);
+        }).finally(() => {
+          setLoading(false);
+        });
       }
     };
 
@@ -494,9 +519,12 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const signInAnon = async () => {
     try {
       await signInAnonymously(auth);
-    } catch (error) {
-      console.error("Anonymous login failed", error);
-      throw error;
+    } catch (error: any) {
+      if (error?.code === 'auth/admin-restricted-operation' || error?.message?.includes('admin-restricted-operation')) {
+        console.info("ℹ️ Anonymous auth provider is not enabled in Firebase Console; continuing with local phone session.");
+        return;
+      }
+      console.warn("Anonymous auth notice:", error?.message || error);
     }
   };
 

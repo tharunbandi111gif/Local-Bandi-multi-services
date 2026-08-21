@@ -6,6 +6,11 @@ import { translations } from '../translations';
 import { getLocalizedProductName } from '../utils/localizedContent';
 import { db } from '../lib/firebase';
 import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { 
+  isGoldenHourActive, 
+  getNextGoldenHourSlotText, 
+  getLocalAttractionConfig 
+} from '../types/attractionCampaigns';
 
 interface CartProps {
   items: CartItem[];
@@ -23,7 +28,8 @@ interface CartProps {
 }
 
 const DEFAULT_PROMOS = [
-  { id: 'GOLDEN50', type: 'percent' as const, value: 50, label: '🔥 FLAT 50% OFF FLASH RUSH', minSubtotal: 99 },
+  { id: 'GOLDEN50', type: 'percent' as const, value: 50, label: '🔥 FLAT 50% GOLDEN HOUR DROP (Max ₹50)', minSubtotal: 99 },
+  { id: 'GROUPPOOL20', type: 'percent' as const, value: 20, label: '👥 GROUP BUY POOL 20% OFF (Min ₹2,500)', minSubtotal: 2500 },
   { id: 'LOKAL10', type: 'percent' as const, value: 10, label: '10% LOCAL DISCOUNT', minSubtotal: 0 },
   { id: 'WELCOME50', type: 'flat' as const, value: 50, label: '₹50 WELCOME OFFER', minSubtotal: 300 },
   { id: 'FREESHIP', type: 'shipping' as const, value: 0, label: 'FREE DELIVERY CODE', minSubtotal: 200 }
@@ -182,10 +188,35 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
   const selectedReward = selectedRewardId ? [...rewardsUnder15, ...rewardsUnder40].find(r => r.id === selectedRewardId) : null;
   const rewardCost = selectedReward ? selectedReward.rewardPrice : 0;
 
+  const isGoldenHourItem = (item: CartItem) => {
+    try {
+      const activeFlashConfig = getLocalAttractionConfig().flashDrop;
+      const flashItemIds = (activeFlashConfig.items || []).map(it => it.id);
+      const flashNames = (activeFlashConfig.items || []).map(it => (it.name || '').toLowerCase());
+      const itemName = (item.name || '').toLowerCase();
+      return (
+        item.id.startsWith('flash-') ||
+        (item as any).isFlashDrop === true ||
+        flashItemIds.includes(item.id) ||
+        flashNames.some(fn => fn && (itemName.includes(fn) || fn.includes(itemName))) ||
+        itemName.includes('floor cleaner') ||
+        itemName.includes('dish wash') ||
+        itemName.includes('fabric conditioner')
+      );
+    } catch {
+      return item.id.startsWith('flash-') || (item as any).isFlashDrop === true;
+    }
+  };
+
   // Calculate discount
   let discount = 0;
   if (appliedPromo) {
-    if (appliedPromo.id.startsWith('QUIZ') || ['QUIZ25OFF', 'QUIZ15OFF', 'QUIZ08OFF'].includes(appliedPromo.id)) {
+    if (['GOLDEN50', 'FLASHRUSH50', 'FLASH50', 'FLAT50', 'FLASHRUSH', 'GOLDENHOUR', 'GOLDENHOUR50'].includes(appliedPromo.id)) {
+      // Golden Hour Drop: 50% applied strictly to selected Golden Hour items only, capped at max ₹50
+      const qualifyingFlashItems = items.filter(isGoldenHourItem);
+      const flashItemsTotal = qualifyingFlashItems.reduce((acc, it) => acc + (it.price * it.quantity), 0);
+      discount = Math.min(50, Math.round(flashItemsTotal * 0.5));
+    } else if (appliedPromo.id.startsWith('QUIZ') || ['QUIZ25OFF', 'QUIZ15OFF', 'QUIZ08OFF'].includes(appliedPromo.id)) {
       // Quiz Coupon: applies % discount to ONLY 1 product priced below ₹100
       const targetItem = items.find(i => i.id === selectedQuizTargetItemId && i.price < 100) || itemsUnder100[0];
       if (targetItem) {
@@ -272,15 +303,24 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
 
     // Explicitly handle Golden Hour Drop / Flat 50% Flash Rush coupons
     if (['GOLDEN50', 'FLASHRUSH50', 'FLASH50', 'FLAT50', 'FLASHRUSH', 'GOLDENHOUR', 'GOLDENHOUR50'].includes(userInput)) {
+      if (!isGoldenHourActive()) {
+        setPromoError(`Golden Hour 50% Drop is only active 6:00 AM - 8:00 AM & 4:00 PM - 7:00 PM everyday! (${getNextGoldenHourSlotText()})`);
+        return;
+      }
+      const qualifyingFlashItems = items.filter(isGoldenHourItem);
+      if (qualifyingFlashItems.length === 0) {
+        setPromoError('GOLDEN50 applies only to selected Golden Hour Drop items (e.g. Floor Cleaner, Dish Wash, Fabric Conditioner)! Please add a Golden Hour item to your cart.');
+        return;
+      }
       if (subtotal < 99) {
-        setPromoError('Min. order subtotal of ₹99 required for Flash Rush 50% discount!');
+        setPromoError('Min. order subtotal of ₹99 required for Golden Hour 50% discount!');
         return;
       }
       setAppliedPromo({
         id: userInput,
         type: 'percent',
         value: 50,
-        label: `${userInput} (Flat 50% Off Flash Rush 🎉)`
+        label: `${userInput} (Flat 50% Off Golden Hour Drop - Max ₹50 🎉)`
       });
       setPromoError(null);
       return;
@@ -314,6 +354,10 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
     }
 
     if (userInput === 'BIRYANI99') {
+      if (subtotal < 199) {
+        setPromoError('Min. order subtotal of ₹199 required for Biryani Feast Offer!');
+        return;
+      }
       setAppliedPromo({
         id: userInput,
         type: 'flat',
@@ -324,12 +368,16 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
       return;
     }
 
-    if (userInput === 'GROUPPOOL25') {
+    if (['GROUPPOOL20', 'GROUPPOOL25', 'GROUPPOOL', 'GROUPBUY'].includes(userInput)) {
+      if (subtotal < 2500) {
+        setPromoError('Min. order subtotal of ₹2,500 required to activate 20% Group Buy Pool discount!');
+        return;
+      }
       setAppliedPromo({
         id: userInput,
         type: 'percent',
-        value: 25,
-        label: `${userInput} (25% Group Order Discount 👥)`
+        value: 20,
+        label: `${userInput} (20% Group Buy Pool Offer + Free Delivery 👥)`
       });
       setPromoError(null);
       return;

@@ -255,9 +255,26 @@
         "isoTimestamp": { "type": "string" }
       },
       "required": ["id", "name", "phone", "latitude", "longitude", "exactTime"]
+    },
+    "OtpVerification": {
+      "title": "OtpVerification",
+      "description": "Transient OTP verification records.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "expiry": { "type": "number" },
+        "phoneNumber": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "verified": { "type": "boolean" }
+      },
+      "required": ["code", "phoneNumber"]
     }
   },
   "firestore": {
+    "/otp_verifications/{phoneId}": {
+      "schema": "OtpVerification",
+      "description": "OTP verification tokens and states."
+    },
     "/sos_alerts/{alertId}": {
       "schema": "SOSAlert",
       "description": "Real-time emergency SOS distress alerts with exact time and coordinates."

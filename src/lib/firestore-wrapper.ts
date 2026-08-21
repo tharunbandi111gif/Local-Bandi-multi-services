@@ -295,7 +295,8 @@ function createMockDocSnapshot(id: string, data: any) {
     id,
     exists: () => data !== undefined && data !== null,
     data: () => data,
-    get: (field: string) => data ? data[field] : undefined
+    get: (field: string) => data ? data[field] : undefined,
+    metadata: { fromCache: true, hasPendingWrites: false }
   };
 }
 
@@ -529,35 +530,31 @@ export function onSnapshot(ref: any, ...args: any[]): () => void {
   let realUnsub: any = null;
   try {
     const newArgs: any[] = [];
-    let foundNext = false;
     
     for (let i = 0; i < args.length; i++) {
       const arg = args[i];
       if (typeof arg === 'function') {
-        if (!foundNext) {
-          foundNext = true;
-          newArgs.push((snap: any) => {
-            if (nextFn) nextFn(snap);
-          });
-        } else {
-          // Skip user error function to use our safeErrorFn
-          break;
-        }
+        newArgs.push((snap: any) => {
+          if (nextFn) nextFn(snap);
+        });
+        // Append safeErrorFn immediately after the next function
+        newArgs.push(safeErrorFn);
+        break;
       } else if (typeof arg === 'object' && arg !== null) {
-        const wrappedObserver = {
-          next: (snap: any) => { if (nextFn) nextFn(snap); },
-          error: safeErrorFn,
-          complete: arg.complete
-        };
-        newArgs.push(wrappedObserver);
-        foundNext = true;
+        if ('next' in arg || 'error' in arg) {
+          const wrappedObserver = {
+            next: (snap: any) => { if (nextFn) nextFn(snap); },
+            error: safeErrorFn,
+            complete: arg.complete
+          };
+          newArgs.push(wrappedObserver);
+        } else {
+          // This is a SnapshotListenOptions object like { includeMetadataChanges: true }
+          newArgs.push(arg);
+        }
       } else {
         newArgs.push(arg);
       }
-    }
-    
-    if (foundNext && typeof args[0] === 'function') {
-      newArgs.push(safeErrorFn);
     }
     
     realUnsub = (firestore.onSnapshot as any)(ref, ...newArgs);

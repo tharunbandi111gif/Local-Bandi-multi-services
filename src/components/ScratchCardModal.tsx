@@ -1,7 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Sparkles, X, Check, Copy, PartyPopper, ShieldCheck } from 'lucide-react';
-import { ScratchRewardItem, ScratchCardConfig, getLocalAttractionConfig, DEFAULT_SCRATCH_REWARDS } from '../types/attractionCampaigns';
+import { Sparkles, X, Check, Copy, PartyPopper, ShieldCheck, Lock, Calendar, Gift } from 'lucide-react';
+import { 
+  ScratchRewardItem, 
+  ScratchCardConfig, 
+  getLocalAttractionConfig, 
+  DEFAULT_SCRATCH_REWARDS,
+  getScratchCardEligibility,
+  ScratchEligibilityResult
+} from '../types/attractionCampaigns';
 
 interface ScratchCardModalProps {
   isOpen: boolean;
@@ -22,6 +29,7 @@ export const ScratchCardModal: React.FC<ScratchCardModalProps> = ({
   const [isDrawing, setIsDrawing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [alreadyClaimedToday, setAlreadyClaimedToday] = useState(false);
+  const [eligibility, setEligibility] = useState<ScratchEligibilityResult>(getScratchCardEligibility());
 
   // Active configuration
   const activeConfig = config || getLocalAttractionConfig().scratchCard;
@@ -33,12 +41,15 @@ export const ScratchCardModal: React.FC<ScratchCardModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      const elig = getScratchCardEligibility();
+      setEligibility(elig);
+
       const todayKey = new Date().toISOString().split('T')[0];
       const lastScratchedDate = typeof window !== 'undefined' ? localStorage.getItem('lokal_scratch_last_date') : null;
       const hasClaimed = lastScratchedDate === todayKey;
       setAlreadyClaimedToday(hasClaimed);
 
-      // Pick random surprise reward from active admin rewards (capped strictly below 8 rupees)
+      // Pick random surprise reward from active admin rewards
       const currentActiveRewards = (activeConfig.rewards && activeConfig.rewards.filter(r => r.isActive).length > 0)
         ? activeConfig.rewards.filter(r => r.isActive)
         : DEFAULT_SCRATCH_REWARDS;
@@ -48,7 +59,7 @@ export const ScratchCardModal: React.FC<ScratchCardModalProps> = ({
       setScratchPercentage(0);
       setCopied(false);
 
-      if (!hasClaimed) {
+      if (elig.isEligible && !hasClaimed) {
         // Initialize canvas
         setTimeout(() => {
           initCanvas();
@@ -147,7 +158,7 @@ export const ScratchCardModal: React.FC<ScratchCardModalProps> = ({
         if (onRewardClaimed) {
           onRewardClaimed(selectedReward.code, selectedReward.discount);
         }
-        // Confetti trigger
+        // Confetti vibration
         try {
           if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
         } catch {
@@ -218,7 +229,7 @@ export const ScratchCardModal: React.FC<ScratchCardModalProps> = ({
         {/* Header Badge */}
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase tracking-wider">
           <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-          <span>{activeConfig.headerBadge || 'Daily Lucky Scratch & Win'}</span>
+          <span>{eligibility.badge || activeConfig.headerBadge || 'Daily Lucky Scratch Card'}</span>
         </div>
 
         <div>
@@ -226,12 +237,38 @@ export const ScratchCardModal: React.FC<ScratchCardModalProps> = ({
             {activeConfig.title || 'Scratch Your Mystery Gift!'}
           </h3>
           <p className="text-xs text-slate-300 mt-1">
-            {activeConfig.subtitle || 'Exclusive instant discount for Local Bandi customers today.'}
+            {eligibility.message}
           </p>
         </div>
 
-        {/* Main Content: Daily Unlocked Card OR Limit Reached */}
-        {alreadyClaimedToday ? (
+        {/* Case A: User Not in Eligibility Window */}
+        {!eligibility.isEligible ? (
+          <div className="py-4 space-y-4">
+            <div className="w-16 h-16 bg-purple-500/10 border border-purple-500/30 rounded-3xl flex items-center justify-center mx-auto text-3xl">
+              <Lock className="w-8 h-8 text-purple-400" />
+            </div>
+            <div className="space-y-1">
+              <h4 className="text-base font-black uppercase text-purple-300">Next Scratch Event Milestone</h4>
+              <p className="text-xs text-slate-300 px-4 leading-relaxed">
+                Daily Scratch Cards are available for <strong className="text-amber-400 font-bold">new logins for 7 days</strong>, and then every <strong className="text-purple-300 font-bold">4th Month (1st Week)</strong>!
+              </p>
+            </div>
+            <div className="p-3 bg-slate-950/80 border border-white/10 rounded-2xl text-[11px] font-mono text-slate-400 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                Schedule
+              </span>
+              <span className="text-amber-300 font-bold">Every 4th Month Week 1</span>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-full py-3.5 bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black text-xs uppercase tracking-wider rounded-2xl transition-all shadow-lg active:scale-95 cursor-pointer"
+            >
+              Continue Shopping
+            </button>
+          </div>
+        ) : alreadyClaimedToday ? (
+          /* Case B: Already Claimed Today */
           <div className="py-4 space-y-4">
             <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/30 rounded-3xl flex items-center justify-center mx-auto text-3xl">
               🎁
@@ -239,12 +276,12 @@ export const ScratchCardModal: React.FC<ScratchCardModalProps> = ({
             <div className="space-y-1">
               <h4 className="text-base font-black uppercase text-amber-400">Today's Lucky Card Claimed</h4>
               <p className="text-xs text-slate-300 px-4 leading-relaxed">
-                Every customer gets <strong className="text-white font-bold">1 lucky scratch card daily</strong>. Your next mystery reward unlocks tomorrow at 00:00 AM!
+                You get <strong className="text-white font-bold">1 lucky scratch card daily</strong> ({eligibility.badge}). Your next mystery card unlocks tomorrow at 00:00 AM!
               </p>
             </div>
             <div className="p-3 bg-slate-950/80 border border-white/10 rounded-2xl text-[11px] font-mono text-slate-400 flex items-center justify-between">
-              <span>Limit: 1 Daily Scratch Card</span>
-              <span className="text-emerald-400 font-bold">✓ Active for Today</span>
+              <span>Day {eligibility.dayIndex} of {eligibility.totalDays}</span>
+              <span className="text-emerald-400 font-bold">✓ Scratched Today</span>
             </div>
             <button
               onClick={onClose}
@@ -254,6 +291,7 @@ export const ScratchCardModal: React.FC<ScratchCardModalProps> = ({
             </button>
           </div>
         ) : (
+          /* Case C: Eligible and Ready to Scratch */
           <>
             {/* Scratch Card Canvas Container */}
             <div className="relative w-[280px] h-[180px] mx-auto rounded-2xl overflow-hidden shadow-xl border border-amber-400/40 bg-slate-950 flex items-center justify-center">

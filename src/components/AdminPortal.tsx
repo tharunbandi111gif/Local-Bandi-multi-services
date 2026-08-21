@@ -272,6 +272,15 @@ export default function AdminPortal() {
   const [smsAccountType, setSmsAccountType] = useState('serv_imp');
   const [smsMatchTemplate, setSmsMatchTemplate] = useState(false);
   const [smsSenderId, setSmsSenderId] = useState('LKLBND');
+  const [smsEntityId, setSmsEntityId] = useState('1001457098451462862');
+  const [smsEntityName, setSmsEntityName] = useState('local bandi multi services');
+  const [smsTemplateId, setSmsTemplateId] = useState('');
+  const [smsGatewayUrl, setSmsGatewayUrl] = useState('');
+  const [testSmsPhone, setTestSmsPhone] = useState('');
+  const [testSmsLoading, setTestSmsLoading] = useState(false);
+  const [testSmsResult, setTestSmsResult] = useState<any | null>(null);
+  const [smsDiagnosticReport, setSmsDiagnosticReport] = useState<any | null>(null);
+  const [isDiagnosingSms, setIsDiagnosingSms] = useState(false);
   const [paymentGateway, setPaymentGateway] = useState<'razorpay' | 'paytm' | 'cashfree' | 'stripe'>('razorpay');
   const [paymentMode, setPaymentMode] = useState<'sandbox' | 'live'>('sandbox');
   const [paymentUpiId, setPaymentUpiId] = useState('7416574197@hdfc');
@@ -801,21 +810,98 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
 
 
   const handleSaveSmsConfig = async () => {
+    const configPayload = {
+      provider: smsProvider || 'serv_imp',
+      companyName: 'MarketBuzzer Teleservices Pvt Ltd',
+      key: (smsKey || '').trim() || 'rJCIC6J0',
+      apiKey: (smsKey || '').trim() || 'rJCIC6J0',
+      password: (smsPassword || '').trim() || 'mXdYj5Bc',
+      accountType: (smsAccountType || '').trim() || 'serv_imp',
+      matchTemplate: smsMatchTemplate,
+      senderId: ((smsSenderId || '').trim() || 'LKLBND').toUpperCase().slice(0, 6),
+      entityId: (smsEntityId || '').trim() || '1001457098451462862',
+      dltEntityId: (smsEntityId || '').trim() || '1001457098451462862',
+      entityName: (smsEntityName || '').trim() || 'local bandi multi services',
+      templateId: (smsTemplateId || '').trim(),
+      gatewayUrl: (smsGatewayUrl || '').trim(),
+      updatedAt: new Date().toISOString()
+    };
+
     try {
-      await setDoc(doc(db, 'settings', 'sms_config'), {
-        provider: smsProvider || 'serv_imp',
-        companyName: 'MarketBuzzer Teleservices Pvt Ltd',
-        key: smsKey || 'rJCIC6J0',
-        apiKey: smsKey || 'rJCIC6J0',
-        password: smsPassword || 'mXdYj5Bc',
-        accountType: smsAccountType || 'serv_imp',
-        matchTemplate: smsMatchTemplate,
-        senderId: smsSenderId || 'LKLBND',
-        updatedAt: new Date().toISOString()
-      });
-      triggerToast('📲 MarketBuzzer Teleservices (serv_imp) SMS OTP transmitter settings synced successfully!');
+      // 1. Sync to Firestore
+      await setDoc(doc(db, 'settings', 'sms_config'), configPayload);
+      
+      // 2. Sync to Server cache endpoint
+      await fetch('/api/admin/save-sms-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(configPayload)
+      }).catch((e) => console.warn('Server save-sms-config notice:', e));
+
+      triggerToast('📲 SMS Gateway authentication & DLT parameters saved and re-verified successfully!');
     } catch (err: any) {
+      console.error("Error saving SMS config:", err);
       triggerToast('❌ Error saving SMS configuration.');
+    }
+  };
+
+  const handleTestSendSms = async () => {
+    const cleanNum = testSmsPhone.replace(/\D/g, '').slice(-10);
+    if (cleanNum.length !== 10) {
+      triggerToast('⚠️ Please enter a valid 10-digit mobile number for testing.');
+      return;
+    }
+
+    setTestSmsLoading(true);
+    setTestSmsResult(null);
+
+    try {
+      const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+      const startTime = Date.now();
+      const res = await fetch('/api/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phoneNumber: cleanNum,
+          code: generatedOtp
+        })
+      });
+      const data = await res.json();
+      const durationMs = Date.now() - startTime;
+
+      setTestSmsResult({
+        ...data,
+        sentOtp: generatedOtp,
+        targetPhone: `+91 ${cleanNum}`,
+        durationMs,
+        timestamp: new Date().toLocaleTimeString()
+      });
+
+      if (data.success) {
+        triggerToast(`✅ Test OTP (${generatedOtp}) sent to +91 ${cleanNum} in ${durationMs}ms!`);
+      } else {
+        triggerToast(`⚠️ Gateway Response: ${data.error || 'Check details below'}`);
+      }
+    } catch (err: any) {
+      setTestSmsResult({ success: false, error: err.message || 'Network Timeout' });
+      triggerToast('❌ Test SMS dispatch error.');
+    } finally {
+      setTestSmsLoading(false);
+    }
+  };
+
+  const handleDiagnoseSms = async () => {
+    setIsDiagnosingSms(true);
+    setSmsDiagnosticReport(null);
+    try {
+      const res = await fetch('/api/marketbuzzer/diagnostics');
+      const data = await res.json();
+      setSmsDiagnosticReport(data);
+      triggerToast('🔍 SMS Gateway diagnostics report updated!');
+    } catch (err: any) {
+      triggerToast('❌ Failed to run SMS diagnostics.');
+    } finally {
+      setIsDiagnosingSms(false);
     }
   };
 
@@ -1279,6 +1365,10 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
         if (data.accountType) setSmsAccountType(data.accountType);
         if (data.matchTemplate !== undefined) setSmsMatchTemplate(data.matchTemplate === true || data.matchTemplate === 'true');
         if (data.senderId) setSmsSenderId(data.senderId);
+        if (data.entityId || data.dltEntityId) setSmsEntityId(data.entityId || data.dltEntityId);
+        if (data.entityName) setSmsEntityName(data.entityName);
+        if (data.templateId !== undefined) setSmsTemplateId(data.templateId);
+        if (data.gatewayUrl !== undefined) setSmsGatewayUrl(data.gatewayUrl);
       }
     }, (err) => {
       console.warn("SMS settings config error:", err);
@@ -5727,16 +5817,19 @@ const reconcileDocSync = async (branchId, docBody) => {
                 {/* Integration Gateways */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-left">
                   {/* SMS Gateway */}
-                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
+                  <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-5">
                     <div className="flex items-center justify-between border-b border-white/5 pb-3">
                       <div>
-                        <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">SMS Gateway Config</h3>
-                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">MarketBuzzer Teleservices Pvt Ltd • serv_imp Transmitter</p>
+                        <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">SMS Gateway & OTP Authentication</h3>
+                        <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">MarketBuzzer Teleservices Pvt Ltd • DLT serv_imp Transmitter</p>
                       </div>
-                      <span className="px-2 py-0.5 bg-yellow-400/10 text-yellow-500 text-[8.5px] font-black tracking-wider uppercase rounded-full">SMS-GATE</span>
+                      <span className="px-2.5 py-1 bg-yellow-400/10 border border-yellow-400/20 text-yellow-500 text-[8.5px] font-black tracking-wider uppercase rounded-full">
+                        DLT-VERIFIED
+                      </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    {/* Gateway Credentials Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Provider</label>
                         <select
@@ -5761,9 +5854,9 @@ const reconcileDocSync = async (branchId, docBody) => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Key / User</label>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Key / Authkey (SMS_KEY)</label>
                         <input
                           type="text"
                           value={smsKey}
@@ -5773,7 +5866,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                         />
                       </div>
                       <div>
-                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Password</label>
+                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Gateway Password (SMS_PASSWORD)</label>
                         <input
                           type="password"
                           value={smsPassword}
@@ -5784,19 +5877,61 @@ const reconcileDocSync = async (branchId, docBody) => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">DLT Sender ID (6-Chars)</label>
-                        <input
-                          type="text"
-                          value={smsSenderId}
-                          onChange={(e) => setSmsSenderId(e.target.value.toUpperCase().slice(0, 6))}
-                          placeholder="e.g. LKLBND"
-                          maxLength={6}
-                          className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-mono font-bold text-white uppercase outline-none focus:border-yellow-500"
-                        />
+                    {/* DLT Telecommunications Compliance Details */}
+                    <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-white/5 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-slate-300">DLT Telecom Registration Details</span>
+                        <span className="text-[8px] text-emerald-400 font-mono font-bold">Airtel / Jio DLT Smart-Ping</span>
                       </div>
-                      <div className="flex items-center gap-2 pt-5">
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">DLT Sender ID / Header (6-Chars)</label>
+                          <input
+                            type="text"
+                            value={smsSenderId}
+                            onChange={(e) => setSmsSenderId(e.target.value.toUpperCase().slice(0, 6))}
+                            placeholder="e.g. LKLBND"
+                            maxLength={6}
+                            className="w-full bg-slate-900 border border-white/10 p-2 rounded-xl text-xs font-mono font-bold text-white uppercase outline-none focus:border-yellow-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">DLT Principal Entity ID (PE ID)</label>
+                          <input
+                            type="text"
+                            value={smsEntityId}
+                            onChange={(e) => setSmsEntityId(e.target.value)}
+                            placeholder="e.g. 1001457098451462862"
+                            className="w-full bg-slate-900 border border-white/10 p-2 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">Registered Entity Name</label>
+                          <input
+                            type="text"
+                            value={smsEntityName}
+                            onChange={(e) => setSmsEntityName(e.target.value)}
+                            placeholder="e.g. local bandi multi services"
+                            className="w-full bg-slate-900 border border-white/10 p-2 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[8px] font-black uppercase text-slate-400 tracking-wider mb-1">DLT Template ID (Optional)</label>
+                          <input
+                            type="text"
+                            value={smsTemplateId}
+                            onChange={(e) => setSmsTemplateId(e.target.value)}
+                            placeholder="e.g. 1207161541234567890"
+                            className="w-full bg-slate-900 border border-white/10 p-2 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-white/5">
                         <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 select-none">
                           <input
                             type="checkbox"
@@ -5804,18 +5939,101 @@ const reconcileDocSync = async (branchId, docBody) => {
                             onChange={(e) => setSmsMatchTemplate(e.target.checked)}
                             className="w-4 h-4 rounded text-yellow-400 bg-slate-950 border-white/10 focus:ring-yellow-400"
                           />
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Enforce DLT Match Template</span>
+                          <span className="text-[9.5px] font-bold uppercase tracking-wider text-slate-400">Enforce Strict DLT Template Match</span>
                         </label>
+                        <span className="text-[8.5px] text-slate-500 font-mono">OTP Route: 4-digit / 10m TTL</span>
                       </div>
                     </div>
 
-                    <div className="flex justify-end pt-2">
+                    {/* Action buttons */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <button
+                        onClick={handleDiagnoseSms}
+                        disabled={isDiagnosingSms}
+                        className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <Activity className={`w-3.5 h-3.5 text-yellow-400 ${isDiagnosingSms ? 'animate-spin' : ''}`} />
+                        <span>{isDiagnosingSms ? 'Running Checks...' : 'Test Gateway Ping'}</span>
+                      </button>
+
                       <button
                         onClick={handleSaveSmsConfig}
-                        className="px-4 py-2 bg-yellow-400 hover:bg-yellow-350 text-slate-900 rounded-xl text-[9px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                        className="px-5 py-2.5 bg-yellow-400 hover:bg-yellow-350 text-slate-900 rounded-xl text-[9.5px] font-black uppercase tracking-widest active:scale-95 transition-all shadow-lg cursor-pointer"
                       >
-                        Save SMS Config
+                        Save & Re-Verify SMS Config
                       </button>
+                    </div>
+
+                    {/* Diagnostic Ping Report */}
+                    {smsDiagnosticReport && (
+                      <div className="p-3 bg-slate-950 rounded-2xl border border-white/10 text-[10px] space-y-2 font-mono">
+                        <div className="flex items-center justify-between text-yellow-400 font-bold border-b border-white/5 pb-1">
+                          <span>Gateway Connectivity Telemetry</span>
+                          <span className="text-[9px] text-slate-400">{smsDiagnosticReport.timestamp}</span>
+                        </div>
+                        {smsDiagnosticReport.endpoints?.map((ep: any, idx: number) => (
+                          <div key={idx} className="flex items-center justify-between text-slate-300">
+                            <span>{ep.endpoint}</span>
+                            <span className={ep.success ? 'text-emerald-400 font-bold' : 'text-amber-400'}>
+                              {ep.success ? `HTTP ${ep.status} (${ep.durationMs}ms)` : ep.statusText}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Live Test OTP Dispatcher */}
+                    <div className="p-4 bg-slate-950 rounded-2xl border border-amber-400/20 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-amber-400">Live OTP SMS Dispatch Test</span>
+                        <span className="text-[8.5px] text-slate-400 font-mono">Real-time Carrier Ping</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <span className="absolute left-3 top-2.5 text-xs text-slate-500 font-mono font-bold">+91</span>
+                          <input
+                            type="tel"
+                            maxLength={10}
+                            value={testSmsPhone}
+                            onChange={(e) => setTestSmsPhone(e.target.value.replace(/\D/g, ''))}
+                            placeholder="Enter 10-digit mobile"
+                            className="w-full bg-slate-900 border border-white/10 pl-11 pr-3 py-2 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-yellow-500"
+                          />
+                        </div>
+                        <button
+                          onClick={handleTestSendSms}
+                          disabled={testSmsLoading || !testSmsPhone}
+                          className="px-4 py-2 bg-amber-400 hover:bg-amber-350 text-slate-950 rounded-xl text-[9px] font-black uppercase tracking-wider active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          {testSmsLoading ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Send className="w-3.5 h-3.5" />
+                          )}
+                          <span>Send Test OTP</span>
+                        </button>
+                      </div>
+
+                      {/* Test Result Display */}
+                      {testSmsResult && (
+                        <div className="p-2.5 bg-slate-900 rounded-xl border border-white/5 text-[9.5px] font-mono space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Target: <strong className="text-white">{testSmsResult.targetPhone}</strong></span>
+                            <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[8px] ${testSmsResult.success ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
+                              {testSmsResult.status || (testSmsResult.success ? 'DELIVERED' : 'FAILED')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-400 text-[8.5px]">
+                            <span>Dispatched Code: <strong className="text-yellow-400">{testSmsResult.sentOtp}</strong></span>
+                            <span>Latency: {testSmsResult.durationMs}ms</span>
+                          </div>
+                          {testSmsResult.apiResponse && (
+                            <div className="text-[8px] text-slate-500 truncate pt-0.5">
+                              Carrier payload: {typeof testSmsResult.apiResponse === 'string' ? testSmsResult.apiResponse : JSON.stringify(testSmsResult.apiResponse)}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 

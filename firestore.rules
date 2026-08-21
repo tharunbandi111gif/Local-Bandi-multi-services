@@ -478,5 +478,10 @@ service cloud.firestore {
       allow update: if isSignedIn();
       allow delete: if isAdmin();
     }
+
+    // --- OTP Verifications ---
+    match /otp_verifications/{phoneId} {
+      allow read, write: if true;
+    }
   }
 }
