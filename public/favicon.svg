@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#goldGrad)" stroke="#fef08a" stroke-width="12"/>
+  <circle cx="256" cy="256" r="190" fill="#0f172a"/>
+  <!-- Stylized LB Logo -->
+  <path d="M 160 160 L 160 352 L 230 352 L 230 315 L 198 315 L 198 160 Z" fill="#facc15"/>
+  <path d="M 250 160 L 315 160 C 345 160 365 178 365 205 C 365 222 355 238 335 246 C 360 255 372 274 372 298 C 372 330 348 352 315 352 L 250 352 Z M 288 200 L 288 236 L 312 236 C 324 236 332 228 332 218 C 332 208 324 200 312 200 Z M 288 276 L 288 314 L 315 314 C 328 314 336 306 336 295 C 336 284 328 276 315 276 Z" fill="#facc15"/>
+</svg>

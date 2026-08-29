@@ -3,7 +3,8 @@
   "description": "Logistics hub and administrative console for Local Bandi multi services, featuring branch operations, vendor approvals, interactive delivery boy routing portals, and live logistics dispatch systems.",
   "requestFramePermissions": [
     "geolocation",
-    "microphone"
+    "microphone",
+    "camera"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

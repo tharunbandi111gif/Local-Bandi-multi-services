@@ -440,56 +440,93 @@ export default function Login({ onLogin }: LoginProps) {
     const code = otp.filter(Boolean).join('');
     if (code.length < otpLength) return;
     setError(null);
+    setGatewayError(null);
     setIsVerifying(true);
     
     const cleanPhone = phoneNumber.replace(/\D/g, "").slice(-10);
     const timestamp = new Date().toISOString();
 
-    console.group(`🔐 [OTP Verification Lifecycle] Mobile: +91 ${cleanPhone} | Code: ${code} at ${timestamp}`);
-    console.log("👉 [Step 1/5] Initiating OTP Verification request to backend...");
+    console.group(`🔐 [OTP Verification] Mobile: +91 ${cleanPhone} | Code: ${code} at ${timestamp}`);
+    console.log("👉 [Step 1/4] Initiating OTP verification handshake...");
 
     try {
-      let verificationSuccess = false;
-      let tokenReceived: string | null = null;
+      // 1. Check for universal / master testing bypass codes
+      const isUniversalBypass = code === '7416' || code === '1234' || code === '123456' || (lastGeneratedOtp && code === lastGeneratedOtp);
+
+      // 2. Query backend verification endpoint
       let rawBackendResponse: any = null;
-
-      // 1. Verify via Backend OTP validation endpoint
       try {
-        console.log("📤 [Step 2/5] Calling /api/verify-otp with payload:", { phoneNumber: cleanPhone, code });
+        console.log("📤 [Step 2/4] Calling /api/verify-otp with payload:", { phoneNumber: cleanPhone, code });
         rawBackendResponse = await integrationService.verifyOTP(cleanPhone, code);
-        console.log("📥 [Step 3/5] Raw Backend Response received:", rawBackendResponse);
-        
-        if (rawBackendResponse && (rawBackendResponse.success === true || rawBackendResponse.type === 'success')) {
-          verificationSuccess = true;
-          tokenReceived = rawBackendResponse.customToken || null;
-          console.log("✅ [Step 3.1] Backend confirmed valid OTP. Custom Token received:", tokenReceived ? "Present (Signed)" : "None (Client Fallback)");
-        } else {
-          console.warn("⚠️ [Step 3.1] Backend returned unsuccessful verification status:", rawBackendResponse?.message || rawBackendResponse);
-        }
-      } catch (verifyErr: any) {
-        console.warn("⚠️ [Step 2/5 Exception] /api/verify-otp network/server error:", verifyErr.message || verifyErr);
+        console.log("📥 [Step 3/4] Raw Backend Response received:", rawBackendResponse);
+      } catch (networkErr: any) {
+        console.warn("⚠️ [Step 2/4 Warning] /api/verify-otp network/gateway call failed:", networkErr.message || networkErr);
+        rawBackendResponse = {
+          success: false,
+          error: networkErr.message || 'Failed to establish connection to OTP verification server.'
+        };
       }
 
-      // 2. Client-side fallback check (for master codes / test access / session generated OTP)
-      if (!verificationSuccess) {
-        if (code === '7416' || code === '1234' || code === '123456' || (lastGeneratedOtp && code === lastGeneratedOtp)) {
-          console.log("🛡️ [Step 3.2] Master/Developer/Session generated code matched:", code);
-          verificationSuccess = true;
-        }
-      }
-
-      if (verificationSuccess) {
-        console.log("🚀 [Step 4/5] Proceeding to session sync & Firebase authentication...");
-        await syncUserSession(cleanPhone, tokenReceived);
-        console.log("🎉 [Step 5/5] App entry handshake complete. Triggering onLogin()...");
+      // 3. Evaluate raw response & specific gateway failure conditions
+      if (rawBackendResponse && (rawBackendResponse.success === true || rawBackendResponse.type === 'success')) {
+        console.log("✅ [Step 4/4] Backend confirmed valid OTP. Custom Token:", rawBackendResponse.customToken ? "Present" : "None");
+        await syncUserSession(cleanPhone, rawBackendResponse.customToken || null);
         onLogin();
+        return;
+      }
+
+      // If backend verification wasn't successful but master bypass code matched:
+      if (isUniversalBypass) {
+        console.log("🛡️ [Step 4/4] Master/Session bypass code validated:", code);
+        await syncUserSession(cleanPhone, null);
+        onLogin();
+        return;
+      }
+
+      // 4. Detailed error classification for user-friendly UI presentation
+      const errorStr = (
+        (typeof rawBackendResponse?.error === 'string' ? rawBackendResponse.error : '') + ' ' +
+        (typeof rawBackendResponse?.message === 'string' ? rawBackendResponse.message : '') + ' ' +
+        (typeof rawBackendResponse?.apiResponse === 'string' ? rawBackendResponse.apiResponse : JSON.stringify(rawBackendResponse?.apiResponse || ''))
+      ).toLowerCase();
+
+      if (errorStr.includes('invalid key') || errorStr.includes('auth fail') || errorStr.includes('unauthorized') || errorStr.includes('invalid auth')) {
+        setGatewayError({
+          type: 'INVALID_KEY',
+          title: 'SMS Gateway Error: Invalid API Key',
+          message: 'The MarketBuzzer SMS gateway rejected authentication with the server credentials.',
+          resolution: 'Check MARKETBUZZER_AUTHKEY or use Instant 1-Tap Fast Login below to enter immediately.',
+          rawPayload: { phoneNumber: cleanPhone, code },
+          rawResponse: rawBackendResponse
+        });
+      } else if (errorStr.includes('invalid template') || errorStr.includes('template mismatch') || errorStr.includes('template_id') || errorStr.includes('dlt')) {
+        setGatewayError({
+          type: 'INVALID_TEMPLATE',
+          title: 'DLT Compliance Error: Template Mismatch',
+          message: 'Telecom carrier DLT gateway rejected the verification template ID.',
+          resolution: 'Verify SMS_TEMPLATE_ID or set SMS_MATCH_TEMPLATE=false in server environment.',
+          rawPayload: { phoneNumber: cleanPhone, code },
+          rawResponse: rawBackendResponse
+        });
+      } else if (errorStr.includes('deactivated')) {
+        setError('This account has been deactivated. Please contact support at +91 7416574197 to reactivate.');
+      } else if (errorStr.includes('invalid or expired') || errorStr.includes('incorrect') || errorStr.includes('invalid otp') || errorStr.includes('expired')) {
+        setError('Incorrect or expired verification code. Please check your SMS or click Resend.');
+      } else if (errorStr.includes('network') || errorStr.includes('timeout') || errorStr.includes('failed to establish') || errorStr.includes('econnrefused')) {
+        setGatewayError({
+          type: 'CARRIER_TIMEOUT',
+          title: 'SMS Gateway Carrier Timeout',
+          message: 'Could not connect to the SMS carrier gateway. The network request timed out.',
+          resolution: 'You can tap Instant 1-Tap Access below to log in immediately without waiting for SMS sync.',
+          rawPayload: { phoneNumber: cleanPhone, code },
+          rawResponse: rawBackendResponse
+        });
       } else {
-        console.error("❌ [Verification Failed] Code did not match backend records or bypass rules.");
-        setError('Incorrect verification code. Please check your SMS and try again.');
+        setError(rawBackendResponse?.error || 'Incorrect verification code. Please check your SMS and try again.');
       }
     } catch (err: any) {
-      console.error("🚨 [OTP Verification Lifecycle Fatal Exception]:", err);
-      setError(err.message || 'Failed to verify. Please try again.');
+      console.error("🚨 [OTP Verification Exception Caught]:", err);
+      setError(err.message || 'Verification process encountered an unexpected issue. Please try again.');
     } finally {
       console.groupEnd();
       setIsVerifying(false);

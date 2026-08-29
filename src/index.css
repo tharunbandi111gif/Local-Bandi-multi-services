@@ -56,3 +56,39 @@
     box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.4);
   }
 }
+
+/* Banner Slider Hardware Acceleration & Anti-Flicker Optimization */
+#banner-slider-container,
+#banner-slider-container-bottom {
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+  will-change: transform;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  contain: paint;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#banner-slider-container > div,
+#banner-slider-container-bottom > div,
+#banner-slider-container > *,
+#banner-slider-container-bottom > * {
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+  transform-style: preserve-3d;
+  -webkit-transform-style: preserve-3d;
+  will-change: transform;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  contain: paint;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 176px;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+

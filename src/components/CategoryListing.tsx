@@ -45,7 +45,7 @@ export default function CategoryListing({
   const [isListening, setIsListening] = useState(false);
   const [sortBy, setSortBy] = useState<SortOption>('relevance');
   const [showFilters, setShowFilters] = useState(false);
-  const [priceRange, setPriceRange] = useState<[number, number]>([0, 2000]);
+  const [priceRange, setPriceRange] = useState<[number, number]>([0, 100000]);
   const [minRating, setMinRating] = useState(0);
   const [compareItems, setCompareItems] = useState<Product[]>([]);
   const [showComparison, setShowComparison] = useState(false);
@@ -85,7 +85,7 @@ export default function CategoryListing({
       ...editingItem,
       id: docId,
       category: editingItem.category || category.id,
-      branchId: editingItem.branchId || currentBranchId,
+      branchId: editingItem.branchId || currentBranchId || 'khammam_main',
       isAvailable: editingItem.isAvailable ?? true,
       price: Number(editingItem.price) || 0,
       stock: editingItem.stock !== undefined ? Number(editingItem.stock) : 100,
@@ -158,26 +158,109 @@ export default function CategoryListing({
 
   const itemsInCategory = React.useMemo(() => {
     if (!category) return [];
-    const targetCatId = (category.id || '').toLowerCase();
+    const targetCatId = (category.id || '').toLowerCase().trim();
+    const targetCatName = (category.name || '').toLowerCase().trim();
+    const cleanStr = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normTargetId = cleanStr(targetCatId);
+    const normTargetName = cleanStr(targetCatName);
 
     return localInventory.filter(p => {
-      const pCat = (p.category || '').toLowerCase();
+      if (!p || (p as any).deleted === true || (p as any).status === 'deleted') return false;
 
-      const matchesCategory = pCat === targetCatId ||
-        (targetCatId === 'veg' && (pCat === 'vegetables' || pCat === 'veg' || pCat === 'fruits')) ||
-        (targetCatId === 'dairy' && (pCat === 'dairy' || pCat === 'milk' || pCat === 'dairy & eggs')) ||
-        (targetCatId === 'meat' && (pCat === 'meat' || pCat === 'chicken' || pCat === 'fish' || pCat === 'meat & fish')) ||
-        (targetCatId === 'bakery' && (pCat === 'bakery' || pCat === 'ice cream' || pCat === 'icecream')) ||
-        (targetCatId === 'groceries' && (pCat === 'groceries' || pCat === 'snacks' || pCat === 'household')) ||
-        (targetCatId === 'pharmacy' && (pCat === 'pharmacy' || pCat === 'medicine' || pCat === 'health')) ||
-        (targetCatId === 'electronics' && (pCat === 'electronics' || pCat === 'mobiles')) ||
-        (targetCatId === 'services' && (pCat === 'services' || pCat === 'home services'));
+      const pCat = (p.category || '').toLowerCase().trim();
+      const pSubCat = (p.subCategory || '').toLowerCase().trim();
+      const normPCat = cleanStr(pCat);
+      const normPSubCat = cleanStr(pSubCat);
 
-      const matchesBranch = !p.branchId || p.branchId === currentBranchId || currentBranchId === 'khammam_main';
+      // 1. Direct match with ID or Name
+      let matchesCategory = pCat === targetCatId ||
+        normPCat === normTargetId ||
+        pCat === targetCatName ||
+        normPCat === normTargetName ||
+        (normPSubCat && (normPSubCat === normTargetId || normPSubCat === normTargetName));
+
+      // 2. Comprehensive synonym & sub-category matching
+      if (!matchesCategory) {
+        // Vegetables & Fruits & Produce
+        const isVegTarget = normTargetId.includes('veg') || normTargetId.includes('fruit') || normTargetName.includes('veg') || normTargetName.includes('fruit');
+        if (isVegTarget && (normPCat.includes('veg') || normPCat.includes('fruit') || normPCat.includes('produce') || normPCat.includes('organic') || normPSubCat.includes('veg') || normPSubCat.includes('fruit'))) {
+          matchesCategory = true;
+        }
+
+        // Dairy & Milk
+        const isDairyTarget = normTargetId.includes('dairy') || normTargetId.includes('milk') || normTargetName.includes('dairy') || normTargetName.includes('milk');
+        if (isDairyTarget && (normPCat.includes('dairy') || normPCat.includes('milk') || normPCat.includes('curd') || normPCat.includes('ghee') || normPCat.includes('paneer'))) {
+          matchesCategory = true;
+        }
+
+        // Meat & Fish & Eggs & Poultry
+        const isMeatTarget = normTargetId.includes('meat') || normTargetId.includes('chicken') || normTargetId.includes('fish') || normTargetId.includes('egg') || normTargetName.includes('meat') || normTargetName.includes('chicken') || normTargetName.includes('fish');
+        if (isMeatTarget && (normPCat.includes('meat') || normPCat.includes('chicken') || normPCat.includes('fish') || normPCat.includes('mutton') || normPCat.includes('egg') || normPCat.includes('seafood') || normPCat.includes('poultry'))) {
+          matchesCategory = true;
+        }
+
+        // Food & Restaurant & Dining & Fast Food
+        const isFoodTarget = normTargetId.includes('food') || normTargetId.includes('restaurant') || normTargetId.includes('dining') || normTargetName.includes('food') || normTargetName.includes('restaurant');
+        if (isFoodTarget && (normPCat.includes('food') || normPCat.includes('restaurant') || normPCat.includes('biryani') || normPCat.includes('meal') || normPCat.includes('tiffin') || normPCat.includes('snack') || normPCat.includes('hotel') || normPCat.includes('fastfood') || normPCat.includes('curry'))) {
+          matchesCategory = true;
+        }
+
+        // Groceries & Supermarket & Kirana & Household
+        const isGroceryTarget = normTargetId.includes('grocer') || normTargetId.includes('kirana') || normTargetId.includes('household') || normTargetName.includes('grocer') || normTargetName.includes('kirana') || normTargetName.includes('household');
+        if (isGroceryTarget && (normPCat.includes('grocer') || normPCat.includes('kirana') || normPCat.includes('snack') || normPCat.includes('household') || normPCat.includes('provision') || normPCat.includes('staple') || normPCat.includes('dailyneeds'))) {
+          matchesCategory = true;
+        }
+
+        // Bakery & Sweets & Ice Cream
+        const isBakeryTarget = normTargetId.includes('baker') || normTargetId.includes('sweet') || normTargetId.includes('cake') || normTargetId.includes('icecream') || normTargetName.includes('baker') || normTargetName.includes('sweet') || normTargetName.includes('ice cream');
+        if (isBakeryTarget && (normPCat.includes('baker') || normPCat.includes('sweet') || normPCat.includes('cake') || normPCat.includes('icecream') || normPCat.includes('ice cream') || normPCat.includes('dessert') || normPCat.includes('namkeen'))) {
+          matchesCategory = true;
+        }
+
+        // Pharmacy & Health & Hospital
+        const isHealthTarget = normTargetId.includes('pharm') || normTargetId.includes('health') || normTargetId.includes('medic') || normTargetId.includes('hospital') || normTargetName.includes('pharm') || normTargetName.includes('health') || normTargetName.includes('medic');
+        if (isHealthTarget && (normPCat.includes('pharm') || normPCat.includes('health') || normPCat.includes('medic') || normPCat.includes('hospital') || normPCat.includes('drug') || normPCat.includes('wellness'))) {
+          matchesCategory = true;
+        }
+
+        // Electronics & Mobiles
+        const isElectronicsTarget = normTargetId.includes('electr') || normTargetId.includes('mobil') || normTargetName.includes('electr') || normTargetName.includes('mobil');
+        if (isElectronicsTarget && (normPCat.includes('electr') || normPCat.includes('mobil') || normPCat.includes('gadget') || normPCat.includes('smart') || normPCat.includes('appliance'))) {
+          matchesCategory = true;
+        }
+
+        // Home Services & Local Help
+        const isServicesTarget = normTargetId.includes('service') || normTargetId.includes('maid') || normTargetId.includes('mechanic') || normTargetId.includes('repair') || normTargetName.includes('service');
+        if (isServicesTarget && (normPCat.includes('service') || normPCat.includes('maid') || normPCat.includes('mechanic') || normPCat.includes('repair') || normPCat.includes('clean') || normPCat.includes('electric') || normPCat.includes('plumb') || normPCat.includes('work') || normPCat.includes('care'))) {
+          matchesCategory = true;
+        }
+
+        // Natural Crafts & Handicrafts
+        const isCraftTarget = normTargetId.includes('craft') || normTargetId.includes('handicraft') || normTargetName.includes('craft');
+        if (isCraftTarget && (normPCat.includes('craft') || normPCat.includes('art') || normPCat.includes('traditional') || normPCat.includes('handloom'))) {
+          matchesCategory = true;
+        }
+
+        // Broad substring check for custom categories
+        if (!matchesCategory) {
+          if (normTargetId.length >= 3 && (normPCat.includes(normTargetId) || normTargetId.includes(normPCat))) {
+            matchesCategory = true;
+          } else if (normTargetName.length >= 3 && (normPCat.includes(normTargetName) || normTargetName.includes(normPCat))) {
+            matchesCategory = true;
+          }
+        }
+      }
+
+      const matchesBranch = !p.branchId ||
+        p.branchId === 'global' ||
+        p.branchId === currentBranchId ||
+        currentBranchId === 'khammam_main' ||
+        currentBranchId === 'khammam-main' ||
+        currentBranchId === 'all';
 
       return matchesCategory && matchesBranch;
     });
-  }, [localInventory, category?.id, currentBranchId]);
+  }, [localInventory, category?.id, category?.name, currentBranchId]);
 
   const searchResult = React.useMemo(() => {
     if (!searchQuery.trim()) {

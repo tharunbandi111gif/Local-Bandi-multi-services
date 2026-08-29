@@ -58,7 +58,8 @@ import {
   Download,
   FileSpreadsheet,
   Eye,
-  EyeOff
+  EyeOff,
+  Radio
 } from 'lucide-react';
 import { RiderQuickRepliesDrawer, QuickReplyChipsBar } from './RiderQuickRepliesDrawer';
 import { APIProvider, Map, AdvancedMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
@@ -70,6 +71,7 @@ import { RiderLevelHeaderBadge, RiderLevelProgressCard, TipTrendDashboardCard } 
 import SOSAlertIndicator from './common/SOSAlertIndicator';
 import { SOSAlert } from '../types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { RealTimeSyncService, HeartbeatStatus } from '../services/realTimeSyncService';
 import { 
   collection, 
   onSnapshot, 
@@ -909,6 +911,21 @@ export default function DeliveryPartnerApp() {
   const [isSyncingOfflineQueue, setIsSyncingOfflineQueue] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
 
+  // RealTimeSyncService Heartbeat Monitor State
+  const [syncHeartbeat, setSyncHeartbeat] = useState<HeartbeatStatus>(() => RealTimeSyncService.getHeartbeatStatus());
+  const [showHeartbeatDiagnosticsModal, setShowHeartbeatDiagnosticsModal] = useState(false);
+
+  useEffect(() => {
+    const unsubHeartbeat = RealTimeSyncService.subscribeHeartbeat((status) => {
+      setSyncHeartbeat(status);
+    });
+    return unsubHeartbeat;
+  }, []);
+
+  const handleManualHeartbeatResync = () => {
+    RealTimeSyncService.forceResubscribe();
+  };
+
   const [showSyncStatusModal, setShowSyncStatusModal] = useState(false);
   const [showLowConnectivityGuardModal, setShowLowConnectivityGuardModal] = useState(false);
   const [syncQueueItems, setSyncQueueItems] = useState<any[]>([]);
@@ -1681,26 +1698,30 @@ export default function DeliveryPartnerApp() {
     }
   };
 
-  // Real-time Firestore subscriptions
+  // Real-time Firestore subscriptions via RealTimeSyncService
   useEffect(() => {
     if (!user || !riderProfile || appScreen !== 'dashboard') return;
 
     // 1. Subscribe to rider's profile info
-    const unsubRider = onSnapshot(doc(db, 'deliveryPartners', riderProfile.id), (snap) => {
-      if (snap.exists()) {
-        const d = snap.data();
-        setRiderProfile({ id: snap.id, ...d });
-        if (d.status === 'Banned') {
-          setIsBanned(true);
-        } else if (d.status === 'Pending') {
-          setIsApproved(false);
-        } else {
-          setIsApproved(true);
+    const unsubRider = RealTimeSyncService.subscribeDoc<any>(
+      `deliveryPartners/${riderProfile.id}`,
+      (data, meta) => {
+        if (data) {
+          console.log(`🚴 [Rider Profile Sync via RealTimeSyncService] (${meta.fromCache ? 'Cached' : 'Live'}, Latency: ${meta.latencyMs}ms):`, data.name, data.status);
+          setRiderProfile(data);
+          if (data.status === 'Banned') {
+            setIsBanned(true);
+          } else if (data.status === 'Pending') {
+            setIsApproved(false);
+          } else {
+            setIsApproved(true);
+          }
         }
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.GET, `deliveryPartners/${riderProfile.id}`);
       }
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, `deliveryPartners/${riderProfile.id}`);
-    });
+    );
 
     // 2. Subscribe to Available orders in their branch
     const branchId = riderProfile.branchId || 'khammam_main';
@@ -1709,29 +1730,56 @@ export default function DeliveryPartnerApp() {
       where('branchId', '==', branchId),
       where('deliveryPartnerId', '==', null)
     );
-    const unsubAvailable = onSnapshot(qRaw, (snap) => {
-      const orders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as unknown as DeliveryOrder))
-        .filter(o => ['Pending', 'Preparing', 'ReadyForPickup', 'Assigned', 'Ready'].includes(o.status));
-      setAvailableOrders(orders);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'orders');
-    });
+    const unsubAvailable = RealTimeSyncService.subscribeQuery<DeliveryOrder>(
+      `orders_available_${branchId}`,
+      qRaw,
+      (docs, meta) => {
+        const orders = docs.filter(o => ['Pending', 'Preparing', 'ReadyForPickup', 'Assigned', 'Ready'].includes(o.status));
+        console.log(`📦 [Rider Available Orders Sync via RealTimeSyncService] (${meta.fromCache ? 'Cached' : 'Live'} | ${orders.length} assignable orders):`, {
+          fromCache: meta.fromCache,
+          latency: meta.latencyMs,
+          orders: orders.map(o => ({ id: o.id, status: o.status, total: o.total }))
+        });
+        setAvailableOrders(orders);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'orders');
+      }
+    );
 
-    // 3. Subscribe to accepted active deliveries
+    // 3. Subscribe to accepted active deliveries with deep diagnostic status monitoring
     const qActive = query(
       collection(db, 'orders'),
       where('deliveryPartnerId', '==', riderProfile.id)
     );
-    const unsubActive = onSnapshot(qActive, (snap) => {
-      const orders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as unknown as DeliveryOrder));
-      const currentActive = orders.find(o => ['Accepted', 'Preparing', 'ReadyForPickup', 'PickedUp', 'OutForDelivery', 'Ready'].includes(o.status));
-      const pastComp = orders.filter(o => o.status === 'Delivered');
+    const unsubActive = RealTimeSyncService.subscribeQuery<DeliveryOrder>(
+      `orders_active_${riderProfile.id}`,
+      qActive,
+      (docs, meta) => {
+        const currentActive = docs.find(o => ['Accepted', 'Preparing', 'ReadyForPickup', 'PickedUp', 'OutForDelivery', 'Ready'].includes(o.status));
+        const pastComp = docs.filter(o => o.status === 'Delivered');
 
-      setActiveOrder(currentActive || null);
-      setCompletedOrders(pastComp);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'orders');
-    });
+        console.log(`⚡ [Rider Active Order Sync via RealTimeSyncService]: ${docs.length} total orders for rider ${riderProfile.id}`, {
+          activeOrderId: currentActive?.id,
+          activeOrderStatus: currentActive?.status,
+          completedCount: pastComp.length,
+          fromCache: meta.fromCache,
+          latency: meta.latencyMs
+        });
+
+        // Status transition verification logging
+        if (currentActive) {
+          console.log(`🎯 [Rider Active Dispatch Status]: Order #${currentActive.id} is currently "${currentActive.status}" (Partner: ${riderProfile.name})`);
+        }
+
+        setActiveOrder(currentActive || null);
+        setCompletedOrders(pastComp);
+      },
+      (err) => {
+        console.error("❌ [Rider onSnapshot Error]:", err);
+        handleFirestoreError(err, OperationType.LIST, 'orders');
+      }
+    );
 
     return () => {
       unsubRider();
@@ -2108,14 +2156,18 @@ export default function DeliveryPartnerApp() {
       return;
     }
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
-        status: 'Accepted',
-        deliveryPartnerId: riderProfile.id,
-        deliveryPartnerName: riderProfile.name,
-        deliveryPartnerPhone: riderProfile.phone,
-        acceptedAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+      await RealTimeSyncService.validatedUpdateDoc(
+        doc(db, 'orders', orderId), 
+        {
+          status: 'Accepted',
+          deliveryPartnerId: riderProfile.id,
+          deliveryPartnerName: riderProfile.name,
+          deliveryPartnerPhone: riderProfile.phone,
+          acceptedAt: serverTimestamp()
+        },
+        { origin: 'RiderApp' }
+      );
+      console.log(`✅ [Rider Claim Order]: Successfully claimed order #${orderId}. Real-time validatedUpdateDoc dispatched.`);
     } catch (err) {
       alert("Order acceptance failed: " + (err instanceof Error ? err.message : String(err)));
     }
@@ -2154,10 +2206,14 @@ export default function DeliveryPartnerApp() {
     }
 
     try {
-      await updateDoc(doc(db, 'orders', activeOrder.id), {
-        status: 'PickedUp',
-        updatedAt: serverTimestamp()
-      });
+      await RealTimeSyncService.validatedUpdateDoc(
+        doc(db, 'orders', activeOrder.id), 
+        {
+          status: 'PickedUp'
+        },
+        { origin: 'RiderApp' }
+      );
+      console.log(`✅ [Rider Picked Up]: Order #${activeOrder.id} status updated to PickedUp via validatedUpdateDoc.`);
     } catch (err) {
       console.error("Pickup event error:", err);
     }
@@ -2245,15 +2301,19 @@ export default function DeliveryPartnerApp() {
     // STANDARD ONLINE COMPLETION PATHWAY
     try {
       const orderUpdate: any = {
-        status: 'Delivered',
-        updatedAt: serverTimestamp()
+        status: 'Delivered'
       };
       
       if (activeOrder.paymentMethod === 'cod') {
         orderUpdate.paymentStatus = 'Paid (COD Collected)';
       }
 
-      await updateDoc(doc(db, 'orders', activeOrder.id), orderUpdate);
+      await RealTimeSyncService.validatedUpdateDoc(
+        doc(db, 'orders', activeOrder.id),
+        orderUpdate,
+        { origin: 'RiderApp' }
+      );
+      console.log(`✅ [Rider Complete Delivery]: Order #${activeOrder.id} marked Delivered via validatedUpdateDoc.`);
 
       // Add stats payout inside rider doc with tip breakdown
       const updatedEarnings = (riderProfile.earnings || 0) + totalPayout;
@@ -2959,11 +3019,57 @@ export default function DeliveryPartnerApp() {
               <span>Signal Guard</span>
             </button>
 
-            {/* Sync Status Badge */}
-            <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-950/60 border border-white/5 rounded-full mr-1.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${isOnlineNetwork ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'}`} />
-              <span className="text-[8px] font-black uppercase tracking-wider text-slate-400">
-                Sync: <span className={isOnlineNetwork ? 'text-emerald-400' : 'text-rose-400'}>{isOnlineNetwork ? 'Connected' : 'Offline'}</span>
+            {/* RealTimeSyncService Heartbeat Sync Status Indicator with Live Pulse & Diagnostics */}
+            <div 
+              onClick={() => {
+                if (syncHeartbeat.status === 'lagging' || syncHeartbeat.status === 'disconnected') {
+                  handleManualHeartbeatResync();
+                } else {
+                  setShowHeartbeatDiagnosticsModal(true);
+                }
+              }}
+              title={`Firestore RealTimeSyncService Heartbeat: ${syncHeartbeat.status.toUpperCase()} (${syncHeartbeat.activeListenersCount} listeners active, ${syncHeartbeat.latencyMs}ms latency). Tap to ${syncHeartbeat.status === 'lagging' || syncHeartbeat.status === 'disconnected' ? 'force re-subscribe' : 'view connection diagnostics'}.`}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full mr-1.5 cursor-pointer transition-all border select-none ${
+                syncHeartbeat.status === 'connected'
+                  ? 'bg-emerald-950/50 border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/50'
+                  : syncHeartbeat.status === 'lagging'
+                  ? 'bg-amber-950/70 border-amber-500/60 text-amber-300 hover:bg-amber-900/70 animate-pulse shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                  : syncHeartbeat.status === 'resubscribing'
+                  ? 'bg-sky-950/70 border-sky-500/50 text-sky-300'
+                  : 'bg-rose-950/70 border-rose-500/50 text-rose-300'
+              }`}
+            >
+              {syncHeartbeat.status === 'connected' ? (
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500 shadow-[0_0_8px_#10b981]"></span>
+                </span>
+              ) : syncHeartbeat.status === 'lagging' ? (
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-90"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500 shadow-[0_0_8px_#f59e0b]"></span>
+                </span>
+              ) : syncHeartbeat.status === 'resubscribing' ? (
+                <RefreshCw className="w-2.5 h-2.5 text-sky-400 animate-spin" />
+              ) : (
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500 shadow-[0_0_8px_#f43f5e]"></span>
+                </span>
+              )}
+
+              <span className="text-[8px] font-black uppercase tracking-wider">
+                Sync: <span className={
+                  syncHeartbeat.status === 'connected' ? 'text-emerald-400' :
+                  syncHeartbeat.status === 'lagging' ? 'text-amber-400' :
+                  syncHeartbeat.status === 'resubscribing' ? 'text-sky-400' :
+                  'text-rose-400'
+                }>
+                  {syncHeartbeat.status === 'connected' ? `Live (${syncHeartbeat.latencyMs}ms)` :
+                   syncHeartbeat.status === 'lagging' ? `Lagging (${syncHeartbeat.latencyMs}ms ↻)` :
+                   syncHeartbeat.status === 'resubscribing' ? 'Re-syncing...' :
+                   'Offline'}
+                </span>
               </span>
             </div>
 
@@ -3007,26 +3113,57 @@ export default function DeliveryPartnerApp() {
               </span>
             </div>
 
-            {/* Emergency Security ALERT Panic Trigger Button */}
+            {/* Emergency Security ALERT Panic Trigger Button with Active Transmission Pulse Animation */}
             <motion.button
-              onClick={() => handleTriggerSOS(false)}
-              animate={{
+              onClick={() => {
+                if (!isTriggeringSOS) {
+                  handleTriggerSOS(false);
+                } else {
+                  setIsTriggeringSOS(true);
+                }
+              }}
+              animate={isTriggeringSOS && sosStatus !== 'completed' ? {
+                scale: [1, 1.08, 1],
+                boxShadow: [
+                  "0px 0px 0px 0px rgba(244, 63, 94, 0.7)",
+                  "0px 0px 24px 8px rgba(244, 63, 94, 0.95)",
+                  "0px 0px 0px 0px rgba(244, 63, 94, 0.7)"
+                ],
+                backgroundColor: ["#e11d48", "#be123c", "#f43f5e", "#e11d48"]
+              } : {
                 boxShadow: [
                   "0px 0px 0px rgba(239, 68, 68, 0.4)",
                   "0px 0px 14px rgba(239, 68, 68, 0.9)",
                   "0px 0px 0px rgba(239, 68, 68, 0.4)"
                 ]
               }}
-              transition={{
+              transition={isTriggeringSOS && sosStatus !== 'completed' ? {
+                duration: 0.6,
+                repeat: Infinity,
+                ease: "easeInOut"
+              } : {
                 duration: 1.6,
                 repeat: Infinity,
                 ease: "easeInOut"
               }}
-              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white text-[9px] font-black uppercase tracking-widest rounded-full flex items-center gap-1 cursor-pointer border border-rose-500 mr-2"
-              title="Activate Emergency Security SOS Alert"
+              className={`px-3 py-1.5 text-white text-[9px] font-black uppercase tracking-widest rounded-full flex items-center gap-1.5 cursor-pointer border mr-2 transition-all select-none ${
+                isTriggeringSOS && sosStatus !== 'completed'
+                  ? 'bg-rose-600 border-rose-300 ring-2 ring-rose-400/90 shadow-lg shadow-rose-950/60'
+                  : 'bg-rose-600 hover:bg-rose-500 active:scale-95 border-rose-500'
+              }`}
+              title={isTriggeringSOS && sosStatus !== 'completed' ? "Transmitting distress payload actively to sos_alerts" : "Activate Emergency Security SOS Alert"}
             >
-              <ShieldAlert className="w-3 h-3" />
-              <span>SOS</span>
+              {isTriggeringSOS && sosStatus !== 'completed' ? (
+                <>
+                  <Radio className="w-3 h-3 text-amber-200 animate-spin" />
+                  <span className="font-black text-amber-200 tracking-wider">SOS TRANSMITTING...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldAlert className="w-3 h-3" />
+                  <span>SOS</span>
+                </>
+              )}
             </motion.button>
 
             {riderProfile.isOnline && (
@@ -5645,6 +5782,108 @@ export default function DeliveryPartnerApp() {
           isOpenModal={showLowConnectivityGuardModal}
           onCloseModal={() => setShowLowConnectivityGuardModal(false)}
         />
+
+        {/* REAL-TIME SYNC HEARTBEAT DIAGNOSTICS MODAL */}
+        <AnimatePresence>
+          {showHeartbeatDiagnosticsModal && (
+            <div className="fixed inset-0 z-[11000] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+              <motion.div
+                initial={{ scale: 0.95, y: 15, opacity: 0 }}
+                animate={{ scale: 1, y: 0, opacity: 1 }}
+                exit={{ scale: 0.95, y: 15, opacity: 0 }}
+                className="bg-slate-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-6 shadow-2xl space-y-4 text-left font-sans"
+              >
+                {/* Modal Header */}
+                <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center border ${
+                      syncHeartbeat.status === 'connected'
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                        : syncHeartbeat.status === 'lagging'
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                        : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                    }`}>
+                      <Radio className="w-5 h-5 animate-pulse" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-white uppercase tracking-wider">Sync Diagnostics</h3>
+                      <p className="text-[10px] text-slate-400 font-bold">RealTimeSyncService Heartbeat Telemetry</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowHeartbeatDiagnosticsModal(false)}
+                    className="w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer transition-all"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Status Overview Card */}
+                <div className="bg-slate-950/70 border border-white/5 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase">Heartbeat Status</span>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+                      syncHeartbeat.status === 'connected'
+                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                        : syncHeartbeat.status === 'lagging'
+                        ? 'bg-amber-500/15 border-amber-500/30 text-amber-400'
+                        : syncHeartbeat.status === 'resubscribing'
+                        ? 'bg-sky-500/15 border-sky-500/30 text-sky-400'
+                        : 'bg-rose-500/15 border-rose-500/30 text-rose-400'
+                    }`}>
+                      {syncHeartbeat.status}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div className="bg-slate-900/60 p-2.5 rounded-xl border border-white/5">
+                      <span className="text-[9px] text-slate-500 font-bold uppercase block">Measured Latency</span>
+                      <span className="text-xs font-mono font-black text-amber-400">{syncHeartbeat.latencyMs} ms</span>
+                    </div>
+                    <div className="bg-slate-900/60 p-2.5 rounded-xl border border-white/5">
+                      <span className="text-[9px] text-slate-500 font-bold uppercase block">Active Listeners</span>
+                      <span className="text-xs font-mono font-black text-emerald-400">{syncHeartbeat.activeListenersCount} active</span>
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] text-slate-400 flex items-center justify-between border-t border-white/5 pt-2 font-mono">
+                    <span>Last Received Event:</span>
+                    <span className="text-slate-300">
+                      {syncHeartbeat.lastSyncEventAt ? new Date(syncHeartbeat.lastSyncEventAt).toLocaleTimeString() : 'Awaiting data...'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Information Callout */}
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-2xl p-3 flex items-start gap-2.5">
+                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <p className="text-[10.5px] text-slate-300 font-medium leading-relaxed">
+                    The rider terminal uses unified Firestore onSnapshot streams. If cellular signal fluctuates, the service automatically detects lag and re-subscribes stale channels.
+                  </p>
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={() => {
+                      handleManualHeartbeatResync();
+                    }}
+                    className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-950/20"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Force Re-Subscribe Now
+                  </button>
+                  <button
+                    onClick={() => setShowHeartbeatDiagnosticsModal(false)}
+                    className="px-5 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all cursor-pointer border border-white/5"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* BOTTOM NAVIGATION PANEL TAB BAR */}
         <nav className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900 border-t border-white/5 p-2 px-4 flex items-center justify-between pointer-events-auto shadow-2xl">

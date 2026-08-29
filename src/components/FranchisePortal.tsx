@@ -5,8 +5,10 @@ import {
   Plus, Edit, Trash2, Users, Bike, Store, ShoppingBag, 
   TrendingUp, Loader2, LogOut, ArrowRight, Check, X,
   Clock, AlertCircle, RefreshCw, FileText, Sparkles,
-  Heart, Home, Activity, Globe
+  Heart, Home, Activity, Globe, Upload, Camera, Image as ImageIcon, Link as LinkIcon,
+  Package, Tag, Search, Filter, CheckCircle2, ShoppingCart, ToggleLeft, ToggleRight, Layers, Eye, IndianRupee
 } from 'lucide-react';
+import { compressImage } from '../lib/imageUtils';
 import { LanguageCode } from '../types';
 import { LANGUAGES } from '../constants';
 import LanguageSelectorModal from './common/LanguageSelectorModal';
@@ -71,9 +73,10 @@ export default function FranchisePortal() {
 
   // Authenticated franchise session
   const [activeBranch, setActiveBranch] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'categories' | 'members' | 'applications' | 'orders' | 'marriage' | 'real_estate' | 'hospital'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'categories' | 'members' | 'applications' | 'orders' | 'marriage' | 'real_estate' | 'hospital'>('overview');
 
   // Business state
+  const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [vendors, setVendors] = useState<any[]>([]);
   const [riders, setRiders] = useState<any[]>([]);
@@ -86,6 +89,28 @@ export default function FranchisePortal() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [editingOrder, setEditingOrder] = useState<any | null>(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
+
+  // Product Management State
+  const [showProductModal, setShowProductModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<any | null>(null);
+  const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [selectedProductCategory, setSelectedProductCategory] = useState('all');
+  const [selectedProductStock, setSelectedProductStock] = useState<'all' | 'in_stock' | 'out_of_stock'>('all');
+  const [productForm, setProductForm] = useState({
+    name: '',
+    price: '',
+    originalPrice: '',
+    unit: '1 kg',
+    category: 'groceries',
+    subCategory: '',
+    stock: '50',
+    vendorId: 'admin-store',
+    image: '',
+    description: '',
+    isAvailable: true,
+    branchId: 'khammam_main'
+  });
 
   // Hospital Booking Edit State
   const [showHospitalBookingModal, setShowHospitalBookingModal] = useState(false);
@@ -221,6 +246,14 @@ export default function FranchisePortal() {
       }
     );
 
+    const unsubProducts = onSnapshot(
+      collection(db, 'products'),
+      (snap) => {
+        const prods = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+        setProducts(prods);
+      }
+    );
+
     const unsubHospitalPrices = onSnapshot(
       doc(db, 'settings', 'hospital_prices'),
       (snap) => {
@@ -231,6 +264,7 @@ export default function FranchisePortal() {
     );
 
     return () => {
+      unsubProducts();
       unsubVendors();
       unsubRiders();
       unsubApps();
@@ -472,6 +506,123 @@ export default function FranchisePortal() {
       });
     } catch (err: any) {
       alert('Delete failed: ' + err.message);
+    }
+  };
+
+  // Product Catalog Operations
+  const getBranchProducts = () => {
+    if (!activeBranch) return products;
+    const bId = activeBranch.id;
+    return products.filter(p => !p.branchId || p.branchId === 'global' || p.branchId === bId || bId === 'khammam_main' || bId === 'khammam-main');
+  };
+
+  const handleSaveProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!productForm.name || !productForm.price) {
+      alert("Please provide product name and valid selling price.");
+      return;
+    }
+
+    setIsSavingProduct(true);
+    try {
+      const data: any = {
+        name: productForm.name.trim(),
+        price: Number(productForm.price),
+        unit: productForm.unit || '1 kg',
+        category: productForm.category || 'groceries',
+        image: productForm.image || 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
+        description: productForm.description || '',
+        isAvailable: productForm.isAvailable,
+        vendorId: productForm.vendorId || 'admin-store',
+        branchId: productForm.branchId || activeBranch?.id || 'khammam_main',
+        updatedAt: serverTimestamp()
+      };
+
+      if (productForm.originalPrice) {
+        data.originalPrice = Number(productForm.originalPrice);
+      } else {
+        data.originalPrice = null;
+      }
+
+      if (productForm.subCategory) {
+        data.subCategory = productForm.subCategory.trim();
+      } else {
+        data.subCategory = '';
+      }
+
+      if (productForm.stock !== '') {
+        data.stock = Number(productForm.stock);
+      } else {
+        data.stock = null;
+      }
+
+      const activeVendorProfile = vendors.find(v => v.id === productForm.vendorId);
+      if (activeVendorProfile) {
+        data.hotelName = activeVendorProfile.storeName || activeVendorProfile.businessName || activeVendorProfile.fullName || '';
+      }
+
+      if (editingProduct) {
+        await updateDoc(doc(db, 'products', editingProduct.id), data);
+      } else {
+        await addDoc(collection(db, 'products'), {
+          ...data,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      setShowProductModal(false);
+      setEditingProduct(null);
+      setProductForm({
+        name: '', price: '', originalPrice: '', unit: '1 kg', category: 'groceries',
+        subCategory: '', stock: '50', vendorId: 'admin-store', image: '', description: '',
+        isAvailable: true, branchId: activeBranch?.id || 'khammam_main'
+      });
+    } catch (err: any) {
+      console.error("Failed to save product:", err);
+      alert("Failed to save product: " + err.message);
+    } finally {
+      setIsSavingProduct(false);
+    }
+  };
+
+  const handleEditProductClick = (product: any) => {
+    setEditingProduct(product);
+    setProductForm({
+      name: product.name || '',
+      price: product.price !== undefined ? String(product.price) : '',
+      originalPrice: product.originalPrice ? String(product.originalPrice) : '',
+      unit: product.unit || '1 kg',
+      category: product.category || 'groceries',
+      subCategory: product.subCategory || '',
+      stock: product.stock !== undefined && product.stock !== null ? String(product.stock) : '50',
+      vendorId: product.vendorId || 'admin-store',
+      image: product.image || '',
+      description: product.description || '',
+      isAvailable: product.isAvailable ?? true,
+      branchId: product.branchId || activeBranch?.id || 'khammam_main'
+    });
+    setShowProductModal(true);
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    if (!window.confirm("⚠️ Are you sure you want to delete this product listing permanently from the catalog?")) return;
+    try {
+      await deleteDoc(doc(db, 'products', productId));
+    } catch (err: any) {
+      console.error("Failed to delete product:", err);
+      alert("Delete failed: " + err.message);
+    }
+  };
+
+  const handleToggleProductStock = async (productId: string, currentStatus: boolean) => {
+    try {
+      await updateDoc(doc(db, 'products', productId), {
+        isAvailable: !currentStatus,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err: any) {
+      console.error("Failed to toggle stock status:", err);
+      alert("Status update failed: " + err.message);
     }
   };
 
@@ -1248,6 +1399,16 @@ export default function FranchisePortal() {
         </button>
 
         <button
+          onClick={() => setActiveTab('products')}
+          className={`flex-1 min-w-[90px] py-2 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 ${
+            activeTab === 'products' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:bg-white/5'
+          }`}
+        >
+          <Package className="w-3.5 h-3.5 text-amber-400" />
+          <span>Products ({getBranchProducts().length})</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('categories')}
           className={`flex-1 min-w-[90px] py-2 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 ${
             activeTab === 'categories' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:bg-white/5'
@@ -1542,6 +1703,317 @@ export default function FranchisePortal() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* VIEW: BRANCH PRODUCTS & CATALOG */}
+        {activeTab === 'products' && (
+          <div className="space-y-5">
+            {/* Header with Title & Add Product Button */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900 border border-white/5 p-5 rounded-[2rem]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Package className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-sm font-black uppercase tracking-tight text-white">Branch Catalog & Inventory</h3>
+                  <span className="bg-amber-400/10 text-amber-300 border border-amber-400/20 px-2 py-0.5 rounded-full text-[8.5px] font-black uppercase tracking-widest">
+                    {activeBranch?.name || 'Local'}
+                  </span>
+                </div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                  Create, edit pricing, stock availability, and manage live listings in this branch
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  setEditingProduct(null);
+                  setProductForm({
+                    name: '',
+                    price: '',
+                    originalPrice: '',
+                    unit: '1 kg',
+                    category: categories.length > 0 ? categories[0].id : 'groceries',
+                    subCategory: '',
+                    stock: '50',
+                    vendorId: 'admin-store',
+                    image: '',
+                    description: '',
+                    isAvailable: true,
+                    branchId: activeBranch?.id || 'khammam_main'
+                  });
+                  setShowProductModal(true);
+                }}
+                className="bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-slate-950 font-black uppercase tracking-widest text-[9.5px] py-2.5 px-4 rounded-xl flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-lg shadow-amber-400/20 cursor-pointer shrink-0"
+              >
+                <Plus className="w-4 h-4 text-slate-950" />
+                <span>+ Add New Product</span>
+              </button>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div className="bg-slate-900 border border-white/5 p-3.5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3">
+              <div className="relative w-full md:w-80">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search products by title or subcategory..."
+                  value={productSearchQuery}
+                  onChange={(e) => setProductSearchQuery(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 pl-9 pr-8 py-2 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500 placeholder:text-slate-500"
+                />
+                {productSearchQuery && (
+                  <button
+                    onClick={() => setProductSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-xl border border-white/5">
+                  <Filter className="w-3.5 h-3.5 text-slate-400" />
+                  <select
+                    value={selectedProductCategory}
+                    onChange={(e) => setSelectedProductCategory(e.target.value)}
+                    className="bg-transparent text-[10px] font-black uppercase tracking-wider text-slate-300 outline-none cursor-pointer"
+                  >
+                    <option value="all" className="bg-slate-900 text-white">All Categories</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id} className="bg-slate-900 text-white">
+                        {c.name} ({c.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-white/5 text-[9px] font-black uppercase tracking-wider">
+                  <button
+                    onClick={() => setSelectedProductStock('all')}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      selectedProductStock === 'all' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    All ({getBranchProducts().length})
+                  </button>
+                  <button
+                    onClick={() => setSelectedProductStock('in_stock')}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      selectedProductStock === 'in_stock' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    In Stock ({getBranchProducts().filter(p => p.isAvailable !== false).length})
+                  </button>
+                  <button
+                    onClick={() => setSelectedProductStock('out_of_stock')}
+                    className={`px-2.5 py-1 rounded-lg transition-all ${
+                      selectedProductStock === 'out_of_stock' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Out ({getBranchProducts().filter(p => p.isAvailable === false).length})
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Products Grid View */}
+            {(() => {
+              const filtered = getBranchProducts().filter((p) => {
+                const matchesQuery = !productSearchQuery || 
+                  (p.name && p.name.toLowerCase().includes(productSearchQuery.toLowerCase())) ||
+                  (p.category && p.category.toLowerCase().includes(productSearchQuery.toLowerCase())) ||
+                  (p.subCategory && p.subCategory.toLowerCase().includes(productSearchQuery.toLowerCase())) ||
+                  (p.description && p.description.toLowerCase().includes(productSearchQuery.toLowerCase()));
+
+                const matchesCat = selectedProductCategory === 'all' || 
+                  p.category === selectedProductCategory ||
+                  (p.category && p.category.toLowerCase() === selectedProductCategory.toLowerCase());
+
+                const matchesStock = selectedProductStock === 'all' ||
+                  (selectedProductStock === 'in_stock' && p.isAvailable !== false) ||
+                  (selectedProductStock === 'out_of_stock' && p.isAvailable === false);
+
+                return matchesQuery && matchesCat && matchesStock;
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="bg-slate-900 border border-white/5 rounded-[2.5rem] p-12 text-center space-y-3">
+                    <Package className="w-12 h-12 text-slate-600 mx-auto" />
+                    <h4 className="text-sm font-black uppercase tracking-wide text-slate-300">No products matching filters</h4>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-widest max-w-sm mx-auto">
+                      Try resetting search keywords or category filters, or add a new product for this branch.
+                    </p>
+                    <button
+                      onClick={() => {
+                        setEditingProduct(null);
+                        setProductForm({
+                          name: '',
+                          price: '',
+                          originalPrice: '',
+                          unit: '1 kg',
+                          category: categories.length > 0 ? categories[0].id : 'groceries',
+                          subCategory: '',
+                          stock: '50',
+                          vendorId: 'admin-store',
+                          image: '',
+                          description: '',
+                          isAvailable: true,
+                          branchId: activeBranch?.id || 'khammam_main'
+                        });
+                        setShowProductModal(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Create New Product</span>
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {filtered.map((item) => {
+                    const discount = item.originalPrice && item.originalPrice > item.price 
+                      ? Math.round(((item.originalPrice - item.price) / item.originalPrice) * 100)
+                      : null;
+
+                    return (
+                      <div 
+                        key={item.id}
+                        className="bg-slate-900 border border-white/5 rounded-[2rem] overflow-hidden flex flex-col justify-between shadow-sm hover:border-white/15 transition-all group"
+                      >
+                        {/* Image Preview & Overlay Badges */}
+                        <div className="aspect-video relative bg-slate-950 flex items-center justify-center overflow-hidden">
+                          {item.image ? (
+                            <img 
+                              src={item.image} 
+                              alt={item.name} 
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <Package className="w-10 h-10 text-slate-700" />
+                          )}
+
+                          {/* Top Badges */}
+                          <div className="absolute top-2.5 left-2.5 flex flex-wrap gap-1">
+                            <span className="bg-slate-950/90 border border-white/10 text-[8.5px] font-black uppercase tracking-widest text-yellow-400 px-2 py-0.5 rounded-md">
+                              {item.category || 'General'}
+                            </span>
+                            {item.subCategory && (
+                              <span className="bg-indigo-950/90 border border-indigo-400/20 text-[8px] font-bold text-indigo-300 px-2 py-0.5 rounded-md">
+                                {item.subCategory}
+                              </span>
+                            )}
+                          </div>
+
+                          {discount && (
+                            <span className="absolute top-2.5 right-2.5 bg-rose-600 text-white text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md shadow-md">
+                              {discount}% OFF
+                            </span>
+                          )}
+
+                          {/* Out of stock overlay */}
+                          {item.isAvailable === false && (
+                            <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-[2px] flex items-center justify-center">
+                              <span className="px-3 py-1 bg-rose-600/90 text-white rounded-full font-black uppercase tracking-widest text-[9px] border border-rose-400/30">
+                                Out of Stock
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Content Body */}
+                        <div className="p-4 flex-1 flex flex-col justify-between gap-3">
+                          <div className="space-y-1.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <h4 className="text-xs font-black text-white uppercase tracking-tight line-clamp-1 group-hover:text-amber-400 transition-colors">
+                                {item.name}
+                              </h4>
+                            </div>
+
+                            <div className="flex items-baseline gap-2">
+                              <span className="text-sm font-black text-white tracking-tight">
+                                ₹{item.price}
+                              </span>
+                              {item.originalPrice && (
+                                <span className="text-[10px] text-slate-500 line-through font-bold">
+                                  ₹{item.originalPrice}
+                                </span>
+                              )}
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                                / {item.unit || '1 unit'}
+                              </span>
+                            </div>
+
+                            {item.description && (
+                              <p className="text-[9.5px] text-slate-400 line-clamp-2 leading-relaxed">
+                                {item.description}
+                              </p>
+                            )}
+
+                            {/* Tags info */}
+                            <div className="pt-2 border-t border-white/5 flex flex-wrap items-center justify-between gap-1 text-[8.5px] font-bold uppercase tracking-wider text-slate-400">
+                              <span>Vendor: {item.hotelName || (item.vendorId === 'admin-store' ? 'Branch Central' : item.vendorId)}</span>
+                              {item.stock !== undefined && item.stock !== null && (
+                                <span className="text-amber-400">Stock: {item.stock} qty</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Action Footer */}
+                          <div className="pt-2 border-t border-white/5 flex items-center gap-1.5">
+                            {/* Stock Toggle Button */}
+                            <button
+                              onClick={() => handleToggleProductStock(item.id, item.isAvailable !== false)}
+                              className={`px-2.5 py-1.5 rounded-xl text-[8.5px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer ${
+                                item.isAvailable !== false
+                                  ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20'
+                                  : 'bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/20'
+                              }`}
+                              title={item.isAvailable !== false ? 'Mark as Out of Stock' : 'Mark as In Stock'}
+                            >
+                              {item.isAvailable !== false ? (
+                                <>
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  <span>In Stock</span>
+                                </>
+                              ) : (
+                                <>
+                                  <AlertCircle className="w-3 h-3" />
+                                  <span>Out</span>
+                                </>
+                              )}
+                            </button>
+
+                            {/* Edit Button */}
+                            <button
+                              onClick={() => handleEditProductClick(item)}
+                              className="flex-1 py-1.5 bg-slate-950 hover:bg-slate-800 text-white rounded-xl border border-white/10 text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-1 transition-all cursor-pointer"
+                            >
+                              <Edit className="w-3 h-3 text-yellow-400" />
+                              <span>Edit</span>
+                            </button>
+
+                            {/* Delete Button */}
+                            <button
+                              onClick={() => handleDeleteProduct(item.id)}
+                              className="p-1.5 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white rounded-xl border border-rose-500/20 transition-all cursor-pointer"
+                              title="Delete Product"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -2364,15 +2836,77 @@ export default function FranchisePortal() {
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Banner Image URL</label>
-                  <input
-                    type="text"
-                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E"
-                    value={catForm.image}
-                    onChange={(e) => setCatForm({ ...catForm, image: e.target.value })}
-                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
-                  />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Category Image / Banner</label>
+                    {catForm.image && (
+                      <button 
+                        type="button" 
+                        onClick={() => setCatForm({ ...catForm, image: '' })}
+                        className="text-[9px] font-bold text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex gap-3 items-center bg-slate-950 p-3 rounded-2xl border border-white/10">
+                    <div className="w-14 h-14 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                      {catForm.image ? (
+                        <img 
+                          src={catForm.image} 
+                          alt="Category Preview" 
+                          className="w-full h-full object-cover" 
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <ImageIcon className="w-6 h-6 text-slate-600" />
+                      )}
+                    </div>
+
+                    <div className="flex-1 space-y-1.5">
+                      <label className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black uppercase text-[9px] tracking-wider flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload From File</span>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                  try {
+                                    const compressed = await compressImage(reader.result as string, 600, 600, 0.75);
+                                    setCatForm(prev => ({ ...prev, image: compressed }));
+                                  } catch (compErr) {
+                                    setCatForm(prev => ({ ...prev, image: reader.result as string }));
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              } catch (err) {
+                                console.error("File upload error:", err);
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                      <p className="text-[8px] text-slate-400 font-bold uppercase tracking-tight">PNG, JPG, WebP from Gallery or Camera</p>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="Or paste image URL..."
+                      value={catForm.image}
+                      onChange={(e) => setCatForm({ ...catForm, image: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 pl-8 pr-3 py-2.5 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1">
@@ -2818,6 +3352,298 @@ export default function FranchisePortal() {
                     className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-rose-950/40 cursor-pointer"
                   >
                     Save Changes
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ADD / EDIT PRODUCT MODAL */}
+      <AnimatePresence>
+        {showProductModal && (
+          <div className="fixed inset-0 z-[10001] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 border border-white/10 p-6 rounded-[2.5rem] max-w-lg w-full space-y-4 max-h-[92vh] overflow-y-auto"
+            >
+              <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                <div className="flex items-center gap-2">
+                  <Package className="w-5 h-5 text-amber-400" />
+                  <h4 className="text-xs font-black uppercase tracking-wider text-white">
+                    {editingProduct ? '✏️ Edit Product Listing' : '✨ Add New Product to Catalog'}
+                  </h4>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowProductModal(false);
+                    setEditingProduct(null);
+                  }} 
+                  className="text-slate-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveProduct} className="space-y-4 text-left">
+                {/* Product Name */}
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Product Name *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Organic Farm Fresh Tomatoes"
+                    value={productForm.name}
+                    onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                {/* Category & Subcategory */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Directory / Category *</label>
+                    <select
+                      value={productForm.category}
+                      onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500 cursor-pointer uppercase"
+                    >
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id} className="bg-slate-900 text-white">
+                          {c.name} ({c.id})
+                        </option>
+                      ))}
+                      {categories.length === 0 && (
+                        <option value="groceries" className="bg-slate-900 text-white">Groceries (groceries)</option>
+                      )}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Sub-Category (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Vegetables, Snacks"
+                      value={productForm.subCategory}
+                      onChange={(e) => setProductForm({ ...productForm, subCategory: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Price, Strike Price, Unit */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Selling Price (₹) *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      required
+                      placeholder="e.g. 45"
+                      value={productForm.price}
+                      onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Original (MRP) ₹</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="e.g. 60 (Strike)"
+                      value={productForm.originalPrice}
+                      onChange={(e) => setProductForm({ ...productForm, originalPrice: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Unit / Pack Size *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. 1 kg, 500g, 1 pc"
+                      value={productForm.unit}
+                      onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Stock & Vendor Selection */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Stock Quantity</label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="e.g. 100"
+                      value={productForm.stock}
+                      onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Assigned Vendor / Hub</label>
+                    <select
+                      value={productForm.vendorId}
+                      onChange={(e) => setProductForm({ ...productForm, vendorId: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      <option value="admin-store">Lokal Central Hub ({activeBranch?.name || 'Branch'})</option>
+                      {vendors.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.storeName || v.fullName || v.name} ({v.city || activeBranch?.city})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Branch Scope */}
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Branch Visibility Scope</label>
+                  <select
+                    value={productForm.branchId}
+                    onChange={(e) => setProductForm({ ...productForm, branchId: e.target.value })}
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500 cursor-pointer"
+                  >
+                    <option value={activeBranch?.id || 'khammam_main'}>
+                      This Branch ({activeBranch?.name || 'Local'} - {activeBranch?.city || 'City'})
+                    </option>
+                    <option value="global">
+                      🌐 Global Scope (All Branches & Customer Apps)
+                    </option>
+                  </select>
+                </div>
+
+                {/* Product Image Section */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Product Photo / Image</label>
+                    {productForm.image && (
+                      <button 
+                        type="button" 
+                        onClick={() => setProductForm({ ...productForm, image: '' })}
+                        className="text-[9px] font-bold text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                      >
+                        Clear Photo
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex gap-3 items-center bg-slate-950 p-3 rounded-2xl border border-white/10">
+                    <div className="w-16 h-16 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                      {productForm.image ? (
+                        <img 
+                          src={productForm.image} 
+                          alt="Product Preview" 
+                          className="w-full h-full object-cover" 
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <ImageIcon className="w-6 h-6 text-slate-600" />
+                      )}
+                    </div>
+
+                    <div className="flex-1 space-y-1.5">
+                      <label className="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-black uppercase text-[9px] tracking-wider flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Upload Photo from Device</span>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                const reader = new FileReader();
+                                reader.onloadend = async () => {
+                                  try {
+                                    const compressed = await compressImage(reader.result as string, 800, 800, 0.8);
+                                    setProductForm(prev => ({ ...prev, image: compressed }));
+                                  } catch {
+                                    setProductForm(prev => ({ ...prev, image: reader.result as string }));
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              } catch (err) {
+                                console.error("File upload error:", err);
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                      <p className="text-[8px] text-slate-400 font-bold uppercase tracking-tight">Camera photo, PNG, JPG auto-compressed for fast loading</p>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="Or paste web image URL..."
+                      value={productForm.image}
+                      onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
+                      className="w-full bg-slate-950 border border-white/10 pl-8 pr-3 py-2.5 rounded-xl text-xs font-bold text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Description */}
+                <div className="space-y-1">
+                  <label className="text-[8.5px] font-black uppercase tracking-widest text-slate-400 ml-1">Product Description</label>
+                  <textarea
+                    rows={2}
+                    value={productForm.description}
+                    onChange={(e) => setProductForm({ ...productForm, description: e.target.value })}
+                    placeholder="e.g. Fresh organic quality, sourced directly from local farmers."
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-medium text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                {/* Availability Switch */}
+                <label className="flex items-center gap-2.5 p-3 bg-slate-950 border border-white/5 rounded-2xl cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={productForm.isAvailable}
+                    onChange={(e) => setProductForm({ ...productForm, isAvailable: e.target.checked })}
+                    className="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-white/10 focus:ring-indigo-500"
+                  />
+                  <div className="flex-1">
+                    <span className="text-xs font-black uppercase tracking-tight text-white block">Active in Customer App Catalog</span>
+                    <span className="text-[8.5px] text-slate-400">When enabled, customers can view and place orders for this product</span>
+                  </div>
+                </label>
+
+                {/* Buttons */}
+                <div className="flex gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowProductModal(false);
+                      setEditingProduct(null);
+                    }}
+                    className="flex-1 py-3 bg-slate-950 hover:bg-slate-900 border border-white/5 text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingProduct}
+                    className="flex-1 py-3 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-slate-950 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-amber-400/20 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isSavingProduct && <Loader2 className="w-4 h-4 animate-spin text-slate-950" />}
+                    <span>{isSavingProduct ? 'Saving Product...' : editingProduct ? 'Update Product' : 'Add to Catalog'}</span>
                   </button>
                 </div>
               </form>

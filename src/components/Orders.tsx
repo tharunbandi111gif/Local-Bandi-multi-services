@@ -21,8 +21,39 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
   const { user } = useFirebase();
   const t = translations[language].orders || translations['en-IN'].orders;
   const common = translations[language].common || translations['en-IN'].common;
-  const [orders, setOrders] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('cached_user_orders');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      const cached = localStorage.getItem('cached_user_orders');
+      return !(cached && JSON.parse(cached).length > 0);
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    const handleOrderUpdate = (e: any) => {
+      try {
+        const cached = localStorage.getItem('cached_user_orders');
+        if (cached) {
+          setOrders(JSON.parse(cached));
+        }
+      } catch {}
+    };
+    window.addEventListener('orders_updated', handleOrderUpdate);
+    return () => window.removeEventListener('orders_updated', handleOrderUpdate);
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -31,30 +62,42 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
       return;
     }
 
+    let throttleId: any = null;
+
     const q = query(
       collection(db, 'orders'),
       where('userId', '==', user.uid)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().timestamp || doc.data().createdAt?.toDate?.()?.toISOString() || new Date().toISOString(),
-        displayDate: doc.data().timestamp ? new Date(doc.data().timestamp).toLocaleDateString() : 'Just now'
-      }));
-      
-      // Sort client side to avoid index requirement for simple POC
-      const sorted = docs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      
-      setOrders(sorted);
-      setLoading(false);
+      if (throttleId) clearTimeout(throttleId);
+
+      throttleId = setTimeout(() => {
+        const docs = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          date: doc.data().timestamp || doc.data().createdAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+          displayDate: doc.data().timestamp ? new Date(doc.data().timestamp).toLocaleDateString() : 'Just now'
+        }));
+        
+        // Sort client side to avoid index requirement
+        const sorted = docs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        setOrders(sorted);
+        setLoading(false);
+        try {
+          localStorage.setItem('cached_user_orders', JSON.stringify(sorted));
+        } catch {}
+      }, 50);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'orders');
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      if (throttleId) clearTimeout(throttleId);
+      unsubscribe();
+    };
   }, [user]);
 
   useEffect(() => {

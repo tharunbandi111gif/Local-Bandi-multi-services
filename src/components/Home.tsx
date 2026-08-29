@@ -241,12 +241,50 @@ const DocUploadButton = ({ label, isUploaded, onClick }: { label: string, isUplo
   );
 };
 
+
+const PropertyAdminCard = ({ property, setDeleteConfirm }: { property: any; setDeleteConfirm: any }) => {
+  return (
+    <div className="bg-white p-5 rounded-[2.5rem] border border-gray-100 shadow-sm flex items-center justify-between gap-4">
+      <div className="flex items-center gap-4">
+        <div className="w-16 h-16 rounded-2xl bg-gray-100 overflow-hidden flex-shrink-0">
+          {property.images && property.images[0] ? (
+            <img src={property.images[0]} alt={property.title} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gray-50">
+              <Building2 className="w-6 h-6" />
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm font-black text-gray-900">{property.title || 'Untitled Property'}</h4>
+            <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
+              {property.type || 'Property'}
+            </span>
+          </div>
+          <p className="text-xs font-bold text-gray-500 mt-0.5">‚Çπ{property.price?.toLocaleString('en-IN') || property.price || '0'}</p>
+          <p className="text-[9px] font-medium text-gray-400">{property.location || 'Khammam'}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setDeleteConfirm({ type: 'property', id: property.id, name: property.title })}
+          className="p-3 bg-rose-50 text-rose-500 rounded-2xl hover:bg-rose-500 hover:text-white transition-all"
+          title="Delete Property"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const Skeleton = ({ className, ...props }: { className: string; [key: string]: any }) => (
   <div className={`animate-pulse bg-gray-100 rounded-2xl ${className}`} {...props}></div>
 );
 
 
-export default function Home({ 
+export function Home({ 
   location, 
   language: propLanguage, 
   onCategoryClick, 
@@ -328,9 +366,23 @@ export default function Home({
       console.warn("Home screen failed syncing deals of the day:", err);
     });
 
+    const unsubPromos = onSnapshot(collection(db, 'promoCodes'), (snap) => {
+      if (!snap.empty) {
+        const cloudPromos = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter((p: any) => p.status !== 'inactive');
+        if (cloudPromos.length > 0) {
+          setPromoCodes(cloudPromos);
+        }
+      }
+    }, (err) => {
+      console.warn("Home screen failed syncing promo codes:", err);
+    });
+
     return () => {
       unsubSupport();
       unsubDeals();
+      unsubPromos();
     };
   }, []);
 
@@ -652,15 +704,36 @@ export default function Home({
   ]);
 
   useEffect(() => {
-    // Sync banners from Firestore if they exist
+    // Real-time synchronization of promotional banners from Firestore Admin Console
     const unsub = onSnapshot(collection(db, 'banners'), (snap) => {
       if (!snap.empty) {
-        const cloudBanners = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        const top = cloudBanners.filter((b: any) => b.type === 'top');
-        const bottom = cloudBanners.filter((b: any) => b.type === 'bottom');
-        if (top.length > 0) setTopBanners(top as any);
-        if (bottom.length > 0) setBottomBanners(bottom as any);
+        const cloudBanners = snap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .filter((b: any) => b && b.status !== 'inactive' && b.status !== 'scheduled' && b.status !== 'hidden');
+
+        const normalizeBanner = (b: any) => ({
+          ...b,
+          img: b.img || b.image || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800&q=80',
+          image: b.image || b.img || 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800&q=80',
+          sub: b.sub || b.description || '',
+          description: b.description || b.sub || '',
+          color: b.color || 'bg-slate-900',
+          cta: b.cta || 'Order Now',
+          route: b.route || b.categoryId || 'restaurant'
+        });
+
+        const top = cloudBanners.filter((b: any) => !b.type || b.type === 'top' || b.type === 'both' || b.position === 'top');
+        const bottom = cloudBanners.filter((b: any) => b.type === 'bottom' || b.type === 'both' || b.position === 'bottom');
+
+        if (top.length > 0) {
+          setTopBanners(top.map(normalizeBanner) as any);
+        }
+        if (bottom.length > 0) {
+          setBottomBanners(bottom.map(normalizeBanner) as any);
+        }
       }
+    }, (err) => {
+      console.warn("Banner sync error:", err);
     });
     return () => unsub();
   }, []);
@@ -671,8 +744,193 @@ export default function Home({
     localStorage.removeItem('admin_last_view');
   }, [isAdmin]);
 
+  
+  // Top Banner Drag-to-Dismiss state
+  const [isTopBannerDismissed, setIsTopBannerDismissed] = useState(false);
+
+  // Real-time distance calculation between Store and Customer
+  const storeLat = currentBranch?.lat || currentBranch?.coordinates?.lat || 17.2473;
+  const storeLng = currentBranch?.lng || currentBranch?.coordinates?.lng || 80.1514;
+  const customerLat = userProfile?.coordinates?.lat || (location?.toLowerCase().includes('wyra') ? 17.2000 : location?.toLowerCase().includes('kothagudem') ? 17.5500 : 17.2550);
+  const customerLng = userProfile?.coordinates?.lng || 80.1600;
+
+  const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return (R * c).toFixed(1);
+  };
+
+  const realtimeDistance = calculateDistanceKm(storeLat, storeLng, customerLat, customerLng);
+  const estimatedDeliveryMinutes = Math.max(10, Math.round(Number(realtimeDistance) * 4 + 8));
+
+  // Firebase Click-Tracking & Engagement Logger
+  const logBannerEngagement = async (banner: any, eventType = 'click') => {
+    try {
+      await addDoc(collection(db, 'banner_analytics'), {
+        bannerId: banner?.id || 'banner_promo',
+        bannerTitle: banner?.title || 'Promotional Banner',
+        bannerSub: banner?.sub || '',
+        eventType,
+        timestamp: serverTimestamp(),
+        userId: user?.uid || userProfile?.id || 'guest',
+        userPhone: userProfile?.phone || null,
+        location: location || 'Khammam',
+        distanceKm: realtimeDistance,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'mobile',
+        source: 'banner-slider-container'
+      });
+    } catch (err) {
+      console.warn('Banner engagement analytics error:', err);
+    }
+  };
+
+  const handleBannerClick = (banner: any) => {
+    logBannerEngagement(banner, 'click');
+    if (banner.action) {
+      banner.action();
+    } else if (banner.productId) {
+      const product = localInventory.find(p => p.id === banner.productId);
+      if (product) onProductClick(product);
+    } else if (banner.categoryId) {
+      const cat = categories.find(c => c.id === banner.categoryId) || CATEGORIES.find(c => c.id === banner.categoryId);
+      if (cat) integratedCategoryClick(cat);
+    } else if (banner.route) {
+      onNavigate(banner.route as any);
+    }
+  };
+
+  const handleNavigateToCustomer = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    logBannerEngagement({ id: 'nav-btn', title: 'Navigate to Customer' }, 'navigate_click');
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${storeLat},${storeLng}&destination=${customerLat},${customerLng}&travelmode=driving`;
+    window.open(mapsUrl, '_blank');
+  };
+
   const [activeTopBanner, setActiveTopBanner] = useState(0);
   const [activeBottomBanner, setActiveBottomBanner] = useState(0);
+  const [topSlideDirection, setTopSlideDirection] = useState<number>(1);
+  const [bottomSlideDirection, setBottomSlideDirection] = useState<number>(1);
+
+  const nextTopBanner = () => {
+    if (topBanners.length <= 1) return;
+    setTopSlideDirection(1);
+    setActiveTopBanner(prev => (prev + 1) % topBanners.length);
+  };
+
+  const prevTopBanner = () => {
+    if (topBanners.length <= 1) return;
+    setTopSlideDirection(-1);
+    setActiveTopBanner(prev => (prev - 1 + topBanners.length) % topBanners.length);
+  };
+
+  const nextBottomBanner = () => {
+    if (bottomBanners.length <= 1) return;
+    setBottomSlideDirection(1);
+    setActiveBottomBanner(prev => (prev + 1) % bottomBanners.length);
+  };
+
+  const prevBottomBanner = () => {
+    if (bottomBanners.length <= 1) return;
+    setBottomSlideDirection(-1);
+    setActiveBottomBanner(prev => (prev - 1 + bottomBanners.length) % bottomBanners.length);
+  };
+
+  const bannerSlideVariants = {
+    enter: (direction: number) => ({
+      x: bannerSliderConfig.bannerAnimationEnabled ? (direction > 0 ? '100%' : '-100%') : 0,
+      opacity: bannerSliderConfig.bannerAnimationEnabled ? (bannerSliderConfig.transitionType === 'fade' ? 0 : 1) : 1,
+    }),
+    center: {
+      zIndex: 1,
+      x: 0,
+      opacity: 1,
+    },
+    exit: (direction: number) => ({
+      zIndex: 0,
+      x: bannerSliderConfig.bannerAnimationEnabled ? (direction > 0 ? '-100%' : '100%') : 0,
+      opacity: bannerSliderConfig.bannerAnimationEnabled ? (bannerSliderConfig.transitionType === 'fade' ? 0 : 1) : 1,
+    }),
+  };
+  const [bannerSliderConfig, setBannerSliderConfig] = useState<{
+    autoSlideEnabled: boolean;
+    bannerAnimationEnabled: boolean;
+    intervalMs: number;
+    transitionType: 'fade' | 'slide' | 'none';
+    pauseOnHover: boolean;
+    pauseOnTouch: boolean;
+  }>({
+    autoSlideEnabled: true,
+    bannerAnimationEnabled: true,
+    intervalMs: 6000,
+    transitionType: 'slide',
+    pauseOnHover: true,
+    pauseOnTouch: true
+  });
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'banner_config'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setBannerSliderConfig(prev => ({
+          ...prev,
+          autoSlideEnabled: data.autoSlideEnabled !== false,
+          bannerAnimationEnabled: data.bannerAnimationEnabled !== false,
+          intervalMs: typeof data.intervalMs === 'number' && data.intervalMs >= 1000 ? data.intervalMs : 6000,
+          transitionType: data.transitionType || 'slide',
+          pauseOnHover: data.pauseOnHover !== false,
+          pauseOnTouch: data.pauseOnTouch !== false
+        }));
+      }
+    }, (err) => {
+      console.warn("Banner config sync error:", err);
+    });
+    return () => unsub();
+  }, []);
+
+  // ResizeObserver for dynamic slide recalculations, transform resets, and orientation drift prevention
+  useEffect(() => {
+    const topSliderEl = document.getElementById('banner-slider-container');
+    const bottomSliderEl = document.getElementById('banner-slider-container-bottom');
+
+    const handleResize = (entries: ResizeObserverEntry[]) => {
+      for (const entry of entries) {
+        const target = entry.target as HTMLElement;
+        if (!target) continue;
+        // Dynamically recalculate boundary metrics and reset transform matrix
+        target.style.transform = 'translateZ(0)';
+        // Reset child slides transform to prevent drift
+        const slides = target.querySelectorAll<HTMLElement>('#banner-slider-container > div, #banner-slider-container-bottom > div');
+        slides.forEach(slide => {
+          slide.style.transform = 'translateZ(0)';
+        });
+      }
+    };
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(handleResize);
+      if (topSliderEl) resizeObserver.observe(topSliderEl);
+      if (bottomSliderEl) resizeObserver.observe(bottomSliderEl);
+    }
+
+    const handleOrientationChange = () => {
+      const topEl = document.getElementById('banner-slider-container');
+      const bottomEl = document.getElementById('banner-slider-container-bottom');
+      if (topEl) topEl.style.transform = 'translateZ(0)';
+      if (bottomEl) bottomEl.style.transform = 'translateZ(0)';
+    };
+    window.addEventListener('orientationchange', handleOrientationChange);
+
+    return () => {
+      if (resizeObserver) resizeObserver.disconnect();
+      window.removeEventListener('orientationchange', handleOrientationChange);
+    };
+  }, []);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   const [showPanelSelection, setShowPanelSelection] = useState(false);
@@ -836,20 +1094,37 @@ export default function Home({
     if (!db || isRefreshing) return;
     setIsRefreshing(true);
     try {
-      const branchId = currentBranchId || 'khammam-main';
-      const { getDocs, query, collection, where, limit } = await import('firebase/firestore');
-      const productsQ = query(collection(db, 'products'), where('branchId', '==', branchId), limit(100));
+      const branchId = currentBranchId || 'khammam_main';
+      const { getDocs, query, collection, limit } = await import('firebase/firestore');
+      const productsQ = query(collection(db, 'products'), limit(500));
       const snap = await getDocs(productsQ);
-      const cloudItems = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product | Service));
+      const cloudItems = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as Product | Service))
+        .filter(item => item && (item as any).deleted !== true && (item as any).status !== 'deleted');
       
       const { PRODUCTS, SERVICES } = await import('../constants');
+      const matchesBranch = (item: any) => {
+        return (
+          !item.branchId ||
+          item.branchId === 'global' ||
+          item.branchId === branchId ||
+          branchId === 'khammam_main' ||
+          branchId === 'khammam-main' ||
+          branchId === 'all'
+        );
+      };
+
       const merged = new Map<string, any>();
       [...PRODUCTS, ...SERVICES].forEach(item => {
-        if (!item.branchId || item.branchId === branchId) {
+        if (matchesBranch(item)) {
           merged.set(item.id, item);
         }
       });
-      cloudItems.forEach(item => merged.set(item.id, item));
+      cloudItems.forEach(item => {
+        if (matchesBranch(item)) {
+          merged.set(item.id, item);
+        }
+      });
       setLocalInventory(Array.from(merged.values()));
       
       // Minimum duration for pleasant spinner transition feel
@@ -1012,28 +1287,35 @@ export default function Home({
     try {
       const categoriesCol = collection(db, 'categories');
       unsubCategories = onSnapshot(categoriesCol, (categoriesSnapshot) => {
-        const loadedCategories = categoriesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
         const categoryMap = new Map<string, Category>();
         
-        // 1. Add base CATEGORIES
-        CATEGORIES.forEach(c => { if (c && c.id) categoryMap.set(c.id, c); });
-        
-        // 2. Add Firestore loaded categories
-        loadedCategories.forEach(c => {
-          if (c && c.id) {
-            const existing = categoryMap.get(c.id);
-            categoryMap.set(c.id, {
-              ...existing,
-              ...c,
-              name: c.name || existing?.name || c.id
-            });
-          }
-        });
+        if (categoriesSnapshot.empty) {
+          // If Firestore categories collection is empty, load defaults
+          CATEGORIES.forEach(c => { if (c && c.id) categoryMap.set(c.id, c); });
+        } else {
+          // Authoritative live categories from Firestore (Excluding deleted or inactive ones)
+          const loadedCategories = categoriesSnapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() } as any))
+            .filter(c => c && c.status !== 'inactive' && c.deleted !== true);
 
-        // 3. Auto-discover from local inventory
+          loadedCategories.forEach(c => {
+            if (c && c.id) {
+              categoryMap.set(c.id, {
+                id: c.id,
+                name: c.name || c.id,
+                icon: c.icon || 'ShoppingBag',
+                color: c.color || 'bg-emerald-50',
+                image: c.image || c.img || '',
+                ...c
+              });
+            }
+          });
+        }
+
+        // Auto-discover from local inventory if items have category not yet mapped
         if (localInventory && Array.isArray(localInventory)) {
           localInventory.forEach(item => {
-            if (item && item.category && !categoryMap.has(item.category)) {
+            if (item && item.category && !categoryMap.has(item.category) && (item as any).deleted !== true) {
               const formattedName = item.category.charAt(0).toUpperCase() + item.category.slice(1).replace(/_/g, ' ');
               categoryMap.set(item.category, {
                 id: item.category,
@@ -2590,28 +2872,21 @@ export default function Home({
     }
   };
 
-  const handleBannerClick = (banner: any) => {
-    if (banner.action) {
-      banner.action();
-    } else if (banner.productId) {
-      const product = localInventory.find(p => p.id === banner.productId);
-      if (product) onProductClick(product);
-    } else if (banner.categoryId) {
-      const category = categories.find(c => c.id === banner.categoryId) || CATEGORIES.find(c => c.id === banner.categoryId);
-      if (category) integratedCategoryClick(category);
-    }
-  };
+
 
   const [isBannerPaused, setIsBannerPaused] = useState(false);
 
   useEffect(() => {
-    if (isBannerPaused) return;
+    if (isBannerPaused || !bannerSliderConfig.autoSlideEnabled || !bannerSliderConfig.bannerAnimationEnabled || bannerSliderConfig.transitionType === 'none') return;
+    const interval = bannerSliderConfig.intervalMs || 6000;
     const timer = setInterval(() => {
-      setActiveTopBanner(prev => (prev === topBanners.length - 1 ? 0 : prev + 1));
-      setActiveBottomBanner(prev => (prev === bottomBanners.length - 1 ? 0 : prev + 1));
-    }, 6000); // 6 seconds as requested
+      setTopSlideDirection(1);
+      setActiveTopBanner(prev => (topBanners.length > 0 ? (prev + 1) % topBanners.length : 0));
+      setBottomSlideDirection(1);
+      setActiveBottomBanner(prev => (bottomBanners.length > 0 ? (prev + 1) % bottomBanners.length : 0));
+    }, interval);
     return () => clearInterval(timer);
-  }, [topBanners.length, bottomBanners.length, isBannerPaused]);
+  }, [topBanners.length, bottomBanners.length, isBannerPaused, bannerSliderConfig.autoSlideEnabled, bannerSliderConfig.bannerAnimationEnabled, bannerSliderConfig.transitionType, bannerSliderConfig.intervalMs]);
 
   const [adminPassword, setAdminPassword] = useState('Founder@2026');
   const [newPassword, setNewPassword] = useState('');
@@ -2870,7 +3145,14 @@ export default function Home({
       const isNational = NATIONAL_CATEGORIES.includes(item.category);
       
       // Hyperlocal restriction: Filter by branchId if not a national category
-      if (!isNational && item.branchId && item.branchId !== currentBranchId) return false;
+      const matchesBranch = !item.branchId ||
+        item.branchId === 'global' ||
+        item.branchId === currentBranchId ||
+        currentBranchId === 'khammam_main' ||
+        currentBranchId === 'khammam-main' ||
+        currentBranchId === 'all';
+
+      if (!isNational && !matchesBranch) return false;
 
       // Apply Filters
       const itemRating = (item as any).rating || 0;
@@ -9256,2252 +9538,25 @@ export default function Home({
 
               <div className="bg-indigo-600 p-6 rounded-[2.5rem] text-white shadow-xl shadow-indigo-100">
                 <div className="flex items-center gap-3 mb-4">
-                   <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-                     <TrendingUp className="w-6 h-6" />
-                   </div>
-                   <h3 className="font-black text-lg">Weekly Goal</h3>
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between text-[10px] font-black uppercase mb-1">
-                      <span>42 / 50 Trips Completed</span>
-                      <span>84%</span>
-                    </div>
-                    <div className="h-2 bg-white/20 rounded-full overflow-hidden">
-                      <div className="h-full bg-yellow-400 w-[84%]"></div>
-                    </div>
+                  <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+                    <TrendingUp className="w-6 h-6" />
                   </div>
-                  <p className="text-[9px] font-bold text-indigo-100 leading-relaxed italic">
-                    Complete 8 more trips this week to unlock a bonus of ‚Çπ500!
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-6 bg-white border-t border-gray-100">
-               <div className="bg-blue-50 p-4 rounded-3xl flex gap-3 border border-blue-100">
-                  <ShieldCheck className="w-5 h-5 text-blue-600" />
-                  <p className="text-[10px] font-bold text-blue-800 leading-relaxed italic">
-                    Safety First: Always wear your helmet and follow traffic rules. 
-                    Contact Founder for any support.
-                  </p>
-               </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Notifications Drawer */}
-      <AnimatePresence>
-        {showNotifications && (
-          <div className="fixed inset-0 z-[160] flex justify-end">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowNotifications(false)}
-              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            />
-            <motion.div 
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="relative w-full max-w-sm bg-gray-50 h-full shadow-2xl flex flex-col"
-            >
-              <header className="p-6 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
-                <div>
-                  <h2 className="text-xl font-black text-gray-900 italic tracking-tighter leading-none">Notifications</h2>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Updates & Announcements</p>
-                </div>
-                <button 
-                  onClick={() => setShowNotifications(false)}
-                  className="p-3 bg-gray-100 rounded-2xl text-gray-500"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </header>
-
-              <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                {notifications.length > 0 ? (
-                  notifications.map(notif => (
-                    <div 
-                      key={notif.id}
-                      onClick={() => {
-                        setNotifications(prev => prev.map(n => n.id === notif.id ? {...n, read: true} : n));
-                      }}
-                      className={`p-5 rounded-[2rem] border bg-white shadow-sm transition-all relative overflow-hidden group ${notif.read ? 'border-transparent opacity-80' : 'border-indigo-100'}`}
-                    >
-                      {!notif.read && (
-                        <div className="absolute top-0 right-0 p-2">
-                           <div className="w-2 h-2 bg-indigo-500 rounded-full shadow-sm shadow-indigo-100" />
-                        </div>
-                      )}
-                      <div className="flex gap-4">
-                        <div className={`w-12 h-12 rounded-2xl shrink-0 flex items-center justify-center transition-colors ${notif.read ? 'bg-gray-50 text-gray-400' : 'bg-indigo-50 text-indigo-600'}`}>
-                          <Bell className="w-5 h-5" />
-                        </div>
-                        <div className="flex-1">
-                          <h4 className={`text-sm font-black italic mb-1 ${notif.read ? 'text-gray-600' : 'text-gray-900'}`}>{notif.title}</h4>
-                          <p className="text-[11px] font-medium text-gray-500 leading-relaxed">{notif.message}</p>
-                          <p className="text-[8px] font-bold text-gray-400 uppercase italic mt-3">
-                            {typeof notif.timestamp === 'number' || typeof notif.timestamp === 'string' ? (
-                              !isNaN(new Date(notif.timestamp).getTime()) ? (
-                                `${new Date(notif.timestamp).toLocaleDateString()} at ${new Date(notif.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
-                              ) : 'Recently'
-                            ) : ((notif.timestamp as any)?.toDate ? (
-                              `${(notif.timestamp as any).toDate().toLocaleDateString()} at ${(notif.timestamp as any).toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
-                            ) : 'Recently')}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="py-20 text-center">
-                    <div className="w-20 h-20 bg-white rounded-[2.5rem] flex items-center justify-center mx-auto mb-6 shadow-sm border border-gray-100">
-                      <BellOff className="w-8 h-8 text-gray-200" />
-                    </div>
-                    <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">No new notifications</p>
-                  </div>
-                )}
-              </div>
-
-              {notifications.length > 0 && (
-                <div className="p-6 bg-white border-t border-gray-100 shrink-0">
-                  <button 
-                    onClick={() => setNotifications(prev => prev.map(n => ({...n, read: true})))}
-                    className="w-full py-4 bg-gray-50 text-gray-400 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-gray-100 transition-colors"
-                  >
-                    Mark all as read
-                  </button>
-                </div>
-              )}
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Header */}
-      <header className="px-6 pt-12 pb-4 flex items-center justify-between sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl z-[100] border-b border-gray-50/50 dark:border-slate-800/50">
-        <div className="flex items-center gap-3">
-          <motion.button 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={() => {}} // Disabled admin shortcut
-            className="hidden"
-          >
-            <ShieldCheck className={`w-5 h-5 ${isAdmin ? 'text-gray-900' : 'text-yellow-400'}`} />
-          </motion.button>
-          <motion.div 
-            whileHover={{ scale: 1.08 }}
-            whileTap={{ scale: 0.92 }}
-            className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-md overflow-hidden border-2 border-yellow-400 p-0.5 select-none cursor-pointer group transition-all" 
-            onClick={handleProtectedLogoInteraction}
-            title="Local Bandi Logo"
-            id="app-header-logo-button"
-          >
-             <img src="/src/assets/images/local_bandi_logo_1785784124975.jpg" className="w-full h-full object-cover rounded-lg group-hover:scale-110 transition-transform duration-200" alt="Local Bandi Logo" />
-          </motion.div>
-          <div 
-            className="flex flex-col cursor-pointer"
-            onClick={() => onNavigate('location')}
-          >
-            <motion.div 
-              whileTap={{ x: 2 }}
-              className="flex items-center gap-1 text-yellow-600 dark:text-yellow-500"
-            >
-              <MapPin className="w-3.5 h-3.5 fill-current" />
-              <span className="text-[10px] font-black uppercase tracking-[0.1em]">{t.deliverTo}</span>
-              <ChevronDown className="w-3 h-3" />
-            </motion.div>
-            <span className="font-extrabold text-gray-900 dark:text-white truncate max-w-[140px] text-xs font-display tracking-tight leading-none mt-0.5">{typeof location === 'string' ? location : ((location as any)?.address || (location as any)?.area || (location as any)?.city || (location as any)?.name || 'Select Location')}</span>
-            <div className="flex flex-wrap items-center gap-1.5 mt-1 max-w-[200px]">
-              {currentBranch ? (
-                currentBranch.status === 'Active' ? (
-                  <div className="flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-500/20 shadow-sm">
-                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                    <span className="text-[7px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest leading-none">
-                      {currentBranch.name}: Open
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1 bg-rose-50 dark:bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-100 dark:border-rose-500/20 shadow-sm animate-pulse">
-                    <div className="w-1.5 h-1.5 bg-rose-500 rounded-full" />
-                    <span className="text-[7px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-widest leading-none">
-                      {currentBranch.name}: Offline
-                    </span>
-                  </div>
-                )
-              ) : (
-                <div className="flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-100 dark:border-emerald-500/20">
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-                  <span className="text-[7px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest leading-none">Real-time Sync Active</span>
-                </div>
-              )}
-              {isMaintenanceMode && (
-                <div className="flex items-center gap-1 bg-rose-50 dark:bg-rose-500/10 px-2 py-0.5 rounded-full">
-                  <div className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-pulse" />
-                  <span className="text-[7px] font-black text-rose-500 dark:text-rose-400 uppercase tracking-widest">Maintenance</span>
-                </div>
-              )}
-              <AppSpeedSecurityBadge />
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
-            className="flex items-center gap-2 bg-gray-50 dark:bg-slate-800 p-1.5 pr-3 rounded-2xl border border-gray-100 dark:border-slate-700 cursor-pointer"
-            onClick={() => onNavigate('profile')}
-          >
-            <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-lg shadow-indigo-100 dark:shadow-none uppercase font-black text-[10px] overflow-hidden whitespace-nowrap">
-              {userProfile?.photo ? (
-                <img src={userProfile.photo} className="w-full h-full object-cover" alt="Profile" referrerPolicy="no-referrer" />
-              ) : (
-                userProfile?.name?.charAt(0) || user?.displayName?.charAt(0) || 'U'
-              )}
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[9px] font-black text-gray-900 dark:text-white leading-none mb-0.5 truncate max-w-[60px]">
-                {userProfile?.name?.split(' ')[0] || user?.displayName?.split(' ')[0] || 'User'}
-              </span>
-              <span className="text-[8px] font-bold text-gray-400 leading-none">‚Çπ{walletBalance}</span>
-            </div>
-          </motion.div>
-
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
-            className="relative"
-            onClick={() => setShowLangModal(true)}
-            title="Change Language (24 Languages)"
-          >
-            <div className="bg-amber-50 dark:bg-amber-900/20 p-2.5 rounded-2xl relative border border-amber-200/60 dark:border-amber-800/40 cursor-pointer flex items-center gap-1">
-              <Globe className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-              <span className="text-[9px] font-black uppercase text-amber-700 dark:text-amber-300 tracking-tight">
-                {LANGUAGES.find(l => l.code === language)?.native?.substring(0, 3) || 'EN'}
-              </span>
-            </div>
-          </motion.div>
-
-          {/* ‚ö° 40-SEC MARKETING QUIZ HEADER BUTTON */}
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
-            className="relative cursor-pointer"
-            onClick={() => setShowMarketingQuizModal(true)}
-            title="Play 40s Speed Quiz & Win Coupons!"
-            id="customer-header-40s-quiz-btn"
-          >
-            <div className="bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 px-2.5 py-2 rounded-2xl relative border border-amber-300 shadow-sm flex items-center gap-1 font-black text-[9px] uppercase tracking-wider">
-              <Zap className="w-3.5 h-3.5 fill-slate-950 animate-bounce" />
-              <span className="hidden sm:inline">40s Quiz</span>
-            </div>
-          </motion.div>
-
-          {/* üé∞ SPIN & WIN LUCKY WHEEL HEADER BUTTON (SUNDAYS ONLY) */}
-          {isTodaySunday && (
-            <motion.div 
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.9 }}
-              className="relative cursor-pointer"
-              onClick={() => setShowSpinWheelModal(true)}
-              title="100% Offer Get (Sunday Special)"
-              id="customer-header-spin-wheel-btn"
-            >
-              <div className="bg-gradient-to-r from-yellow-400 via-amber-400 to-amber-500 text-slate-950 px-2.5 py-2 rounded-2xl relative border border-amber-300 shadow-sm flex items-center gap-1 font-black text-[9px] uppercase tracking-wider">
-                <Sparkles className="w-3.5 h-3.5 fill-slate-950 animate-spin text-slate-950" />
-                <span className="hidden sm:inline">100% Offer Get</span>
-              </div>
-            </motion.div>
-          )}
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
-            className="relative"
-            onClick={() => setShowCustomerCare(true)}
-          >
-            <div className="bg-indigo-50 dark:bg-slate-800 p-3 rounded-2xl relative border border-indigo-100 dark:border-slate-700 cursor-pointer">
-              <Headphones className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-            </div>
-          </motion.div>
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
-            className="relative"
-            onClick={() => setShowNotifications(true)}
-          >
-            <div className="bg-gray-50 dark:bg-slate-800 p-3 rounded-2xl relative border border-gray-100 dark:border-slate-700 cursor-pointer">
-              <Bell className="w-5 h-5 text-gray-700 dark:text-gray-300" />
-              {notifications.some(n => !n.read) && (
-                <motion.div 
-                  animate={{ scale: [1, 1.2, 1] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                  className="absolute top-2.5 right-2.5 w-2.5 h-2.5 bg-rose-500 border-2 border-white rounded-full shadow-sm"
-                ></motion.div>
-              )}
-            </div>
-          </motion.div>
-          {(isSuperAdmin || userProfile?.role === 'branchAdmin') && (
-            <motion.div 
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.9 }}
-              className="relative"
-              onClick={() => onNavigate('branchManager' as any)}
-            >
-              <div className="bg-rose-50 dark:bg-rose-900/20 p-3 rounded-2xl relative border border-rose-100 dark:border-rose-900/50 cursor-pointer group">
-                <LayoutDashboard className="w-5 h-5 text-rose-600 dark:text-rose-400 group-hover:rotate-12 transition-transform" />
-              </div>
-            </motion.div>
-          )}
-          {userProfile?.role === 'vendor' && (
-            <motion.div 
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.9 }}
-              className="relative"
-              onClick={() => onNavigate('vendor', userProfile.vendorId || vendors.find(v => v.phone === userProfile.phone?.replace('+91', ''))?.id)}
-            >
-              <div className="bg-emerald-50 dark:bg-emerald-900/20 p-3 rounded-2xl relative border border-emerald-100 dark:border-emerald-900/50 cursor-pointer group">
-                <Store className="w-5 h-5 text-emerald-600 dark:text-emerald-400 group-hover:rotate-12 transition-transform" />
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full"></span>
-              </div>
-            </motion.div>
-          )}
-          <motion.div 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
-            className="hidden xs:block"
-            onClick={async () => {
-              if (navigator.share) {
-                try {
-                  await navigator.share({
-                    title: 'Local Bandi Multi Services',
-                    text: 'Join specifically for Khammam! Check out this local app.',
-                    url: window.location.href,
-                  });
-                } catch (err) {
-                  console.log('Share failed:', err);
-                }
-              } else {
-                navigator.clipboard.writeText(window.location.href);
-                alert('App link copied! Send it to your friends for real-time testing.');
-              }
-            }}
-          >
-            <div className="bg-yellow-50 p-3 rounded-2xl relative border border-yellow-100 cursor-pointer">
-              <Share2 className="w-5 h-5 text-yellow-600" />
-            </div>
-          </motion.div>
-          <motion.button 
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.9 }}
-            onClick={() => onNavigate('profile')} 
-            className="bg-gray-50 p-3 rounded-2xl active:scale-95 transition-all border border-gray-100 flex items-center justify-center"
-          >
-            <User className="w-5 h-5 text-gray-700" />
-          </motion.button>
-        </div>
-      </header>
-
-      <div 
-        ref={scrollContainerRef}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        className="flex-1 overflow-y-auto px-6 space-y-8 pb-32 font-sans relative"
-      >
-        {/* Pull-to-refresh Indicator */}
-        <AnimatePresence>
-          {((isPulling && pullY > 10) || isRefreshing) && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: isRefreshing ? 64 : pullY, opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 350, damping: 25 }}
-              className="flex items-center justify-center overflow-hidden w-full shrink-0 relative mt-4"
-            >
-              <div className="flex items-center gap-2 bg-white border border-yellow-200 px-4 py-2 rounded-full shadow-lg shadow-yellow-100/50 z-50">
-                <Loader2 className={`w-3.5 h-3.5 text-yellow-500 ${isRefreshing ? 'animate-spin' : ''}`} style={{ transform: isRefreshing ? undefined : `rotate(${pullProgress * 3.6}deg)` }} />
-                <span className="text-[8px] font-black uppercase text-gray-500 tracking-widest leading-none">
-                  {isRefreshing ? 'Syncing...' : pullProgress >= 100 ? 'Release to Sync' : `Pull to Refresh`}
-                </span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-
-        {/* 1. Top Banners - VISUAL ENTRY POINT */}
-        {!searchQuery && (
-          <div 
-            className="relative h-44 rounded-[2.5rem] overflow-hidden shadow-xl shadow-gray-100 mt-6 group bg-gray-900"
-            onMouseEnter={() => setIsBannerPaused(true)}
-            onMouseLeave={() => setIsBannerPaused(false)}
-          >
-            <AnimatePresence initial={false}>
-              {topBanners.map((banner, i) => i === activeTopBanner && (
-                 <motion.div
-                   key={banner.id}
-                   onClick={() => handleBannerClick(banner)}
-                   drag="x"
-                   dragConstraints={{ left: 0, right: 0 }}
-                   onTouchStart={() => setIsBannerPaused(true)}
-                   onTouchEnd={() => setIsBannerPaused(false)}
-                   onDragStart={() => setIsBannerPaused(true)}
-                   onDragEnd={(_, info) => {
-                     setIsBannerPaused(false);
-                     const swipeThreshold = 50;
-                     if (info.offset.x > swipeThreshold) {
-                       setActiveTopBanner(prev => (prev - 1 + topBanners.length) % topBanners.length);
-                     } else if (info.offset.x < -swipeThreshold) {
-                       setActiveTopBanner(prev => (prev + 1) % topBanners.length);
-                     }
-                   }}
-                   className={`absolute inset-0 ${banner.color} p-6 flex items-center justify-between overflow-hidden cursor-pointer active:scale-[0.98] transition-all touch-pan-y`}
-                   initial={{ x: '100%' }}
-                   animate={{ x: 0 }}
-                   exit={{ x: '-100%' }}
-                   transition={{ duration: 0.6, ease: [0.32, 0.72, 0, 1] }}
-                 >
-                  {banner.img && (
-                    <div className="absolute inset-0 opacity-20 bg-cover bg-center" style={{ backgroundImage: `url(${banner.img})` }}></div>
-                  )}
-                  <div className="relative z-10 flex-1">
-                    <h3 className="text-xl font-black text-white mb-0.5 leading-tight">{getLocalizedBannerTitle(banner.title, language)}</h3>
-                    <p className="text-white/90 font-bold text-xs uppercase tracking-wider">{getLocalizedBannerSub(banner.sub, language)}</p>
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleBannerClick(banner);
-                      }}
-                      className="mt-3 bg-white text-gray-900 px-5 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest w-max active:scale-95 transition-all shadow-lg"
-                    >
-                      {(banner as any).cta || 'Shop Now'}
-                    </button>
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-
-            {/* Manual navigation arrows */}
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveTopBanner(prev => (prev - 1 + topBanners.length) % topBanners.length);
-              }}
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/40 transition-all active:scale-90 hover:bg-white/60"
-              aria-label="Previous banner"
-            >
-              <ChevronLeft className="w-6 h-6 shadow-sm" />
-            </button>
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                setActiveTopBanner(prev => (prev + 1) % topBanners.length);
-              }}
-              className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/40 transition-all active:scale-90 hover:bg-white/60"
-              aria-label="Next banner"
-            >
-              <ChevronRight className="w-6 h-6 shadow-sm" />
-            </button>
-
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
-              {topBanners.map((_, i) => (
-                <div key={i} className={`h-1 rounded-full transition-all ${activeTopBanner === i ? 'w-5 bg-white' : 'w-1 bg-white/40'}`}></div>
-              ))}
-            </div>
-          </div>
-        )}
-
-
-
-        {/* 2. Search Bar - INTEGRATED DISCOVERY */}
-        {branches && branches.length > 0 && (
-          <div className="flex items-center gap-2 overflow-x-auto py-3 px-1 scrollbar-none mb-3 text-[10px] font-black uppercase tracking-widest text-[#0F172A] dark:text-gray-300">
-            <span className="text-[10px] text-[#475569] shrink-0 font-extrabold flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5 text-indigo-500 fill-indigo-100" /> Nearby Branches:
-            </span>
-            {branches.map((b: any) => {
-              const isActive = b.status === 'Active';
-              const isCurrent = b.id === currentBranchId;
-              return (
-                <div 
-                  key={b.id} 
-                  className={`flex items-center gap-1.5 px-3 py-1.5 bg-white/90 dark:bg-slate-900 border rounded-full shrink-0 transition-all shadow-sm ${
-                    isCurrent 
-                      ? 'border-indigo-400 bg-indigo-50/50 text-indigo-800' 
-                      : isActive 
-                        ? 'border-emerald-100 text-emerald-700' 
-                        : 'border-rose-100 text-rose-600'
-                  }`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-rose-400'}`} />
-                  <span className="font-sans font-black tracking-tight text-[10px]">
-                    {b.name} {isCurrent && <span className="text-[8px] bg-indigo-500 text-white rounded px-1 py-0.5 ml-1 font-mono">ACTIVE</span>}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="relative z-[90]">
-          <form onSubmit={handleSearchSubmit}>
-            <Search className={`absolute left-5 top-1/2 -translate-y-1/2 w-6 h-6 transition-all duration-300 ${isFocused ? 'text-yellow-600 scale-110 shadow-sm' : 'text-gray-500'}`} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => setIsFocused(true)}
-              placeholder={t.searchPlaceholder}
-              className={`w-full bg-white py-6 pl-14 pr-24 rounded-[2rem] font-black text-lg outline-none border-2 transition-all shadow-xl shadow-yellow-50/5 ${
-                isFocused 
-                  ? 'border-yellow-400 bg-white shadow-2xl shadow-yellow-100 -translate-y-0.5 text-gray-900 ring-4 ring-yellow-400/10' 
-                  : 'border-transparent text-gray-800'
-              } placeholder:text-gray-400 placeholder:font-black placeholder:text-base placeholder:tracking-tight`}
-            />
-          </form>
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            {searchQuery && (
-              <button 
-                onClick={() => setSearchQuery('')}
-                className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
-                id="clear-search"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-            <button
-              onClick={handleVoiceSearch}
-              className={`p-2 rounded-xl transition-all ${isListening ? 'bg-rose-100 text-rose-500 animate-pulse' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
-              id="voice-search-trigger"
-            >
-              {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-            </button>
-          </div>
-
-          <AnimatePresence>
-            {isFocused && (
-              <motion.div
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute top-full left-0 right-0 mt-2 bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden"
-              >
-                {searchQuery ? (
-                  <div className="p-4 space-y-6 max-h-[400px] overflow-y-auto scrollbar-hide">
-                    {smartSearchResult.didYouMean && (
-                      <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-3 flex items-center justify-between text-xs">
-                        <span className="font-medium text-yellow-900">
-                          Did you mean <strong className="font-black underline">{smartSearchResult.didYouMean}</strong>?
-                        </span>
-                        <button
-                          onClick={() => setSearchQuery(smartSearchResult.didYouMean!)}
-                          className="px-3 py-1 bg-yellow-400 text-gray-900 rounded-xl font-bold text-[10px] uppercase tracking-wider shadow-sm"
-                        >
-                          Correct
-                        </button>
-                      </div>
-                    )}
-
-                    {filteredCategories.length > 0 && (
-                      <div>
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-2">Recommended Categories</p>
-                        <div className="flex flex-wrap gap-2">
-                          {filteredCategories.slice(0, 4).map(cat => (
-                            <button
-                              key={cat.id}
-                              onClick={() => {
-                                integratedCategoryClick(cat);
-                                saveRecentSearch(searchQuery);
-                                setIsFocused(false);
-                              }}
-                              className="px-4 py-2 bg-gray-50 hover:bg-yellow-50 rounded-xl text-xs font-bold text-gray-700 hover:text-yellow-700 transition-colors flex items-center gap-2"
-                            >
-                              <div className={`w-2 h-2 rounded-full ${cat.color}`}></div>
-                              {getLocalizedCategoryName(cat, language)}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {filteredProducts.length > 0 && (
-                      <div>
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 px-2">Top Results</p>
-                        <div className="space-y-1">
-                          {filteredProducts.slice(0, 5).map(prod => (
-                            <button
-                              key={prod.id}
-                              onClick={() => {
-                                onProductClick(prod);
-                                saveRecentSearch(searchQuery);
-                                setIsFocused(false);
-                              }}
-                              className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-2xl transition-colors text-left group"
-                            >
-                              <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-gray-100">
-                                {prod.image && <img src={prod.image} className="w-full h-full object-cover" alt={prod.name} />}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-bold text-gray-900 group-hover:text-yellow-600 transition-colors truncate">{getLocalizedProductName(prod.name, language)}</p>
-                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-normal">In {getLocalizedCategoryName(prod.category, language)}</p>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <p className="text-xs font-black text-gray-900">‚Çπ{prod.price}</p>
-                                {(prod as any).unit && <p className="text-[8px] font-bold text-gray-400 uppercase">Per {(prod as any).unit}</p>}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {filteredCategories.length === 0 && filteredProducts.length === 0 && (
-                      <div className="py-8 px-4 text-center bg-gray-50 rounded-2xl">
-                        <Search className="w-8 h-8 text-gray-200 mx-auto mb-2" />
-                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">No matching results</p>
-                        <button 
-                          onClick={() => setShowCustomerCare?.(true)}
-                          className="px-6 py-3 bg-white text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-indigo-100 shadow-sm"
-                        >
-                          Ask Support about "{searchQuery}"
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="p-6 space-y-6">
-                    {recentSearches.length > 0 && (
-                      <div>
-                        <div className="flex items-center justify-between mb-4">
-                          <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest">Recent Searches</h3>
-                          <button 
-                            onClick={() => {
-                              setRecentSearches([]);
-                              localStorage.removeItem('recentSearches');
-                            }}
-                            className="text-[10px] font-bold text-gray-400 hover:text-rose-500 uppercase transition-colors"
-                          >
-                            Clear All
-                          </button>
-                        </div>
-                        <div className="space-y-2">
-                          {recentSearches.map((term, i) => (
-                            <button
-                              key={i}
-                              onClick={() => setSearchQuery(term)}
-                              className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-xl transition-colors text-left group"
-                            >
-                              <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-white transition-colors">
-                                <Search className="w-3 h-3 text-gray-400" />
-                              </div>
-                              <span className="text-xs font-bold text-gray-600 group-hover:text-gray-900">{term}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div>
-                      <div className="flex items-center gap-2 mb-4">
-                        <TrendingUp className="w-4 h-4 text-yellow-600" />
-                        <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest">{t.trendingSearches}</h3>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {trendingSearches.map((term) => (
-                          <button
-                            key={term}
-                            onClick={() => setSearchQuery(term)}
-                            className="px-4 py-2 bg-gray-50 hover:bg-yellow-100 rounded-xl text-xs font-bold text-gray-600 hover:text-gray-900 transition-colors border border-transparent hover:border-yellow-200"
-                          >
-                            {term}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div className="p-3 bg-gray-50 border-t border-gray-100 flex justify-between items-center">
-                  <p className="text-[8px] font-black text-gray-400 uppercase tracking-[0.2em] px-2 italic">Local Intelligent Search</p>
-                  <button 
-                    onClick={() => setIsFocused(false)}
-                    className="text-[10px] font-black text-gray-900 uppercase tracking-widest bg-white px-3 py-1.5 rounded-lg active:scale-95 transition-all shadow-sm"
-                  >
-                    Close
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {isFocused && (
-            <div 
-              className="fixed inset-0 bg-black/5 z-[-1] backdrop-blur-[2px]" 
-              onClick={() => setIsFocused(false)}
-            />
-          )}
-        </div>
-
-        {/* 3. Categories Grid - PRIMARY NAVIGATION (SHOWN FIRST) */}
-        {!searchQuery && (
-          <>
-            <section>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Explore Categories</h3>
-                <button className="text-yellow-600 font-bold text-xs">View All</button>
-              </div>
-              <motion.div 
-                initial={false}
-                animate="visible"
-                className="grid grid-cols-4 gap-y-8 gap-x-4"
-              >
-                {(() => {
-                  const priorityIds = ['driving_school', 'beauty_parlour', 'bakery', 'care', 'marriage', 'jobs'];
-                  const featuredList = [
-                    ...categories.filter(c => priorityIds.includes(c.id)),
-                    ...categories.filter(c => !priorityIds.includes(c.id))
-                  ];
-                  return featuredList.map((cat) => {
-                    const Icon = IconMap[cat.icon] || ShoppingBag;
-                    const depthColors: Record<string, string> = {
-                    'bg-pink-100': 'bg-pink-400',
-                    'bg-blue-100': 'bg-blue-400',
-                    'bg-blue-50': 'bg-blue-300',
-                    'bg-emerald-100': 'bg-emerald-400',
-                    'bg-emerald-50': 'bg-emerald-300',
-                    'bg-rose-100': 'bg-rose-400',
-                    'bg-yellow-100': 'bg-yellow-400',
-                    'bg-purple-100': 'bg-purple-400',
-                    'bg-orange-100': 'bg-orange-400',
-                    'bg-cyan-100': 'bg-cyan-400',
-                    'bg-indigo-100': 'bg-indigo-400',
-                    'bg-green-100': 'bg-green-400',
-                    'bg-amber-100': 'bg-amber-400',
-                    'bg-gray-100': 'bg-gray-400',
-                  };
-                  const depthColor = depthColors[cat.color] || 'bg-gray-400';
-
-                  return (
-                    <motion.div
-                      variants={{
-                        hidden: { opacity: 0, y: 20 },
-                        visible: { opacity: 1, y: 0 }
-                      }}
-                      key={cat.id}
-                      onClick={() => integratedCategoryClick(cat)}
-                      className="flex flex-col items-center gap-3 group relative perspective-500 cursor-pointer"
-                    >
-                      <div className="relative transform-gpu transition-all duration-300 group-hover:rotate-x-12 group-hover:rotate-y-[-12deg]">
-                        <div className={`absolute inset-0 translate-y-2 translate-x-1 rounded-[2rem] transition-transform group-active:translate-y-1 group-active:translate-x-0.5 ${depthColor} opacity-30 blur-[2px]`} />
-                        <div className={`absolute inset-0 translate-y-1 rounded-[2rem] ${depthColor} shadow-inner opacity-60`} />
-                        <div className={`relative w-16 h-16 ${cat.color} rounded-[2rem] flex items-center justify-center 
-                          shadow-md transition-all duration-200 
-                          group-active:translate-y-1 
-                          group-hover:-translate-y-1
-                          border-t-2 border-l border-white/80
-                          bg-gradient-to-br from-white/40 via-transparent to-black/5
-                          overflow-hidden`}
-                        >
-                          <div className="relative w-full h-full flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-                             {cat.image ? (
-                               <img 
-                                 src={cat.image} 
-                                 className="w-full h-full object-cover" 
-                                 referrerPolicy="no-referrer" 
-                                 alt="" 
-                                 loading="lazy"
-                               />
-                             ) : (
-                               <Icon className="w-8 h-8 text-gray-800 drop-shadow-[0_2px_4px_rgba(0,0,0,0.2)]" />
-                             )}
-                          </div>
-                        </div>
-                      </div>
-                      <span className="text-[10px] font-black text-center leading-tight uppercase tracking-widest text-gray-900 group-hover:text-indigo-600 transition-colors px-1 h-6 flex items-center">
-                        {getLocalizedCategoryName(cat, language)}
-                      </span>
-                    </motion.div>
-                  );
-                });
-              })()}
-            </motion.div>
-          </section>
-
-            {/* üéÅ CUSTOMER ATTRACTION: GOLDEN HOUR FLASH DROP + MYSTERY SCRATCH CARD + NEIGHBORHOOD GROUP POOL (RENDERED AFTER CATEGORIES) */}
-            <CommunityPoolBanner 
-              onOpenScratchCard={() => setShowScratchCardModal(true)} 
-              onOpenFlashDeal={() => setShowFlashDropModal(true)}
-            />
-
-            {/* ‚ö° 40-SEC SPEED QUIZ MARKETING CAMPAIGN BANNER */}
-            <MarketingQuizFloatingBanner onOpenQuiz={() => setShowMarketingQuizModal(true)} />
-
-            {/* üé∞ SPIN & WIN LUCKY WHEEL SUNDAY SPECIAL PROMO BANNER (SUNDAYS ONLY) */}
-            {isTodaySunday && (
-              <div className="mb-4 p-4 rounded-3xl bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 shadow-xl relative overflow-hidden border border-amber-300">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 relative z-10">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-slate-950 flex items-center justify-center text-amber-400 shadow-md border border-amber-400/40 shrink-0">
-                      <Sparkles className="w-6 h-6 animate-spin text-amber-400 fill-amber-400" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className="bg-slate-950 text-amber-400 text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full font-mono border border-amber-400/30">
-                          üî• SUNDAY SPECIAL LIVE
-                        </span>
-                        <span className="bg-slate-950/80 text-white text-[9px] font-black uppercase px-2 py-0.5 rounded-full font-mono border border-white/20">
-                          First 1,000 Members ‚Ä¢ {sundaySpinCount}/1000 Claimed
-                        </span>
-                      </div>
-                      <h3 className="text-base font-black uppercase tracking-tight text-slate-950 leading-tight">
-                        100% OFFER GET
-                      </h3>
-                      <p className="text-[10px] text-slate-900 font-extrabold leading-tight mt-0.5">
-                        Every Sunday Special! No order required for the first 1,000 members. Spin the lucky wheel to get your offer!
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setShowSpinWheelModal(true)}
-                    className="w-full sm:w-auto px-5 py-2.5 bg-slate-950 hover:bg-slate-900 text-amber-400 text-xs font-black uppercase tracking-wider rounded-2xl shadow-lg border border-amber-400/40 transition-all active:scale-95 shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <span>SPIN NOW</span>
-                    <ChevronRight className="w-4 h-4 text-amber-400" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Emergency Quick Actions */}
-            <section className="bg-rose-50 p-6 rounded-[2.5rem] border border-rose-100 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-rose-500 rounded-xl text-white">
-                    <ShieldCheck className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-sm font-black text-rose-900 uppercase tracking-widest">Emergency & Support</h3>
-                </div>
-                <span className="text-[8px] font-black bg-rose-200 text-rose-700 px-2 py-1 rounded-full uppercase tracking-widest animate-pulse">24/7 Available</span>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-3">
-                <button 
-                  onClick={() => setShowHospitalOP(true)}
-                  className="bg-white p-4 rounded-3xl border border-rose-100 flex flex-col items-center gap-2 shadow-sm active:scale-95 transition-all"
-                >
-                  <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
-                    <Stethoscope className="w-5 h-5" />
-                  </div>
-                  <p className="text-[10px] font-black text-rose-900 uppercase">Hospital OP</p>
-                </button>
-                <button 
-                  onClick={() => {
-                    const confirmSecondary = window.confirm(`Call Primary: ${supportInfo.phone}?\n\nIf no response within 2 days, use our secondary support: ${supportInfo.secondaryPhone}`);
-                    if (confirmSecondary) {
-                      window.open(`tel:${supportInfo.phone}`);
-                    }
-                  }}
-                  className="bg-white p-4 rounded-3xl border border-rose-100 flex flex-col items-center gap-2 shadow-sm active:scale-95 transition-all"
-                >
-                  <div className="w-10 h-10 bg-white text-emerald-600 border border-emerald-100 rounded-xl flex items-center justify-center">
-                    <Phone className="w-5 h-5" />
-                  </div>
-                  <p className="text-[10px] font-black text-rose-900 uppercase leading-none">Call Support</p>
-                  <p className="text-[7px] font-bold text-gray-400 uppercase leading-none">24/7 Priority</p>
-                </button>
-              </div>
-            </section>
-
-          </>
-        )}
-
-        {searchQuery ? (
-          <div className="space-y-8 animate-in fade-in duration-300">
-            {smartSearchResult.didYouMean && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-4 flex items-center justify-between text-xs">
-                <span className="font-medium text-yellow-900">
-                  Showing results for spelling correction: <strong className="font-black underline">{smartSearchResult.didYouMean}</strong>
-                </span>
-                <button
-                  onClick={() => setSearchQuery(smartSearchResult.didYouMean!)}
-                  className="px-4 py-1.5 bg-yellow-400 text-gray-900 rounded-xl font-bold text-xs uppercase tracking-wider shadow-sm"
-                >
-                  Search Corrected
-                </button>
-              </div>
-            )}
-
-            {filteredCategories.length > 0 && (
-              <section>
-                <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-4">Categories Found</h3>
-                <div className="grid grid-cols-4 gap-y-6 gap-x-4">
-                  {filteredCategories.map((cat) => {
-                    const Icon = IconMap[cat.icon] || ShoppingBag;
-                    return (
-                      <div
-                        key={cat.id}
-                        onClick={() => integratedCategoryClick(cat)}
-                        className="flex flex-col items-center gap-2 group active:scale-90 transition-transform cursor-pointer"
-                      >
-                        <div className={`w-14 h-14 ${cat.color} rounded-2xl flex items-center justify-center overflow-hidden`}>
-                          {cat.image ? (
-                            <img src={cat.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" alt="" />
-                          ) : (
-                            <Icon className="w-7 h-7 text-gray-800" />
-                          )}
-                        </div>
-                        <span className="text-[10px] font-black text-center leading-tight uppercase tracking-wide text-gray-500 line-clamp-1">
-                          {getLocalizedCategoryName(cat, language)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            )}
-
-            {filteredProducts.length > 0 ? (
-              <section>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest">Products & Services</h3>
-                  <SearchFilters />
-                </div>
-                <div className="space-y-4">
-                  {filteredProducts.map((prod) => (
-                    <button
-                      key={prod.id}
-                      onClick={() => onProductClick(prod)}
-                      className="w-full bg-white p-4 rounded-3xl border border-gray-100 flex gap-4 text-left active:scale-[0.98] transition-all"
-                    >
-                      {prod.image && <img src={prod.image} className="w-20 h-20 rounded-2xl object-cover" alt={prod.name} />}
-                      <div className="flex-1">
-                        <p className="font-extrabold text-gray-900 mb-1">{getLocalizedProductName(prod.name, language)}</p>
-                        <p className="text-xs text-gray-500 line-clamp-2 mb-2">{getLocalizedProductDescription(prod.description, language)}</p>
-                        <div className="flex items-center gap-2">
-                           <p className="text-sm font-black text-yellow-600">‚Çπ{prod.price}</p>
-                           {('unit' in prod && prod.unit) && <span className="text-[10px] font-bold text-gray-400 uppercase truncate">/ {prod.unit}</span>}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ) : filteredCategories.length === 0 && (
-              <div className="py-20 text-center">
-                <div className="bg-gray-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Search className="w-8 h-8 text-gray-300" />
-                </div>
-                <p className="font-bold text-gray-400">No results found for "{searchQuery}"</p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <>
-            {/* 0. Lokal Specialties & Digital Engines */}
-            <section className="space-y-4">
-              <div className="flex items-center justify-between px-1">
-                <div>
-                  <h3 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-yellow-500 fill-yellow-500 animate-pulse" />
-                    Lokal Specialty Hub
-                  </h3>
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Premium digital engines for Khammam</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3.5">
-                {/* Marriage Bureau Card */}
-                <motion.div 
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => onNavigate('marriageBureau')}
-                  className="bg-indigo-50/50 hover:bg-indigo-50 border border-indigo-100/60 p-5 rounded-[2rem] flex flex-col justify-between text-left cursor-pointer transition-all shadow-sm"
-                >
-                  <div>
-                    <div className="w-10 h-10 bg-indigo-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-md shadow-indigo-100 dark:shadow-none">
-                      <HeartHandshake className="w-5 h-5" />
-                    </div>
-                    <h4 className="text-sm font-black text-indigo-950 mb-1">Marriage Bureau</h4>
-                    <p className="text-[10px] font-semibold text-indigo-700/80 leading-snug">Verified local bios and traditional matches.</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-5 text-[9px] font-black uppercase tracking-wider text-indigo-600">
-                    <span>Enter Bureau</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </div>
-                </motion.div>
-
-                {/* Real Estate Card */}
-                <motion.div 
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => onNavigate('realEstate')}
-                  className="bg-sky-50/50 hover:bg-sky-50 border border-sky-100/60 p-5 rounded-[2rem] flex flex-col justify-between text-left cursor-pointer transition-all shadow-sm"
-                >
-                  <div>
-                    <div className="w-10 h-10 bg-sky-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-md shadow-sky-100 dark:shadow-none">
-                      <Building2 className="w-5 h-5" strokeWidth={2.5} />
-                    </div>
-                    <h4 className="text-sm font-black text-sky-950 mb-1">Real Estate</h4>
-                    <p className="text-[10px] font-semibold text-sky-700/80 leading-snug">Browse local properties, plots, and homes.</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-5 text-[9px] font-black uppercase tracking-wider text-sky-600">
-                    <span>Explore Plots</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </div>
-                </motion.div>
-
-                {/* Task Manager Card */}
-                <motion.div 
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => onNavigate('tasks')}
-                  className="bg-emerald-50/50 hover:bg-emerald-50 border border-emerald-100/60 p-5 rounded-[2rem] flex flex-col justify-between text-left cursor-pointer transition-all shadow-sm"
-                >
-                  <div>
-                    <div className="w-10 h-10 bg-emerald-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-md shadow-emerald-100 dark:shadow-none">
-                      <ListTodo className="w-5 h-5" strokeWidth={2.5} />
-                    </div>
-                    <h4 className="text-sm font-black text-emerald-950 mb-1">Task Manager</h4>
-                    <p className="text-[10px] font-semibold text-emerald-700/80 leading-snug">Create, delegate, and track local work orders.</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-5 text-[9px] font-black uppercase tracking-wider text-emerald-600">
-                    <span>Manage Tasks</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </div>
-                </motion.div>
-
-                {/* Hospital OP Card */}
-                <motion.div 
-                  whileTap={{ scale: 0.96 }}
-                  onClick={() => setShowHospitalOP(true)}
-                  className="bg-rose-50/50 hover:bg-rose-50 border border-rose-100/60 p-5 rounded-[2rem] flex flex-col justify-between text-left cursor-pointer transition-all shadow-sm"
-                >
-                  <div>
-                    <div className="w-10 h-10 bg-rose-600 text-white rounded-2xl flex items-center justify-center mb-4 shadow-md shadow-rose-100 dark:shadow-none">
-                      <Stethoscope className="w-5 h-5" strokeWidth={2.5} />
-                    </div>
-                    <h4 className="text-sm font-black text-rose-950 mb-1">Hospital OP</h4>
-                    <p className="text-[10px] font-semibold text-rose-700/80 leading-snug">Book outpatient consultation slips instantly.</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-5 text-[9px] font-black uppercase tracking-wider text-rose-600">
-                    <span>Book Slot</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </div>
-                </motion.div>
-              </div>
-
-              {/* Full-width Instant Support Card */}
-              <motion.div 
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setShowCustomerCare && setShowCustomerCare(true)}
-                className="bg-amber-50/30 hover:bg-amber-50 border border-amber-100/60 p-5 rounded-[2rem] flex items-center justify-between text-left cursor-pointer transition-all shadow-sm"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-11 h-11 bg-amber-500 text-white rounded-2xl flex items-center justify-center shrink-0">
-                    <Headphones className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-black text-amber-950 mb-0.5">Lokal Helpdesk & Care</h4>
-                    <p className="text-[10px] font-semibold text-amber-800/80">Instant WhatsApp, Phone, and chatbot support desk.</p>
-                  </div>
-                </div>
-                <ArrowRight className="w-5 h-5 text-amber-600 mr-2 shrink-0 animate-pulse" />
-              </motion.div>
-            </section>
-
-            {/* 1. Deals of the Day - URGENCY & VALUE */}
-            <section className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm relative overflow-hidden">
-              <div className="flex items-center justify-between mb-6 relative z-10">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="w-8 h-8 bg-yellow-400 rounded-xl flex items-center justify-center">
-                      <Zap className="w-5 h-5 text-gray-900 fill-gray-900" />
-                    </div>
-                    <h3 className="text-xl font-black text-gray-900">Deals of the Day</h3>
-                  </div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-10">Ending in <span className="text-gray-900 tabular-nums">{formatTime(timeLeft)}</span></p>
-                </div>
-                <button className="text-[10px] font-black text-yellow-600 uppercase tracking-widest bg-yellow-50 px-4 py-2 rounded-xl active:scale-95 transition-all">View All</button>
-              </div>
-              
-              <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide relative z-10 animate-fade-in">
-                {(() => {
-                  const activeDeals = deals.filter(d => 
-                    d.status === 'active' && 
-                    (!d.branchId || d.branchId === 'global' || d.branchId === currentBranchId)
-                  );
-                  // fallback to static dummy data if no db deals configured
-                  const itemsToRender = activeDeals.length > 0 ? activeDeals : [
-                    { id: 'd1', title: 'Premium Grocery Bag', discount: '50% OFF', price: 199, originalPrice: 399, img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
-                    { id: 'd2', title: 'Mixed Vegetables Bag', discount: '40% OFF', price: 99, originalPrice: 199, img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
-                    { id: 'd3', title: 'Fruits & Berries Box', discount: '30% OFF', price: 149, originalPrice: 249, img: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E' },
-                  ];
-                  return itemsToRender.map((deal) => {
-                    const handleDealClick = () => {
-                      // Attempt to find existing product in localInventory
-                      const match = localInventory.find(item => {
-                        const iName = (item.name || '').toLowerCase();
-                        const dTitle = (deal.title || '').toLowerCase();
-                        if (!iName || !dTitle) return false;
-                        return iName === dTitle || dTitle.includes(iName) || iName.includes(dTitle);
-                      });
-                      if (match) {
-                        onProductClick(match);
-                      } else {
-                        // Construct robust fallback virtual product
-                        const virtualProduct: Product = {
-                          id: deal.id,
-                          name: deal.title,
-                          price: Number(deal.price) || 0,
-                          originalPrice: Number(deal.originalPrice) || 0,
-                          image: deal.img || 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E',
-                          category: 'groceries',
-                          subCategory: 'Deals',
-                          description: `Special promotional offer: "${deal.title}". Act fast before this limited-time handpicked daily deal expires!`,
-                          stock: 99,
-                          unit: 'Pack',
-                          isAvailable: true,
-                          branchId: currentBranchId || 'global'
-                        };
-                        onProductClick(virtualProduct);
-                      }
-                    };
-
-                    return (
-                      <div 
-                        key={deal.id} 
-                        onClick={handleDealClick}
-                        className="flex-shrink-0 w-48 space-y-3 p-3 bg-gray-50 rounded-[2rem] border border-transparent hover:border-yellow-250 hover:bg-yellow-50/10 transition-all duration-300 cursor-pointer group"
-                      >
-                        <div className="relative aspect-square rounded-[1.5rem] bg-white overflow-hidden shadow-sm">
-                          <img 
-                            src={deal.img || 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E'}
-                            className="w-full h-full object-cover select-none group-hover:scale-105 transition-transform duration-500"
-                            referrerPolicy="no-referrer"
-                            alt={deal.title}
-                          />
-                          <div className="absolute top-2.5 left-2.5 bg-rose-500 text-white text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded-lg shadow-md">
-                            {deal.discount}
-                          </div>
-                        </div>
-                        <div className="px-1 pb-1">
-                          <h4 className="text-xs font-black text-gray-900 truncate mb-1 group-hover:text-yellow-600 transition-colors">{deal.title}</h4>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-baseline gap-1">
-                              <span className="text-sm font-black text-gray-900">‚Çπ{deal.price}</span>
-                              {deal.originalPrice > 0 && (
-                                <span className="text-[10px] font-bold text-gray-400 line-through">‚Çπ{deal.originalPrice}</span>
-                              )}
-                            </div>
-                            <div className="w-8 h-8 bg-gray-900 text-white rounded-lg flex items-center justify-center shadow-md group-hover:bg-yellow-500 group-hover:text-gray-900 active:scale-95 transition-all duration-300">
-                              <TrendingUp className="w-4 h-4" />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-            </section>
-
-            {/* 2. Local Originals - BRAND PRIDE & QUALITY */}
-            <section className="px-2">
-              <div className="bg-emerald-900 rounded-[3rem] p-8 relative overflow-hidden group shadow-xl mb-6">
-                <div className="absolute inset-0 bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E')] opacity-20 bg-cover bg-center"></div>
-                <div className="absolute inset-0 bg-gradient-to-r from-emerald-900 via-emerald-900/40 to-transparent"></div>
-                
-                <div className="relative z-10">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="bg-white/10 backdrop-blur-md p-2 rounded-xl">
-                      <Flower className="w-5 h-5 text-emerald-300" />
-                    </div>
-                    <span className="text-[10px] font-black text-emerald-300 uppercase tracking-[0.2em]">Local Signature Collection</span>
-                  </div>
-                  <h3 className="text-2xl font-black text-white italic tracking-tighter mb-2 leading-none">Direct from the Farm</h3>
-                  <p className="text-[10px] font-bold text-emerald-100/60 uppercase tracking-widest leading-relaxed mb-6">
-                    Hand-churned oils, wild forest honey,<br />and traditional crafts.
-                  </p>
-                  <button 
-                    onClick={() => integratedCategoryClick(categories.find(c => c.id === 'handicrafts')!)}
-                    className="px-6 py-3.5 bg-emerald-400 text-emerald-950 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-emerald-400/20"
-                  >
-                    {t.seeAll}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between mb-4 px-2">
-                <h3 className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Recommended Originals</h3>
-              </div>
-              
-              <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide -mx-2 px-2">
-                {handicraftsItems.map(prod => (
-                  <motion.div
-                    whileTap={{ scale: 0.98 }}
-                    key={prod.id}
-                    onClick={() => onProductClick(prod)}
-                    className="relative bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden text-left flex flex-col group min-w-[200px] cursor-pointer"
-                  >
-                    <div className="h-44 relative">
-                      {prod.image && <img src={prod.image} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt={prod.name} />}
-                      <div className="absolute top-4 right-4 h-8 w-8 bg-white/90 backdrop-blur-md rounded-full flex items-center justify-center shadow-lg text-emerald-600">
-                        <ShieldCheck className="w-4 h-4" />
-                      </div>
-                      <div className="absolute top-4 left-4 bg-emerald-500 text-white px-3 py-1 rounded-full shadow-lg">
-                        <p className="text-[8px] font-black uppercase tracking-widest italic">100% Pure</p>
-                      </div>
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent"></div>
-                      <div className="absolute bottom-4 left-4 right-4 text-white">
-                        <p className="text-[8px] font-black text-white/70 uppercase tracking-widest mb-1">Local Product</p>
-                        <h4 className="text-sm font-black italic tracking-tight">{getLocalizedProductName(prod.name, language)}</h4>
-                      </div>
-                    </div>
-                    <div className="p-5 bg-white flex-1 flex flex-col justify-between">
-                      <div className="flex items-center justify-between">
-                        <div className="flex flex-col">
-                           <span className="text-lg font-black text-gray-900 italic">‚Çπ{prod.price}</span>
-                           {(prod as any).unit && <span className="text-[8px] font-black text-gray-300 uppercase leading-none">per {(prod as any).unit}</span>}
-                        </div>
-                        <div className="bg-emerald-100 p-2.5 rounded-2xl text-emerald-700 active:bg-emerald-200 transition-colors">
-                          <Plus className="w-4 h-4" />
-                        </div>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            </section>
-
-            {/* 3. Bottom Promo Banners - CROSS-PROMOTION */}
-            <div 
-              className="relative h-44 rounded-[2.5rem] overflow-hidden shadow-xl shadow-gray-100 mt-4 group"
-              onMouseEnter={() => setIsBannerPaused(true)}
-              onMouseLeave={() => setIsBannerPaused(false)}
-            >
-              <AnimatePresence>
-                {bottomBanners.map((banner, i) => i === activeBottomBanner && (
-                  <motion.div
-                    key={banner.id}
-                    onClick={() => handleBannerClick(banner)}
-                    drag="x"
-                    dragConstraints={{ left: 0, right: 0 }}
-                    onTouchStart={() => setIsBannerPaused(true)}
-                    onTouchEnd={() => setIsBannerPaused(false)}
-                    onDragStart={() => setIsBannerPaused(true)}
-                    onDragEnd={(_, info) => {
-                      setIsBannerPaused(false);
-                      const swipeThreshold = 50;
-                      if (info.offset.x > swipeThreshold) {
-                        setActiveBottomBanner(prev => (prev - 1 + bottomBanners.length) % bottomBanners.length);
-                      } else if (info.offset.x < -swipeThreshold) {
-                        setActiveBottomBanner(prev => (prev + 1) % bottomBanners.length);
-                      }
-                    }}
-                    className={`absolute inset-0 ${banner.color} p-6 flex items-center justify-between overflow-hidden cursor-pointer active:scale-[0.98] transition-all touch-pan-y`}
-                    initial={{ opacity: 0, x: '100%' }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: '-100%' }}
-                    transition={{ duration: 0.8, ease: [0.32, 0.72, 0, 1] }}
-                  >
-                    {banner.img && (
-                      <div className="absolute inset-0 opacity-20 bg-cover bg-center" style={{ backgroundImage: `url(${banner.img})` }}></div>
-                    )}
-                    <div className="relative z-10 flex-1">
-                      <h3 className="text-xl font-black text-white mb-0.5 leading-tight">{banner.title}</h3>
-                      <p className="text-white/90 font-bold text-xs uppercase tracking-wider">{banner.sub}</p>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleBannerClick(banner);
-                        }}
-                        className="mt-3 bg-white text-gray-900 px-5 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest w-max active:scale-95 transition-all shadow-lg"
-                      >
-                        {(banner as any).cta || 'Shop Now'}
-                      </button>
-                    </div>
-                    <div className="relative z-10 w-16 h-16 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center">
-                      <Zap className="w-8 h-8 text-white fill-white" />
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setActiveBottomBanner(prev => (prev - 1 + bottomBanners.length) % bottomBanners.length);
-                }}
-                className="absolute left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/40 transition-all active:scale-90 hover:bg-white/60"
-                aria-label="Previous bottom banner"
-              >
-                <ChevronLeft className="w-6 h-6 shadow-sm" />
-              </button>
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setActiveBottomBanner(prev => (prev + 1) % bottomBanners.length);
-                }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/40 transition-all active:scale-90 hover:bg-white/60"
-                aria-label="Next bottom banner"
-              >
-                <ChevronRight className="w-6 h-6 shadow-sm" />
-              </button>
-
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 z-10">
-                {bottomBanners.map((_, i) => (
-                  <div key={i} className={`h-1 rounded-full transition-all ${activeBottomBanner === i ? 'w-5 bg-white' : 'w-1 bg-white/40'}`}></div>
-                ))}
-              </div>
-            </div>
-
-            {/* 4. Popular Around You - SOCIAL PROOF */}
-            <section>
-              <div className="flex items-center gap-2 mb-4">
-                <Zap className="w-5 h-5 text-yellow-500 fill-yellow-500" />
-                <h3 className="text-lg font-black text-gray-900">Popular Around You</h3>
-              </div>
-              <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
-                {popularAroundYouItems.map((prod) => (
-                  <button
-                    key={prod.id}
-                    onClick={() => onProductClick(prod)}
-                    className="flex-shrink-0 w-40 bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm hover:shadow-md transition-all active:scale-95 text-left"
-                  >
-                    {prod.image && <img src={prod.image} className="w-full h-32 object-cover" alt={prod.name} />}
-                    <div className="p-3">
-                      <div className="flex items-center gap-1 mb-1">
-                        <Star className="w-3 h-3 text-yellow-400 fill-yellow-400" />
-                        <span className="text-[10px] font-bold text-gray-400">4.8</span>
-                      </div>
-                      <p className="font-extrabold text-sm text-gray-900 truncate mb-1">{getLocalizedProductName(prod.name, language)}</p>
-                      <div className="flex items-center gap-2">
-                         <p className="text-yellow-600 font-black">‚Çπ{prod.price}</p>
-                         {(prod as any).unit && <span className="text-[8px] font-bold text-gray-400 uppercase">/ {(prod as any).unit}</span>}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            {/* 5. Trending Services - UTILITY & NEEDS */}
-            <section>
-              <div className="flex items-center justify-between mb-4 px-2">
-                <h3 className="text-xl font-black text-gray-900">Trending Services</h3>
-                <button className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-2 py-1">See All</button>
-              </div>
-              <div className="grid grid-cols-1 gap-4">
-                {trendingServicesItems.map((service) => (
-                  <div
-                    key={service.id}
-                    onClick={() => onProductClick(service)}
-                    className="group relative overflow-hidden rounded-[2.5rem] bg-white border border-gray-100 shadow-sm p-4 flex gap-4 text-left active:scale-[0.98] transition-all cursor-pointer"
-                  >
-                    <div className="w-24 h-24 rounded-3xl overflow-hidden shrink-0">
-                      {service.image && <img src={service.image} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" alt={service.name} />}
-                    </div>
-                    <div className="flex-1 flex flex-col justify-center">
-                      <div className="flex items-center gap-1 mb-1">
-                        <div className="flex items-center gap-0.5 bg-yellow-400 px-1.5 py-0.5 rounded-md">
-                          <Star className="w-2 h-2 text-gray-900 fill-gray-900" />
-                          <span className="text-[8px] font-black text-gray-900">{(service as any).rating || '4.5'}</span>
-                        </div>
-                        <span className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">{(service as any).bookings || '1.2k'}+ Bookings</span>
-                      </div>
-                      <h4 className="text-sm font-black text-gray-900 mb-1">{getLocalizedServiceName(service.name, language)}</h4>
-                      <p className="text-[10px] font-medium text-gray-500 mb-2 line-clamp-1">{getLocalizedServiceDescription(service.description, language)}</p>
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-black text-gray-900">Starting at ‚Çπ{service.price}</p>
-                        <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-gray-900 group-hover:translate-x-1 transition-all" />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            {/* 6. Local Select Promo - RETENTION & MEMBERSHIP */}
-            <section className="relative overflow-hidden group">
-              <div className="absolute inset-0 bg-gray-900 rounded-[3rem] shadow-2xl shadow-gray-200"></div>
-              <div className="absolute top-0 right-0 w-48 h-48 bg-yellow-400 rotate-45 translate-x-24 -translate-y-24 group-hover:scale-110 transition-transform duration-700 opacity-20"></div>
-              
-              <div className="relative p-8 flex items-center gap-6">
-                <div className="w-16 h-16 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center shrink-0">
-                  <ShieldCheck className="w-8 h-8 text-yellow-400" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-xl font-black text-white mb-1">Local Bandi Select</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-relaxed">
-                    Get Free Delivery & Extra<br />15% OFF on every order!
-                  </p>
-                </div>
-                <button className="px-6 py-4 bg-yellow-400 text-gray-900 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all shadow-lg shadow-yellow-400/20">
-                  Join Now
-                </button>
-              </div>
-            </section>
-
-            {/* 7. Rate Last Order Card - ENGAGEMENT */}
-            {showRateCard && (
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-yellow-400 p-6 rounded-[2.5rem] shadow-xl shadow-yellow-101 flex items-center justify-between gap-4"
-              >
-                <div className="flex-1">
-                  <p className="text-[10px] font-black text-gray-900/60 uppercase tracking-widest mb-1">Delivered Yesterday</p>
-                  <h3 className="text-sm font-black text-gray-900 mb-2">How was your order from Fresh Mart?</h3>
-                  <div className="flex gap-1 mb-4">
-                    {[1, 2, 3, 4, 5].map(star => (
-                      <button key={star} onClick={() => setShowRateCard(false)}>
-                        <Star className="w-6 h-6 text-white fill-white hover:text-gray-900 hover:fill-gray-900 transition-colors" />
-                      </button>
-                    ))}
-                  </div>
-                  <button onClick={() => setShowRateCard(false)} className="text-[8px] font-black text-gray-900 uppercase tracking-widest bg-white/30 px-3 py-1 rounded-lg">Skip</button>
-                </div>
-                <div className="w-20 h-20 bg-white/20 rounded-3xl flex items-center justify-center backdrop-blur-md">
-                  <ShoppingBag className="w-10 h-10 text-gray-900" />
-                </div>
-              </motion.div>
-            )}
-
-            {/* 8. Join Our Mission - ECOSYSTEM GROWTH */}
-            <section>
-              <div className="flex items-center gap-2 mb-4 px-2">
-                <Users className="w-5 h-5 text-indigo-600" />
-                <h3 className="text-lg font-black text-gray-900">Merchant & Rider Portals</h3>
-              </div>
-              <div className="bg-indigo-50 border border-indigo-100 p-6 rounded-[2.5rem] text-left space-y-4 shadow-sm">
-                <p className="text-xs font-bold text-indigo-900/80 leading-relaxed">
-                  Delivery and vendor management are now moved entirely to our high-performance, standalone **Merchant & Rider Terminal**. Accessing store items, processing orders, and checking fleet payouts are handled there independently.
-                </p>
-                <button 
-                  onClick={() => {
-                    window.location.href = '/partner';
-                  }}
-                  className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[1.8rem] font-black uppercase text-[10px] tracking-widest transition-all shadow-md active:scale-95 flex items-center justify-center gap-2"
-                >
-                  <RefreshCw className="w-4 h-4 animate-spin-slow" />
-                  <span>Launch Standalone Partner App</span>
-                </button>
-              </div>
-            </section>
-
-            {/* 9. Standalone Information Panel */}
-            <section className="px-2">
-              <div className="bg-slate-900 rounded-[3rem] p-8 text-white relative overflow-hidden group shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-slate-800 rounded-full -mr-16 -mt-16 blur-3xl opacity-30"></div>
-                <div className="relative z-10">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="w-8 h-8 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center">
-                      <Star className="w-4 h-4 text-emerald-400 fill-emerald-400" />
-                    </div>
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Partner Opportunity</span>
-                  </div>
-                  <h3 className="text-2xl font-black italic tracking-tighter mb-2 leading-none">Deliver & Earn in Khammam.</h3>
-                  <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest leading-relaxed mb-6">
-                    Flexible hours, great earnings, zero merchant commission fees. Get started on the standalone partner app today.
-                  </p>
-                  <button 
-                    onClick={() => {
-                      window.location.href = '/partner';
-                    }}
-                    className="px-8 py-4 bg-emerald-600 text-white hover:bg-emerald-500 rounded-2xl font-black text-[10px] uppercase tracking-widest active:scale-95 transition-all shadow-xl"
-                  >
-                    Open Standalone App
-                  </button>
-                </div>
-                <Bike className="absolute -right-6 -bottom-6 w-48 h-48 text-white/5 -rotate-12 group-hover:scale-110 transition-transform duration-700" />
-              </div>
-            </section>
-
-            {/* 10. Local Bharath Mission Statement - TRUST & VALUES */}
-            <section className="mt-6 mb-12">
-              <div className="bg-gray-900 rounded-[2.5rem] p-8 text-white relative overflow-hidden shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-400/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl" />
-                <div className="relative z-10">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="p-2 bg-yellow-400 rounded-xl">
-                      <ShieldCheck className="w-5 h-5 text-gray-900" />
-                    </div>
-                    <h3 className="text-[10px] font-black uppercase tracking-widest text-yellow-500">About Local Bharath</h3>
-                  </div>
-                  <h2 className="text-xl font-black mb-4 leading-tight italic tracking-tight">Pure, Healthy & 100% Honest Services</h2>
-                  <p className="text-gray-300 text-xs font-bold leading-relaxed mb-6">
-                    Serving you like family. From <span className="text-white">Construction & Paints</span> to <span className="text-white">AC repairs & Bore Motor mechanics</span>, we deliver professional work without cheating. Our mission is your health through pure food, on-time delivery, and trustworthy maid services.
-                  </p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center gap-2">
-                       <div className="p-1 bg-emerald-500/20 rounded-lg">
-                        <Check className="w-3 h-3 text-emerald-400" />
-                       </div>
-                       <span className="text-[9px] font-black uppercase tracking-tighter text-emerald-400">Zero Cheating</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                       <div className="p-1 bg-emerald-500/20 rounded-lg">
-                        <Check className="w-3 h-3 text-emerald-400" />
-                       </div>
-                       <span className="text-[9px] font-black uppercase tracking-tighter text-emerald-400">Family-Like Care</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* 10.5 Customer Service & Support */}
-            <section id="customer-service" className="mt-8 px-4 overflow-hidden relative">
-              <div className="bg-white rounded-[3rem] p-10 border border-gray-100 shadow-xl shadow-indigo-100/20 relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full blur-3xl opacity-50 -mr-16 -mt-16" />
-                <div className="absolute bottom-0 left-0 w-32 h-32 bg-emerald-50 rounded-full blur-3xl opacity-50 -ml-16 -mb-16" />
-                
-                <div className="relative z-10 text-center">
-                  <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50 rounded-full text-[10px] font-black text-indigo-600 uppercase tracking-widest mb-6">
-                    <Headphones className="w-3.5 h-3.5" />
-                    24/7 Professional Support
-                  </div>
-                  <h2 className="text-3xl font-black text-gray-900 mb-4 italic tracking-tighter">How can we help?</h2>
-                  <p className="text-gray-500 font-bold text-[11px] uppercase tracking-tight mb-8 max-w-xs mx-auto leading-relaxed">
-                    Our dedicated support team is available around the clock to ensure your experience is nothing short of exceptional.
-                  </p>
-
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    {/* Live Chat */}
-                    <button 
-                      onClick={() => setShowCustomerCare(true)}
-                      className="group relative bg-indigo-600 p-6 rounded-[2rem] text-left overflow-hidden transition-all hover:bg-indigo-700 active:scale-[0.98]"
-                    >
-                      <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full blur-xl -mr-8 -mt-8 transition-transform group-hover:scale-150" />
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white backdrop-blur-md">
-                          <MessageCircle className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-xs font-black text-white uppercase italic">Live Support</h3>
-                          <p className="text-[8px] font-black text-indigo-200 uppercase tracking-widest">Instant Chat</p>
-                        </div>
-                      </div>
-                    </button>
-
-                    {/* WhatsApp Support */}
-                    <a 
-                      href={`https://wa.me/${supportInfo.phone}?text=Hi, I need help with Local Bandi Multi Services`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="group relative bg-emerald-600 p-6 rounded-[2rem] text-left overflow-hidden transition-all hover:bg-emerald-700 active:scale-[0.98]"
-                    >
-                      <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full blur-xl -mr-8 -mt-8 transition-transform group-hover:scale-150" />
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white backdrop-blur-md">
-                          <Phone className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-xs font-black text-white uppercase italic">WhatsApp</h3>
-                          <p className="text-[8px] font-black text-emerald-200 uppercase tracking-widest">Direct Connection</p>
-                        </div>
-                      </div>
-                    </a>
-
-                    {/* Email Support */}
-                    <a 
-                      href={`mailto:${supportInfo.email}`}
-                      className="group relative bg-slate-900 p-6 rounded-[2rem] text-left overflow-hidden transition-all hover:bg-black active:scale-[0.98]"
-                    >
-                      <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full blur-xl -mr-8 -mt-8 transition-transform group-hover:scale-150" />
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center text-white backdrop-blur-md">
-                          <Send className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-xs font-black text-white uppercase italic">Email Us</h3>
-                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Formal Support</p>
-                        </div>
-                      </div>
-                    </a>
-
-                    {/* Call Support */}
-                    <a 
-                      href={`tel:${supportInfo.secondaryPhone || supportInfo.phone}`}
-                      className="group relative bg-white border border-gray-100 p-6 rounded-[2rem] text-left overflow-hidden transition-all hover:bg-gray-50 active:scale-[0.98]"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center text-gray-900">
-                          <PhoneCall className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-xs font-black text-gray-900 uppercase italic">Call Hub</h3>
-                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">Voice Support</p>
-                        </div>
-                      </div>
-                    </a>
-                  </div>
-
-                </div>
-              </div>
-            </section>
-
-            {/* 11. Head Office Roots - BRAND ROOTS */}
-            <section className="mt-2 mb-20 px-2 text-center">
-              <div className="bg-indigo-50 border-2 border-indigo-100/50 rounded-[3rem] p-10 relative overflow-hidden group">
-                 <MapPin className="w-12 h-12 text-indigo-200 absolute -top-4 -left-4 -rotate-12 opacity-50" />
-                 <h3 className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em] mb-4">Our Primary Hub</h3>
-                 <h2 className="text-2xl font-black text-indigo-900 leading-tight mb-2 italic">Khammam, Telangana</h2>
-                 <p className="text-[11px] font-bold text-indigo-600/70 uppercase tracking-widest leading-relaxed max-w-xs mx-auto">
-                   Proudly serving as the <span className="text-indigo-900 underline decoration-indigo-200">First Head Office</span> of Local Bandi Multi Services in India.
-                 </p>
-                 <div className="mt-8 flex flex-col items-center gap-2">
-                    <div className="flex items-center gap-2 px-6 py-2 bg-white rounded-full shadow-sm border border-indigo-100">
-                       <Navigation className="w-3 h-3 text-indigo-600" />
-                       <span className="text-[9px] font-black text-indigo-900 uppercase">Khammam City Center</span>
-                    </div>
-                    <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest italic">Established 2026 ‚Ä¢ From India to the World</p>
-                 </div>
-              </div>
-            </section>
-          </>
-        )}
-      </div>
-
-      {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-100 px-4 pt-4 pb-10 flex items-center justify-between z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
-        <button onClick={() => onNavigate('home')} className="flex flex-col items-center gap-1.5 text-amber-600 active:scale-95 transition-transform">
-          <HomeIcon className="w-6 h-6" strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider">{translateKey('home', 'Home')}</span>
-        </button>
-        <button onClick={() => onNavigate('realEstate')} className="flex flex-col items-center gap-1.5 text-sky-600 active:scale-95 transition-transform">
-          <Building2 className="w-6 h-6" strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">{getLocalizedCategoryName('realestate', language)}</span>
-        </button>
-        <button onClick={() => onNavigate('wishlist')} className="flex flex-col items-center gap-1.5 text-rose-600 relative active:scale-95 transition-transform">
-          <Heart className={`w-6 h-6 ${wishlistCount > 0 ? 'fill-rose-600' : ''}`} strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider">{translateKey('wishlist', 'Wishlist')}</span>
-          {wishlistCount > 0 && (
-            <div className="absolute top-0 right-1 bg-rose-600 w-2.5 h-2.5 rounded-full border-2 border-white"></div>
-          )}
-        </button>
-        <button onClick={() => onNavigate('cart')} className="relative -top-8 flex items-center justify-center">
-          <div className="bg-amber-400 w-16 h-16 rounded-[2rem] shadow-xl shadow-amber-200 flex items-center justify-center active:scale-90 transition-transform">
-            <ShoppingCart className="w-5.5 h-5.5 text-gray-900" strokeWidth={2.5} />
-            {cartCount > 0 && (
-              <div className="absolute -top-1 -right-1 bg-gray-900 text-white text-[10px] font-black w-6 h-6 rounded-full flex items-center justify-center border-2 border-white">
-                {cartCount}
-              </div>
-            )}
-          </div>
-        </button>
-        <button onClick={() => onNavigate('marriageBureau')} className="flex flex-col items-center gap-1.5 text-indigo-600 active:scale-95 transition-transform">
-          <HeartHandshake className="w-6 h-6" strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">{getLocalizedCategoryName('marriage', language)}</span>
-        </button>
-        <button onClick={() => setShowHospitalOP(true)} className="flex flex-col items-center gap-1.5 text-emerald-600 active:scale-95 transition-transform">
-          <Stethoscope className="w-6 h-6" strokeWidth={3} />
-          <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">{getLocalizedCategoryName('hospital_op', language)}</span>
-        </button>
-      </nav>
-
-      {/* Floating Customer Care Button */}
-      <motion.button
-        initial={{ scale: 0, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.9 }}
-        onClick={() => setShowCustomerCare && setShowCustomerCare(true)}
-        className="fixed bottom-28 right-6 w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center shadow-lg z-40 border-2 border-white cursor-pointer"
-      >
-        <Headphones className="w-4 h-4" />
-        <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white animate-pulse" />
-      </motion.button>
-
-      {/* Cancellation Reason Modal */}
-      <AnimatePresence>
-        {orderIdToCancel && (
-          <div className="fixed inset-0 z-[500] flex items-center justify-center p-6">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => {
-                setOrderIdToCancel(null);
-                setCancelReasonInput("");
-              }}
-              className="absolute inset-0 bg-black/80 backdrop-blur-md"
-            />
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="bg-white w-full max-w-sm rounded-[3rem] p-8 shadow-2xl relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 p-6">
-                <button 
-                  onClick={() => {
-                    setOrderIdToCancel(null);
-                    setCancelReasonInput("");
-                  }} 
-                  className="p-2 bg-gray-100 rounded-full text-gray-500"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="text-center">
-                <div className="w-16 h-16 bg-rose-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                  <AlertCircle className="w-8 h-8 text-rose-600" />
-                </div>
-                <h3 className="text-2xl font-black text-gray-900 mb-2">Cancel Order</h3>
-                <p className="text-rose-500 font-black text-[10px] uppercase tracking-widest mb-2 font-mono">{orderIdToCancel}</p>
-                <p className="text-gray-400 font-bold text-xs uppercase tracking-widest mb-6">Reason for cancellation is required</p>
-                
-                <div className="space-y-3 mb-8">
-                  {[
-                    "Item Out of Stock",
-                    "Customer Requested",
-                    "Delivery Driver Unavailable",
-                    "Store Closed",
-                    "Technical Issue",
-                    "Invalid Address",
-                    "Other"
-                  ].map((reason) => (
-                    <button
-                      key={reason}
-                      onClick={() => setCancelReasonInput(reason)}
-                      className={`w-full py-4 px-6 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all text-left flex items-center justify-between ${
-                        cancelReasonInput === reason 
-                          ? 'bg-rose-500 text-white shadow-lg shadow-rose-200' 
-                          : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
-                      }`}
-                    >
-                      {reason}
-                      {cancelReasonInput === reason && <Check className="w-3 h-3" />}
-                    </button>
-                  ))}
-                  
-                  {cancelReasonInput.startsWith("Other") && (
-                    <textarea
-                      placeholder="Type reason here..."
-                      className="w-full bg-gray-50 border border-gray-100 rounded-2xl p-4 text-[10px] font-bold outline-none focus:border-rose-500 transition-all min-h-[80px]"
-                      onChange={(e) => setCancelReasonInput("Other: " + e.target.value)}
-                      value={cancelReasonInput.replace("Other: ", "")}
-                    />
-                  )}
-                </div>
-
-                <div className="flex gap-3">
-                  <button 
-                    onClick={() => {
-                      setOrderIdToCancel(null);
-                      setCancelReasonInput("");
-                    }}
-                    className="flex-1 py-5 bg-gray-100 text-gray-400 rounded-[2rem] font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all"
-                  >
-                    Back
-                  </button>
-                  <button 
-                    disabled={!cancelReasonInput}
-                    onClick={confirmCancelOrder}
-                    className="flex-[2] py-5 bg-rose-500 text-white rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-xl shadow-rose-200 active:scale-95 transition-all disabled:opacity-50 disabled:shadow-none"
-                  >
-                    Confirm Cancel
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {selectedLetterPartner && (
-        <JoiningLetter 
-          partner={selectedLetterPartner} 
-          onClose={() => setSelectedLetterPartner(null)} 
-          language={language}
-        />
-      )}
-
-      <LanguageSelectorModal 
-        isOpen={showLangModal} 
-        onClose={() => setShowLangModal(false)} 
-      />
-
-      {/* ‚ö° 40-SEC SPEED QUIZ MARKETING MODAL */}
-      <MarketingQuizModal
-        isOpen={showMarketingQuizModal}
-        onClose={() => setShowMarketingQuizModal(false)}
-        onApplyCoupon={(code) => {
-          alert(`üéâ Coupon "${code}" has been unlocked & saved to your promo codes!`);
-          setPromoCodes((prev: any[]) => {
-            if (prev.some((p: any) => p.id === code)) return prev;
-            return [{
-              id: code,
-              type: 'flat',
-              value: code.includes('100') ? 100 : code.includes('50') ? 50 : 25,
-              label: `40s Quiz Marketing Reward (${code})`,
-              minSubtotal: 100,
-              isActive: true
-            }, ...prev];
-          });
-        }}
-      />
-
-      {/* üé∞ SPIN & WIN LUCKY WHEEL SUNDAY SPECIAL MODAL */}
-      <SpinWheelModal
-        isOpen={showSpinWheelModal}
-        onClose={() => setShowSpinWheelModal(false)}
-        isSundaySpecial={true}
-        sundayClaimCount={sundaySpinCount}
-        maxSundayClaims={1000}
-        onSpinSuccess={handleSundaySpinSuccess}
-        onRewardWon={(code) => {
-          setPromoCodes((prev: any[]) => {
-            if (prev.some((p: any) => p.id === code)) return prev;
-            return [{
-              id: code,
-              type: 'percentage',
-              value: parseInt(code.replace(/\D/g, '')) || 10,
-              label: `Spin & Win Reward (${code})`,
-              minSubtotal: 599,
-              isActive: true
-            }, ...prev];
-          });
-        }}
-      />
-
-      {/* üéÅ DAILY MYSTERY SCRATCH CARD ATTRACTION MODAL */}
-      <ScratchCardModal
-        isOpen={showScratchCardModal}
-        onClose={() => setShowScratchCardModal(false)}
-        onRewardClaimed={(code, discount) => {
-          setPromoCodes((prev: any[]) => {
-            if (prev.some((p: any) => p.id === code)) return prev;
-            return [{
-              id: code,
-              type: 'percentage',
-              value: discount,
-              label: `Lucky Scratch Reward (${code})`,
-              minSubtotal: 299,
-              isActive: true
-            }, ...prev];
-          });
-        }}
-      />
-
-      {/* üî• GOLDEN HOUR FLASH DROP 50% MODAL */}
-      <FlashDropModal
-        isOpen={showFlashDropModal}
-        onClose={() => setShowFlashDropModal(false)}
-        onApplyPromo={(code, discount) => {
-          setPromoCodes((prev: any[]) => {
-            if (prev.some((p: any) => p.id === code)) return prev;
-            return [{
-              id: code,
-              type: 'percentage',
-              value: discount,
-              label: `üî• Flat 50% Off Flash Rush (${code})`,
-              minSubtotal: 99,
-              isActive: true
-            }, ...prev];
-          });
-        }}
-        onSelectCategory={(catId) => {
-          const target = categories.find(c => c.id === catId) || categories.find(c => c.id === 'grocery');
-          if (target) integratedCategoryClick(target);
-        }}
-        onAddToCart={(item) => {
-          onProductClick(item as any);
-        }}
-        onNavigateToCart={() => onNavigate('cart')}
-      />
-
-      <HospitalOPModal 
-        isOpen={showHospitalOP} 
-        onClose={() => setShowHospitalOP(false)} 
-        prices={hospitalPrices}
-        onBook={handleBookHospitalOP}
-      />
-
-      {/* üîç CLICK & ZOOM IMAGE VIEWER MODAL */}
-      {zoomImage && (
-        <ImageZoomModal
-          isOpen={!!zoomImage}
-          onClose={() => setZoomImage(null)}
-          imageUrl={zoomImage.url}
-          title={zoomImage.title}
-          subtitle={zoomImage.subtitle}
-        />
-      )}
-
-      {/* Trip Details Modal for Delivery Partners */}
-      <AnimatePresence>
-        {showTripDetails && (
-          <div className="fixed inset-0 z-[160] flex items-end sm:items-center justify-center p-0 sm:p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowTripDetails(false)}
-              className="absolute inset-0 bg-black/60 backdrop-blur-md"
-            />
-            <motion.div 
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              className="relative w-full max-w-md bg-white rounded-t-[3rem] sm:rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
-            >
-              <div className="p-8 pb-4 flex items-center justify-between border-b border-gray-50">
-                <div>
-                  <h3 className="text-xl font-black text-gray-900 italic tracking-tighter">Order Details</h3>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Order #LB-{Math.random().toString(36).substr(2, 6).toUpperCase()}</p>
-                </div>
-                <button onClick={() => setShowTripDetails(false)} className="p-3 bg-gray-100 rounded-2xl text-gray-500">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-8 space-y-8">
-                {/* Interactive Map View */}
-                <div className="h-48 w-full rounded-[2.5rem] overflow-hidden shadow-inner border border-gray-100 relative">
-                   <LiveMap 
-                      riderLoc={[17.2505, 80.1450]} 
-                      vendorLoc={[17.2473, 80.1514]} 
-                      customerLoc={[17.2550, 80.1600]} 
-                      interactive={true}
-                      zoom={14}
-                    />
-                    <div className="absolute top-4 right-4 bg-white/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white shadow-lg">
-                      <p className="text-[10px] font-black text-gray-900 uppercase">8 Mins to Destination</p>
-                    </div>
-                </div>
-
-                {/* Timeline */}
-                <div className="space-y-6">
-                  <div className="flex gap-4">
-                    <div className="flex flex-col items-center gap-1">
-                      <div className="w-10 h-10 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm border border-indigo-100">
-                        <Store className="w-5 h-5" />
-                      </div>
-                      <div className="w-0.5 h-full bg-indigo-100 border-dashed border-l-2" />
-                    </div>
-                    <button 
-                      onClick={() => alert("Showing route to Sri Sai Groceries on map...")}
-                      className="flex-1 bg-indigo-50/50 p-5 rounded-[2rem] border border-indigo-100/50 text-left active:scale-95 transition-all"
-                    >
-                      <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-1">Pick up from</p>
-                      <p className="text-sm font-black text-indigo-900 mb-1">Sri Sai Groceries</p>
-                      <p className="text-[10px] font-bold text-indigo-600 truncate">Pillar No. 42, Main Road, Khammam</p>
-                    </button>
-                  </div>
-
-                  <div className="flex gap-4">
-                    <div className="flex flex-col items-center gap-1">
-                      <div className="w-10 h-10 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-600 shadow-sm border border-rose-100">
-                        <MapPin className="w-5 h-5" />
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => alert("Showing route to Customer Location on map...")}
-                      className="flex-1 bg-rose-50/50 p-5 rounded-[2rem] border border-rose-100/50 text-left active:scale-95 transition-all"
-                    >
-                      <p className="text-[8px] font-black text-rose-400 uppercase tracking-widest mb-1">Deliver to</p>
-                      <p className="text-sm font-black text-rose-900 mb-1">H.No 4-12, Green City</p>
-                      <p className="text-[10px] font-bold text-rose-600 truncate">Opposite Park, Block A, Khammam</p>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Order Summary */}
-                <div className="bg-gray-50 p-6 rounded-[2.5rem] border border-gray-100">
-                   <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Items Summary</p>
-                   <div className="space-y-2">
-                      <div className="flex justify-between items-center text-xs font-bold text-gray-600">
-                         <span>Rice (5KG) x 1</span>
-                         <span>‚Çπ450</span>
-                      </div>
-                      <div className="flex justify-between items-center text-xs font-bold text-gray-600">
-                         <span>Oil (1L) x 2</span>
-                         <span>‚Çπ320</span>
-                      </div>
-                   </div>
-                </div>
-              </div>
-
-              <div className="p-8 pt-4 bg-white border-t border-gray-50">
-                 <button 
-                  onClick={() => {
-                    alert("Order marked as Delivered!");
-                    setShowTripDetails(false);
-                  }}
-                  className="w-full py-5 bg-gray-900 text-white rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-2xl active:scale-95 transition-all"
-                 >
-                    Complete Delivery
-                 </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Enhanced Filter Modal */}
-      <AnimatePresence>
-        {showFilterModal && (
-          <div className="fixed inset-0 z-[600] flex items-end justify-center sm:items-center p-0 sm:p-6 overflow-hidden">
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              onClick={() => setShowFilterModal(false)}
-              className="absolute inset-0 bg-black/60 backdrop-blur-md" 
-            />
-            <motion.div 
-              initial={{ y: '100%', opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: '100%', opacity: 0 }}
-              className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl relative overflow-hidden"
-            >
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter">Search Filters</h3>
-                <button 
-                  onClick={() => setShowFilterModal(false)}
-                  className="p-3 bg-gray-100 dark:bg-slate-800 rounded-2xl text-gray-400 active:scale-90"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              <div className="space-y-8">
-                <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Minimum Rating</p>
-                  <div className="flex gap-2">
-                    {[0, 3, 4, 4.5].map(rating => (
-                      <button
-                        key={rating}
-                        onClick={() => setFilterRating(rating)}
-                        className={`flex-1 py-3 rounded-xl border-2 transition-all font-black text-[10px] uppercase tracking-widest flex flex-col items-center gap-1 ${
-                          filterRating === rating 
-                            ? 'bg-gray-900 border-gray-900 text-white' 
-                            : 'bg-white border-gray-100 text-gray-400 dark:bg-slate-800'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1">
-                          {rating === 0 ? 'All' : rating}
-                          {rating > 0 && <Star className={`w-3 h-3 ${filterRating === rating ? 'fill-yellow-400 text-yellow-400' : ''}`} />}
-                        </span>
-                        {rating > 0 && <span className="text-[8px] opacity-60">+ Stars</span>}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Price Range</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      {label: 'Any Price', val: null},
-                      {label: 'Under ‚Çπ200', val: {min: 0, max: 200}},
-                      {label: '‚Çπ200 - ‚Çπ500', val: {min: 200, max: 500}},
-                      {label: 'Above ‚Çπ500', val: {min: 500, max: 50000}}
-                    ].map((range, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => setFilterPriceRange(range.val)}
-                        className={`py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest ${
-                          (range.val === null && filterPriceRange === null) || 
-                          (range.val && filterPriceRange?.max === range.val.max && filterPriceRange?.min === range.val.min)
-                            ? 'bg-indigo-600 border-indigo-600 text-white' 
-                            : 'bg-gray-50 dark:bg-slate-800 border-transparent text-gray-500'
-                        }`}
-                      >
-                        {range.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Quick Filters</p>
-                  <button
-                    onClick={() => setFilterAvailability(!filterAvailability)}
-                    className={`w-full py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 ${
-                      filterAvailability 
-                        ? 'bg-emerald-500 border-emerald-500 text-white' 
-                        : 'bg-emerald-50 dark:bg-emerald-900/10 border-transparent text-emerald-600'
-                    }`}
-                  >
-                    <Zap className={`w-4 h-4 ${filterAvailability ? 'fill-white' : ''}`} />
-                    Only Online Vendors
-                  </button>
-                </div>
-
-                <div className="pt-4 flex gap-3">
-                  <button 
-                    onClick={() => {
-                        setFilterRating(0);
-                        setFilterPriceRange(null);
-                        setFilterAvailability(false);
-                        setShowFilterModal(false);
-                    }}
-                    className="flex-1 py-5 bg-gray-100 dark:bg-slate-800 text-gray-400 rounded-3xl font-black uppercase tracking-widest text-xs"
-                  >
-                    Clear All
-                  </button>
-                  <button 
-                    onClick={() => setShowFilterModal(false)}
-                    className="flex-[2] py-5 bg-indigo-600 text-white rounded-3xl font-black uppercase tracking-widest text-xs shadow-xl shadow-indigo-100"
-                  >
-                    Show Results
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-const PropertyAdminCard = ({ property, setDeleteConfirm }: { property: any, setDeleteConfirm?: any }) => {
-  const [privateData, setPrivateData] = useState<any>(null);
-  const [loadingPrivate, setLoadingPrivate] = useState(true);
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'properties', property.id, 'private', 'data'), (snap) => {
-      if (snap.exists()) {
-        setPrivateData(snap.data());
-      }
-      setLoadingPrivate(false);
-    }, (error) => {
-      console.error("Private listing data error:", error);
-      setLoadingPrivate(false);
-    });
-    return () => unsub();
-  }, [property.id]);
-
-  return (
-    <div key={property.id} className="p-5 bg-white rounded-[2.5rem] border border-gray-100 shadow-sm">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-indigo-100 rounded-2xl flex items-center justify-center font-black overflow-hidden relative">
-            {property.image ? (
-              <img src={property.image} className="w-full h-full object-cover" alt={property.title} />
-            ) : (
-              <Building2 className="w-6 h-6 text-indigo-500" />
-            )}
-            {!property.isApproved && (
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                <Clock className="w-4 h-4 text-white" />
-              </div>
-            )}
-          </div>
-          <div>
-              <p className="font-black text-gray-900 leading-tight">{typeof property.title === 'string' ? property.title : 'Property Listing'}</p>
-              <p className="text-[10px] font-bold text-gray-400 uppercase">
-                {typeof property.location === 'string' ? property.location : `${property.location?.area || ''}${property.location?.area && property.location?.city ? ', ' : ''}${property.location?.city || ''}`}
-              </p>
-          </div>
-        </div>
-        {!property.isApproved ? (
-          <button 
-            onClick={async () => {
-              if (setDeleteConfirm) {
-                setDeleteConfirm({
-                  isOpen: true,
-                  title: "Approve Listing?",
-                  message: `Are you sure you want to approve "${property.title}" to go live?`,
-                  onConfirm: async () => {
-                    const { updateDoc, doc: fireDoc } = await import('firebase/firestore');
-                    await updateDoc(fireDoc(db, 'properties', property.id), { isApproved: true });
-                  }
-                });
-              } else if (confirm("Approve this property listing?")) {
-                  const { updateDoc, doc: fireDoc } = await import('firebase/firestore');
-                  await updateDoc(fireDoc(db, 'properties', property.id), { isApproved: true });
-              }
-            }}
-            className="px-4 py-2 bg-emerald-500 text-white rounded-xl text-[9px] font-black uppercase tracking-widest"
-          >
-            Approve
-          </button>
-        ) : (
-          <span className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[9px] font-black uppercase tracking-widest">Approved</span>
-        )}
-      </div>
-      <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
-          <div className="flex items-center justify-between text-[10px] font-bold text-gray-600">
-            <span className="flex items-center gap-1"><User className="w-3 h-3" /> Seller: {typeof property.sellerName === 'string' ? property.sellerName : 'Seller'}</span>
-            <span className="flex items-center gap-1"><PhoneCall className="w-3 h-3" /> {typeof privateData?.sellerPhone === 'string' ? privateData.sellerPhone : (loadingPrivate ? 'Loading...' : 'N/A')}</span>
-          </div>
-          <div className="flex items-center gap-2 text-[10px] font-bold text-gray-400 truncate">
-            <MapPin className="w-3 h-3" /> {typeof privateData?.fullAddress === 'string' ? privateData.fullAddress : (loadingPrivate ? 'Loading...' : 'N/A')}
-          </div>
-      </div>
-      <div className="mt-4 flex gap-2">
-          <button 
-            onClick={() => {
-              alert("Manage Queries feature is being integrated. Use the Property Help Desk in the Real Estate section.");
-            }}
-            className="flex-1 py-3 bg-indigo-50 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2"
-          >
-            <MessageCircle className="w-4 h-4" />
-            Manage Queries
-          </button>
-          <button 
-            onClick={() => {
-              if (setDeleteConfirm) {
-                setDeleteConfirm({
-                  isOpen: true,
-                  title: "Delete Listing?",
-                  message: `Are you sure you want to permanently delete "${property.title}"? This cannot be undone.`,
-                  onConfirm: async () => {
-                    const { deleteDoc, doc: fireDoc } = await import('firebase/firestore');
-                    await deleteDoc(fireDoc(db, 'properties', property.id));
-                  }
-                });
-              } else if (confirm("Delete this listing?")) {
-                import('firebase/firestore').then(async ({ deleteDoc, doc: fireDoc }) => {
-                  await deleteDoc(fireDoc(db, 'properties', property.id));
-                });
-              }
-            }}
-            className="w-10 h-10 bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl flex items-center justify-center transition-all duration-200"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-      </div>
-    </div>
-  );
-};
-
-const HospitalOPModal = ({ isOpen, onClose, prices, onBook }: { isOpen: boolean, onClose: () => void, prices: Record<string, { price: number; isActive: boolean }>, onBook: (data: any) => void }) => {
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[600] flex items-center justify-center p-6">
-      <motion.div 
-        initial={{ opacity: 0 }} 
-        animate={{ opacity: 1 }} 
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-        className="absolute inset-0 bg-black/60 backdrop-blur-md" 
-      />
-      <motion.div 
-        initial={{ y: 100, opacity: 0, scale: 0.95 }}
-        animate={{ y: 0, opacity: 1, scale: 1 }}
-        exit={{ y: 100, opacity: 0, scale: 0.95 }}
-        className="bg-white w-full max-w-sm rounded-[3rem] p-2 shadow-2xl relative overflow-hidden"
-      >
-        <button onClick={onClose} className="absolute top-6 right-6 p-2 bg-gray-50 rounded-full text-gray-400 z-10">
-          <X className="w-5 h-5" />
-        </button>
-
-        <HospitalOPForm 
-          prices={prices}
-          onBook={(data) => {
-            onBook(data);
-            onClose();
-          }}
-        />
-      </motion.div>
-    </div>
-  );
-};
+    xú‘]Ôv€6ñˇﬁß¿h€πc ≤¸'∂«vècßmNõ∆ç≥”›Õ…iií8!	I≈vTÔáyõ}Ñ˘∫è2O2˜	Ä I9NwñlâÒ˜‚˛˝]àı:¬˜ßüÀuºÿ%”»œÛ˝òû
+z[xyLf,)ºÎ»üæ#a·G·tpz·á—yûLiRÑÔ)yÌgsZo-v5ßçäﬂlè”€∑ÑæYÑ›z2M≈4óÒ‡Ùú≈iDJ∂'ÑeÕrR0≤L"=˘«ﬂ˛>Ÿìkñ,Û„≠‘÷ÏÒñu§Æ€pWÌ‰ç7[FπûóΩõå…¬õåˆH∆ñI@ÒòΩßŸ,b7ﬁ"öê¯⁄õ¨ù1™ázÔhÑoÓé±f^õZıÄ‰≈]DOV+r≈‚àˆ˜æê˚{≤ı‡AÕ"zK˛≤ÃãpvÁ]”‚ÜBü≈r‚j(KΩLSöM˝ú™Kt0∂.O˝‰ÙÄl·R]–H"£¡ÒøÌ,ø+W5¢≥¬Uÿ:0ÀÕ∆≠„≠ò!KF⁄˝ç˚œ‰„≥$å˝Ç^f4ß@»ßüïOV[_ë·’Y8ı±Çú\d˛Õ»W[’Àçwe˝´|¡nÙ∑ø¸í’~ôKﬁ“ÄÑINoL>xH‘s±[˚˛K·Œ2Ûns¢-!McAéÎQì&a˙‘-”ˆxÃ©…(Âãëï•∆ÕÙ6,:ÍhÓ¢ÿøınº8®∂ì§¯|·∞&∑ë˛Ò¶,hU6÷A}†µ°‘€fÄÙ‰]ÀÛÃøÛ†è¢jh5Œ=‰X¶±,TÌbì«ãIÉóaÔÎù√oÒ∂°m¡2Ië¡£0ô{E8_`"~OXBß… ùXõvrQ—:ã•q‰+ &ñÌ3°yA‚¬€ú˛{¿bçí≥$Ê3•1Ãèù°∫XÃı≤(XB,˝e…9˝›…j∏ANN	P¯ïπ;Ü3? ÈÜIA•ﬁRNµûíO"Ÿ‘ﬁCFä˘Hñù¿xíáÿ“ÀÚA£-Î\ˇáN∆{@±{;Î3–dRÇJ+∆R=∞0eoª%wûøAózªx‚î¬çÅÆu"GMÊ≈Çú¬û˝Zc8Ú“ã«~:‰wpel≈À~ZüÚéﬁùàå¬¿∂zxÎør#H:U§}èØ‡—U¸ñ@[‰‰‰Ñ»Üa§´—hîlí¶˙÷zIÔ…I66˛‰h¨¡¨‰U/»Í◊‘´≈¸õIF„∑%K©˘W…∏@=RÃGN#üÎD¶j0áSÚy9kÿaË˛†dUºí‘œ`˜ãw[ã,&A8gH˛É˚_ÌÉ∞Î^@)P⁄4ƒë~ô§È_Á,Z¬pê@∞Ôêw¡ˇ‘°‰8Îè⁄N_9é=e´í &¥¸§ÿ∂Ì™¶ÏlI\V∆bÎ ósˆ\À¿åóVøﬁx€8.¯£r§|ëÖ…;ØMÏî_º©Is…€tŒ.(CôMÒ∏¸∫/à§mâéüÇˆŸó≈ıökck•›‰X˝Í¥9P≥ﬁnLO='˚Âúh¬óOB˘JΩwõ(el"vª±¬4—eŒ@∂”<˜ÁÿÜ’©ö@E∑Ÿ aõGiMÆ—Å÷JæÌÁ†¨›m¿¿bJ~˚çÂ8°Öß0?	Ω! ‡ÕG˚ÅM˝àæÜ[W–Î|¯ÊÌ&YÅ ]f0ç),õ$`  -røÅ˝ä"6Ó›j~¢iyË|¥±—∏â=≤q5ì"˘¨ñõ/]¬≈∆,ªCÓÙzavpanÖ∞Í‹qnQU$ﬁXk‘uYMÓ–¥^«ƒm∞=´¡d≥èE{LØ≥0ÀØ√('/X‡G˝Õ%|Wæ˙)å%¡Å¡T"y|‘∆éõ‹øó5u'-°M)∫≠ÜìbYa•∂€ ÍYwãKä(‡5ì—Wj`>j5ßºáÜîbïIt∑√"≥…”G≥∏v˚Ámö¶ê–πˇÈŸTxßê8ü'3ñ≈|GÅÿ˘ƒˆ’‡Ù%◊ˇÌ˚W/ºÉÉ…·CL*ª˝§li=È∂“ƒj+ô¶í›ëcX=ª¿Ûv◊¥zl˛É:⁄Ã≥,öAä§)Ze5˝<n
+IÇÃ
+ÆÓŸz¿_æ*XF-ìaÃR·sÄ6	h!∫V]†¢π¡È%P«2m—7,ï#W¥‘Ã˜ÀUí+?$ﬂflJ≥êÊõ‰Ö&‰©ˇ¡˜3g;NIÌ~`¨NliÁDHø‚c‡Á`˜™7-˙ä8¶˙„÷¸Öü^Üâs—3ñSn∑¸ﬂ.˙86õ=ﬁ™7çctõMXxtüÉòŸ$ﬂ/¸8ˆ„G[ıu\‘∏Lé]Ìv7)áÖü˝—ŒA‰æfÁ |XL3ª9ÿÙ≈Än∏#4ã%E”BÒÅk»Ù˙ï‚¬ÌvÎ4	≈»-›t,B9Fêj:›Óå–úÉøHüDŒÑuµÏåºˇdÈt∂'ª±î&C†πËËèá€áOˆ˜vw&€„Å√W=Œyz+ÿ=Ö≈Ú£†2lÂw\ÈälA>1˝ÇùK”k)∂a˚/∆ÂÇ%¥mŒ—C$âq≠≈ËyLµ˛ÖüΩ£–/˘i~ ﬂDÃÁﬂû˙I3ÙeS’Øﬁ¿d˘≤8K^u‡C•—^‚U—ï∑°Ñ∫∏•–,ß«Õ Ñ96‚®I•O$m`ˆ›Ω4Ω◊Uw·û2çWiò¸º†42ßã˜≈x™èHËç^®{$z˘ﬁ£òf~1]ú˚Y`á˘‹âÒÿ5£Xè—oÙœ7∞O(M≠£1ûÍc—:F¢Íá^æÔ(æcyä÷œÀÀo¿æ1GQ?5F†ø¶Ù-Õ¬)ÕAÑñ.˘wt0≠»ú&»lè‡#/¶Î≤a.-·Ä'˜õ†ô”)X«a^(ew∆÷≤»¿°‚ÈùRtœVT7{YÚî±J‘„ÁzH›s]óÌ;œ?¯…|Èœ)π¢ùÇu–‡}|¬±òçb‰ÎÚÌ6¬©ÍËGU¥Ô0∏>/%OL…üCzCŒA\¬#=Ã≠ÄXÚö-ßã+‘£Â¥◊wÓÕr/ÿ{™√çRœí@+ﬂÎ2=bd◊ﬁd∑
+πHI≠¯ó–5≈RÚùà?ı’·Y„»†Lﬂ›ïÒéﬁŒ∏FÄÓ¶8˙ä–¡gMã]€M"·^‘=ßI&\Ñ5M™£k.aMIä‚∆©"…÷ﬂÜÉ4c≥0¢ÈjnÒ:5¬Y2]f9ÀºîÖ¸¶/6téÆgÊS	ÄèË¢Yœ—t„Ä~u†«í4p"w∏Xﬁ⁄oàØ6øÑ”:¥XÄΩº :‡¡“¢=P èîâ7(A:®ÀÃâΩÈ§VÆ"ª!An3‘î &üLë
+ÖÎÚÕˆ.tp∫ä$ïÉîVÈ†%Ïp|æ†Ô3ñ\∞”(BU‹pÉıFSπAGç}Y≤õW.%(ƒ†ÛOπbü€wh˜NjL≤”6≥{kA!4Î∆k=ˆTÂS¨gIèÕÙ0Pè◊ùŒA8Ä–ï‚”,gYªo#vmÛ‹Y∑©4∑>nru¬Ô?¡Ê‡cfZDèynÜ»‹ﬁb´íÉ⁄! Hx,w√Kh∞ë∞çpLéI¿O
+»†r’ÈàJKœ,°≤è§	UÇﬁÑ˘µ`ß˝◊'ãüÂ∫)ÿ^VÙ&	97Á0⁄Ç„ñ÷¶èÒJ@m	Ù±ÒHßãˇéœÆ˚ÍÎ=∂˘≥\2È”Ÿf˝Ïp¨ÎIª#±R¥˜gÿ˚n⁄6õ¶†ÆúØCb83ˇ»´ÍÌ#ëñ~◊ÓTÓpÏ‡ÈÇ€I7a± f`éÀª`•ë´Áˇõ0*ÑÚ®k3«®øÎ¥Àí´Âuå¡Ï!µ¢ ÈA~@MtÊ/£bÿÄÓ	ÛPtBTUÈÖÓÔıVï’4çCºåπÈßÅ9®“ƒ‰ ›7-Ÿ-bfl∫Ã=ú’09*ü´;M{,cˆ∂∞B∆%Â∏\¶ŒòeK‰Í8L“e—‰>≈]Z™Õ}¸ﬁèñ`ÈÁºıüñ4ªk“/p/Æ«UTÄäS˝¬êé
+ûA2‚ïYòX
+á.¿‹°Ÿ…†Ëå±`aï2Vô”Ï=:´6I¿–ŒG£Q≥ø÷Ÿ0S˚RO*[QòPa^m6¶Yù,;[ír@Lº¯2∞iü $:@_u¡†u¿\Ä¿∞XJˆÄEì-πõ6B∑ÿLÄÛ#1Ê6Aáﬁm%U±˙N˙|Ê?Ä(ß	r1¥¥qÛ¥„•À(ßtYÓMu*õ*ñ•[ <ï≠ˆê}/¬iˇ5iÂˇKUÛrC]-ÁsöÀúñh@õˆ™Jª£"„·Üä=jŒ±NQÂ+öK∑ﬁÕ∏°¡e∆ÇÂ¥»˚ï2⁄2wN+ÄôovL6R†Ãq!8{3∂´Ä†,\Ö «ü°∑b·=ôX˚∂vG‰ﬂñzUma√£rgá£ß  Y„ı´õ√F£√Ò&Ÿﬂ‡ê˚!ä¿#ÆT∫r‹<? +p¶ÙL`IŸA^ö˜…âÌoÚC{IG¿Z~Ÿîã{}◊Ôih+√ıŸC#v∆ï{)(.XK∑œ4ök∫çô∏–œﬁÇÙ.i!∆ ä==•ÍlœIûMOîWÓâÂçÜpo‚eBª˛ù0≈0àV,ª2\ı„6v∑Küjo≈ôÄ–äänáŸØÔQ¶≠ôﬁë£[q°©œ#g·*ÎFØÌúÅﬁ◊ÜIz –{/≤Çú˛„o„—ƒ6O±>›?≠ï9ﬁBÀ«eN	s)'Øÿçi0â≤ÄBHñÏ1ÃÜ(0~$Å`≥eN#aµ]d˛‹{Õºã0è√<ÁÜ€+ÍG¢˝	‹-¸Ù-ÊÑhc˙PòCª¢©≤N â
+y7◊øµ
+ÈLu ä Ø¡aÑ¢v*£í&≥`à'É[€ÌsÇ¿lÅÎÊà†Fyœ·÷\‚[—”¯÷3†±"Æ3ÌõœYÇ3 CïCäIl6Y≥Iﬁ”à!&S"¨2lä}!˘MòRrB^¯≈b…Pº?∫› _Uuånõ¬*úë°x˘òp÷¸€oDæÀoM∆V…	%û[÷L∏¶mB1b%HÁY2¶áY†√z=ﬂà∏]U!˘¢πÿo7… ˝¬˚¸ŒºMﬂ
+ ¥2∏SbéÓ¸Kç”íul∆ù≠)y5†q˛∞¿≠Iu∫ /ﬁíö≠Vº†%ŸoÇ¶öÕ√‰)Î Ê7x>ç˜öï’˙
+V,3Óª«“KÈNmNÏ±ªa+¨π Õâ∂≠™®kä}i.O[⁄D»/ı6êw◊2^≠‹∫F{1Á·vã≠ﬂ0Ùáø◊|d¥XfIü$(L[‘Nõ(3\1ÈU±|KÛÁ∂%£ıÛïËˇà+¥<<+Ù» ÑÂ
+Êed¬ Û„k`Ê‹¥fÀ–‘û£à¢Ó)˜9Ô#˘6Û”¡tj¡88∆ÈJ^%’_¯S!;∂ç\TéÓ@√œã3Ã˘ÚÒ=!•*Ôqwe.ñﬂ•¸µãØ™îÕ",ÏSW›vvÁj}—Q” ™CÍ∏p”œZ_kÛXqµÓI…@≈Ä~qlQyıH”÷◊w∑\ﬂ]Xﬂ'∞ºOAë%6°ä≠]Õ·ÛÄú›ﬁdl3Ê*>rµ≈lÿ;5Áµr¸Wt©|lÏìj@§°RfØ<∂£%Å«ﬁH	Í8Ò∂Üı L∏S’<¡XÃ-∑√yHfØ±‰’…=çƒ@aﬁ∏/∫´≈y¨O’ÒˇÚScôj¨IÈÊ«|—YE ˜V€±4NØòRË˝ïmª^.ùvbIÖ‚ﬂ¿Ú+YïVmÕ®+u&U+Gjß?âŸfû,Áuì˘ÚeM˘-†˘¥á·Èxäπ2à^_à¸;n/)yçÃX‘ÑÓ(ç8°]7 ∫∫~ [ä:Ô©ê$˝∂9V` ‹∂+4€Ó5Ll5wø{cº0¥%ÊéπüR¯"X˚Ü±¡È*÷fÓõ>˚§)◊æøk:l?◊¢ö‡#Úﬂ´¶gΩöt J–®ßK`ß’ÕÔ„aé©Ñ?¯`/äO…|îLÅ¿Â∑´/…|„ûºã€F⁄o˚∑íK M´ÓÅ‡4≠!åZßıÅâ[Ú“ı¯!Jö5É5ázNÏz\ôTã£πESê;•R0∆oƒü ¨K}¿´ù ›	`µ¸ëYlªH õ
+\∞
+)ﬁEwÌyd≤D˜A-l∫Úq=ODíÅ%p¡ä6˙]Ÿ<R€ÎùÄ”7Kx˚Q'jox|ÂóM:C+JèzÏpiﬂ&ÎÿÚZÀnêÿg∫;;_s™¸ÚRMÿÖﬂX3¬€ŸÕê&5Ïap7Oi^_~Üéd9m[Z^G¯ä ß¿Èzœu¯ìºZ∑x”≥]_9Hi›‡¶KfchTÌJ`Täπsß¯i	4¸ÇG%Bö7Û>r:59fÖ‚˘»ÑK™ÜMÈnC¬ªÑœ‡ÙŸm·πW%“•©wØì4Pü’í±¨á1à(gºÜ#ö4¿ìçŒ¢»XsS∫4Òj∆BÃ≥0 ¯Õ‘è ãèÍØ˚÷àËÍ¸Ïı≥o_æz˛Ï™évî—nËºï%
+G›s¯áÁ—í˛î◊7¬(ÑœoQÔìƒß˛‹$qßgŒ¡ã3tﬁÜ5ÄÏ"¢Ø˝ù≥µwbÁ¢ç5+˜∆ù™„–;N`‘ΩV≠«àwÛ„ÓzûµÿàOocú˛®x% Ó¿ct˚n4¸t}‚Ô´g™mÏTüòÈ*™∏q)Q—ç6º}›æÎ'K]7ËâÑ2ï£ÁÆx?FP´s`.tÍú¸»∞$˘`?ÜÇF7IT¶hl;®!gÎ]G˝⁄9?^&ﬁ”àæjo@˝ÇΩb·í•`öe‰L8ïˇì-…π #.~*‰Å*$V©(/äCÈÁHY-°Õ6©“8XÍ1‰ «ÿgÆMZä3êp6,‡£â9—¨'»fD%√KcÅÜ5	¢b7»˘¡vúÙ|§÷2yó Ó>ä˜9Pdç
+PÏ}-¸b<$“$;€a6ö=Ì¯Ê‰_Q⁄êÿˆ]l3‚:˜D‹;$éT±nG69ˆ&‰i∆áYÂ¬´qYãÔ9ÑmC~jò4ﬁ`á¸¥"”*m∏! jŸ$Xt˘=L3«ê∫≠ﬁ˚áJcŒ|ÃÈ/º¸ØK?£™EëÀ∂”ÎÏlá`ÛﬁÅ´QauÒ∆o<*¨Êòî≤˙5è]ßÑÂÕXAg≠◊‚ºi±‹v€ämuÑh&Nuiqå¥∆V'eÏm¢e»Ï¯¬ ÕﬂvJ£"µ∞Üj¥Õû?`à2ÓGû~‰]#˛“Ö›spZ3hTØÌá€Ÿ¶∂„ê‘u∞ı\5á&j˘mè>Ÿÿ0 MÙ	∆«øíaö_Ω¸s 
+‡Y¶Ñú4Ë!o®z¯ M´hÒh?ë»˚€ÖH‰M¥«¸◊Û‚≠Èø≥â6w˘óùÆó1⁄m˝dáWÿE'.^w õñ€^øWqπ¿Y87lõ≥˚QN∆3]uñæ Ã©ﬁπ7–¢M0ÄZ˘ãtß(Àße‡(z¿ñÑﬂ!n—˘Xˆœß39l«kc¬z-Øı38⁄+0é∆™7Ìãﬂ–r∫EóÊÓ–ÕÌd≈usÃ–k—Õ]™9æˆ ’ú∑◊W5Á "’·Ù®™˘√îoG™G ≈‚M√ò⁄JªÛß∫’Ÿ*É‘)¬~0sQ€_†-¿ƒÖâw”÷˙„Ë:%˝r]ß§@C◊·w;tßŸvﬁ´–xıBc ¬æÒ≥ o”po©i4õ:~^—ΩÂ	Õ’h4›_|7Eµ}Äx»õdj÷aÆuxÊcX¶ñòŒ+û¥†Àÿk^B…í–n<Pÿ6LøFK2Ö'˙`r§u1‹⁄HJÿÚSÂ˘¬:Xxπ<√èå[4≤Çªç›>ó˝xc¸T m–ñ◊h´ñâÅÌ¿o>Ÿk¡oˆ4òù|@El¢—`ÉuÚüÖåó	f›pﬂ}á-ı`º£¯Å¥˛0«^?qy– 9¬¯4dcã!˚)bÌÎ≥ºz˙/ãÍìÄœ“√(À=ıÉπë`fÎ´˛ºô%^µÉÕh+ÁΩvùkû"ÃkÜû^•ÂªË≠Ë¨ñ{ßª±˘a±å|úó~V`_Œ¶†⁄Í’ÒL≤pÏ˝∂S?‘I*V’ØmtÇ:–•-â¡ˇÇ˝h≥r∏/ìk≥äød=ﬁÃ§¯8Ìafª•oÓåWté?dh:ï£36Öı Öu&Ì, ı6ìÃ÷·ÿLQhx1ø…˙Ü∑‘é#*iæs∂ölÂ¡?w–¸]≠ıÚ4Hrf¿∑»w`≤gx\d$Öˆé¸Ôˇê…x≤Øu/U˜∫ÿ¥Úé“˜Í#pR`ÇÙ6eYAqL?:˜Oü˝  ˇˇ  VL¿

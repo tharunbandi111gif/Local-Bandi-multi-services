@@ -11,6 +11,15 @@ import {
 import { 
   getFirestore, 
   doc, 
+  getDoc,
+  setDoc,
+  updateDoc,
+  getDocs,
+  collection,
+  addDoc,
+  query,
+  where,
+  serverTimestamp,
   getDocFromServer, 
   initializeFirestore 
 } from 'firebase/firestore';
@@ -208,3 +217,125 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     throw new Error(JSON.stringify(errInfo));
   }
 }
+
+export interface CashfreeWebhookPayload {
+  orderId: string;
+  orderAmount?: number;
+  referenceId?: string;
+  txStatus?: string;
+  paymentMode?: string;
+  paymentTime?: string;
+  signature?: string;
+  cfPaymentId?: string | number;
+  customerPhone?: string;
+  customerEmail?: string;
+  rawPayload?: any;
+}
+
+/**
+ * Webhook handler to process Cashfree payment success notifications
+ * and update the Firestore order status to 'Paid' in real-time.
+ */
+export async function handleCashfreePaymentSuccessWebhook(payload: CashfreeWebhookPayload): Promise<{
+  success: boolean;
+  message: string;
+  orderId: string;
+}> {
+  const orderId = payload.orderId;
+  if (!orderId) {
+    throw new Error("Missing orderId in Cashfree webhook payload");
+  }
+
+  const orderDocRef = doc(db, 'orders', orderId);
+
+  try {
+    const orderSnap = await getDoc(orderDocRef);
+    if (orderSnap.exists()) {
+      await updateDoc(orderDocRef, {
+        status: 'Paid',
+        paymentStatus: 'Paid',
+        paymentMethod: 'cashfree',
+        cfPaymentId: payload.cfPaymentId || payload.referenceId || `CF_TXN_${Date.now()}`,
+        referenceId: payload.referenceId || null,
+        paidAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        paymentDetails: {
+          gateway: 'cashfree',
+          status: payload.txStatus || 'SUCCESS',
+          amount: payload.orderAmount || orderSnap.data()?.total || orderSnap.data()?.amount || 0,
+          paymentMode: payload.paymentMode || 'ONLINE',
+          processedAt: new Date().toISOString(),
+          cfPaymentId: payload.cfPaymentId || null,
+          signature: payload.signature || null
+        }
+      });
+    } else {
+      // Check if order exists by querying the custom 'orderId' field
+      const ordersRef = collection(db, 'orders');
+      const q = query(ordersRef, where('orderId', '==', orderId));
+      const qSnap = await getDocs(q);
+      if (!qSnap.empty) {
+        const targetDoc = qSnap.docs[0];
+        await updateDoc(doc(db, 'orders', targetDoc.id), {
+          status: 'Paid',
+          paymentStatus: 'Paid',
+          paymentMethod: 'cashfree',
+          cfPaymentId: payload.cfPaymentId || payload.referenceId || `CF_TXN_${Date.now()}`,
+          paidAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          paymentDetails: {
+            gateway: 'cashfree',
+            status: payload.txStatus || 'SUCCESS',
+            amount: payload.orderAmount || targetDoc.data()?.total || 0,
+            processedAt: new Date().toISOString(),
+            cfPaymentId: payload.cfPaymentId || null
+          }
+        });
+      } else {
+        // Create baseline order document with Paid status
+        await setDoc(orderDocRef, {
+          orderId: orderId,
+          status: 'Paid',
+          paymentStatus: 'Paid',
+          paymentMethod: 'cashfree',
+          amount: payload.orderAmount || 0,
+          total: payload.orderAmount || 0,
+          cfPaymentId: payload.cfPaymentId || payload.referenceId || `CF_${Date.now()}`,
+          createdAt: serverTimestamp(),
+          paidAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
+    }
+
+    // Persist real-time audit log
+    try {
+      await addDoc(collection(db, 'audit_logs'), {
+        type: 'cashfree_payment_webhook_success',
+        orderId: orderId,
+        amount: payload.orderAmount || 0,
+        status: 'PAID',
+        gateway: 'cashfree',
+        cfPaymentId: payload.cfPaymentId || payload.referenceId || null,
+        processedAt: serverTimestamp()
+      });
+    } catch (auditErr) {
+      console.warn("Audit logger non-blocking warning in Cashfree webhook:", auditErr);
+    }
+
+    console.log(`✅ [Cashfree Webhook] Order ${orderId} status successfully updated to 'Paid' in Firestore.`);
+    return {
+      success: true,
+      message: `Cashfree payment processed successfully for order ${orderId}. Status updated to Paid.`,
+      orderId
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `orders/${orderId}`);
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to process Cashfree webhook",
+      orderId
+    };
+  }
+}
+

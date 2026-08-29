@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, CreditCard, Wallet, Landmark, Phone, CheckCircle2, ShieldCheck, MapPin, ChevronRight, Sparkles, Smartphone, QrCode, Banknote, HelpCircle, User, Info, ClipboardList, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { db } from '../lib/firebase';
+import { db, handleCashfreePaymentSuccessWebhook } from '../lib/firebase';
 import { doc, onSnapshot, addDoc, collection, serverTimestamp, getDocs } from 'firebase/firestore';
+import { Cashfree } from '../services/cashfreeService';
 
 interface PaymentProps {
   onBack: () => void | Promise<void>;
@@ -82,6 +83,7 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
   const [showAddressPicker, setShowAddressPicker] = useState(false);
 
   const paymentMethods = [
+    { id: 'cashfree', name: 'Cashfree Gateway (Android SDK / UPI / Cards)', icon: ShieldCheck, color: 'bg-emerald-100 text-emerald-700', badge: 'Official PG' },
     { id: 'gpay', name: 'Google Pay', icon: Smartphone, color: 'bg-blue-100 text-blue-600' },
     { id: 'phonepe', name: 'PhonePe', icon: Phone, color: 'bg-purple-100 text-purple-600' },
     { id: 'bhim', name: 'BHIM UPI', icon: QrCode, color: 'bg-orange-100 text-orange-600' },
@@ -118,28 +120,96 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
     }
   };
 
+  // Helper to write transaction logs
+  const logPaymentTxn = async (method: string) => {
+    try {
+      await addDoc(collection(db, 'audit_logs'), {
+        type: 'payment_success',
+        amount: finalAmountIncludingTip,
+        tipAmount: tipSelection,
+        method: method,
+        status: 'SUCCESS',
+        customerName: userProfile?.name || userProfile?.fullName || 'Lokal Bandi User',
+        customerPhone: userProfile?.phone || '',
+        deliveryLocation: currentLocation || 'System Service Ingress',
+        txnId: `TXN-${Math.floor(100000 + Math.random() * 900000)}`,
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.warn("Audit logger non-blocking warning:", err);
+    }
+  };
+
+  const handleCashfreePaymentFlow = async () => {
+    setPaymentError(null);
+    setLoading(true);
+    setProcessingOrder(true);
+
+    const generatedOrderId = `LB_ORD_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+
+    try {
+      const cashfree = Cashfree.getInstance();
+      const result = await cashfree.startCashfreePayment(
+        {
+          orderId: generatedOrderId,
+          orderAmount: finalAmountIncludingTip,
+          customerDetails: {
+            customerPhone: address.phone || userProfile?.phone || '8790729816',
+            customerName: address.name || userProfile?.name || 'Local Bandi Customer',
+            customerEmail: userProfile?.email || `customer_${(address.phone || '8790729816').slice(-10)}@localbandi.com`
+          },
+          orderNote: `Local Bandi Checkout - ₹${finalAmountIncludingTip}`
+        },
+        {
+          onPaymentVerify: async (orderId, details) => {
+            console.log("💳 [Cashfree Webhook Verified Callback]:", orderId, details);
+            try {
+              await handleCashfreePaymentSuccessWebhook({
+                orderId: orderId,
+                orderAmount: finalAmountIncludingTip,
+                txStatus: 'SUCCESS',
+                paymentMode: 'CASHFREE_ANDROID_SDK',
+                cfPaymentId: details?.paymentId || details?.cfPaymentId || `CF_${Date.now()}`,
+                customerPhone: address.phone || userProfile?.phone || '',
+                rawPayload: details
+              });
+            } catch (hookErr) {
+              console.warn("Cashfree webhook handler non-blocking note:", hookErr);
+            }
+
+            await logPaymentTxn('cashfree');
+            await executeComplete('cashfree');
+          },
+          onPaymentFailure: (err, orderId) => {
+            console.warn("Cashfree Payment cancelled or failed:", err);
+            setPaymentError(err?.message || "Cashfree payment was cancelled or could not be completed.");
+            setLoading(false);
+            setProcessingOrder(false);
+          }
+        }
+      );
+
+      if (!result.success) {
+        setPaymentError(result.error || "Cashfree payment initiation error.");
+        setLoading(false);
+        setProcessingOrder(false);
+      }
+    } catch (err: any) {
+      console.error("Cashfree flow exception:", err);
+      setPaymentError(err?.message || "Failed to trigger Cashfree SDK flow.");
+      setLoading(false);
+      setProcessingOrder(false);
+    }
+  };
+
   const handlePayment = async () => {
     setPaymentError(null);
 
-    // Helper to write transaction logs
-    const logPaymentTxn = async (method: string) => {
-      try {
-        await addDoc(collection(db, 'audit_logs'), {
-          type: 'payment_success',
-          amount: finalAmountIncludingTip,
-          tipAmount: tipSelection,
-          method: method,
-          status: 'SUCCESS',
-          customerName: userProfile?.name || userProfile?.fullName || 'Lokal Bandi User',
-          customerPhone: userProfile?.phone || '',
-          deliveryLocation: currentLocation || 'System Service Ingress',
-          txnId: `TXN-${Math.floor(100000 + Math.random() * 900000)}`,
-          createdAt: serverTimestamp()
-        });
-      } catch (err) {
-        console.warn("Audit logger non-blocking warning:", err);
-      }
-    };
+    // 0. Cashfree Native SDK / PG Checkout
+    if (selectedMethod === 'cashfree') {
+      await handleCashfreePaymentFlow();
+      return;
+    }
 
     // 1. Credit / Debit Card validation
     if (selectedMethod === 'card') {
@@ -458,6 +528,37 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                   <div className="px-3 py-1 bg-gray-100 rounded-full text-[8px] font-black text-gray-500 uppercase tracking-widest">Encrypted</div>
                 </div>
 
+                {/* Display Official Cashfree Android Native SDK Option */}
+                <div className="mb-6 p-6 bg-gradient-to-br from-emerald-600 via-teal-700 to-slate-900 rounded-[2.5rem] text-white shadow-xl shadow-emerald-500/10 relative overflow-hidden group border border-emerald-400/20">
+                  <div className="absolute top-0 right-0 p-6 flex gap-2">
+                    <Smartphone className="w-4 h-4 text-emerald-200" />
+                    <ShieldCheck className="w-4 h-4 text-emerald-300" />
+                  </div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="px-2.5 py-0.5 bg-emerald-400/20 border border-emerald-300/30 rounded-full text-[8px] font-black uppercase tracking-widest text-emerald-200">
+                      Cashfree Android Native SDK
+                    </span>
+                  </div>
+                  <h4 className="text-xl font-black italic tracking-tight mb-1">Instant Cashfree Checkout</h4>
+                  <p className="text-xs text-emerald-100/80 font-medium mb-5 leading-relaxed">
+                    Zero redirection. High-speed Android native PG supporting UPI Intent, Cards, NetBanking & Wallets.
+                  </p>
+
+                  <button 
+                    id="btn_pay_with_cashfree"
+                    type="button"
+                    onClick={() => {
+                      setSelectedMethod('cashfree');
+                      handleCashfreePaymentFlow();
+                    }}
+                    disabled={loading}
+                    className="w-full py-4 bg-white hover:bg-emerald-50 text-emerald-900 rounded-2xl font-black uppercase tracking-widest text-[11px] active:scale-95 transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer border border-white"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                    Pay with Cashfree (₹{finalAmountIncludingTip})
+                  </button>
+                </div>
+
                 {/* Display Admin Direct Settlement Option */}
                 <div className="mb-6 p-6 bg-indigo-600 rounded-[2.5rem] text-white shadow-xl shadow-indigo-100 relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-6 flex gap-2">
@@ -722,6 +823,7 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                     <div className="w-6 h-6 border-2 border-slate-950/30 border-t-slate-950 rounded-full animate-spin" />
                   ) : (
                     <span>
+                      {selectedMethod === 'cashfree' && `Pay ₹${finalAmountIncludingTip} via Cashfree Native SDK`}
                       {selectedMethod === 'cod' && `Place Order via Cash on Delivery (₹${finalAmountIncludingTip})`}
                       {selectedMethod === 'gpay' && `Pay ₹${finalAmountIncludingTip} via Google Pay`}
                       {selectedMethod === 'phonepe' && `Pay ₹${finalAmountIncludingTip} via PhonePe`}

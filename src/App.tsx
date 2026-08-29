@@ -43,10 +43,12 @@ import { resetSandbox } from './lib/firestore-wrapper';
 
 import { useFirebase } from './contexts/FirebaseContext';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { AlertCircle, Power, RefreshCw, Users, Truck, ArrowRight, ShieldCheck, ShieldAlert, Bike } from 'lucide-react';
+import { AlertCircle, Power, RefreshCw, Users, Truck, ArrowRight, ShieldCheck, ShieldAlert, Bike, Store, CheckCircle2, X } from 'lucide-react';
 import BranchManager from './components/BranchManager';
 import { Branch } from './types';
 import { isPointInBranchBoundaries, getCoordsFromAddress } from './lib/geofencing';
+import { useSyncLatencyTracker } from './hooks/useSyncLatencyTracker';
+import { RealTimeSyncService } from './services/realTimeSyncService';
 
 import { SafeZone } from './components/common/SafeZone';
 import FloatingAppSwitcher from './components/common/FloatingAppSwitcher';
@@ -544,6 +546,18 @@ function AppContent() {
   }, [user]);
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(() => localStorage.getItem('lokal_maintenance_mode') === 'true');
   const [globalAnnouncement, setGlobalAnnouncement] = useState<string | null>(null);
+  const [vendorApprovalToast, setVendorApprovalToast] = useState<{ storeName: string; id: string } | null>(null);
+  const isInitialVendorsLoadedRef = React.useRef(false);
+  const knownApprovedVendorIdsRef = React.useRef<Set<string>>(new Set());
+
+  // ⚡ SyncLatencyTracker: Monitors Firestore snapshot metadata changes.
+  // If latency between Master Admin update and Client app reflection exceeds 500ms, forces an explicit refetch or document mutation signal.
+  const { metrics: syncMetrics, forceGlobalResync } = useSyncLatencyTracker({
+    thresholdMs: 500,
+    onHighLatencyDetected: (latency, path) => {
+      console.warn(`⚡ [App Latency Warning]: Firestore reflection latency of ${latency}ms exceeded 500ms on ${path}`);
+    }
+  });
 
   // Robust Master Admin Real-Time Synchronization Listener with Snapshot Monitoring
   useEffect(() => {
@@ -862,37 +876,217 @@ function AppContent() {
     localStorage.setItem('lokal_prev_maintenance', isMaintenanceMode.toString());
   }, [isMaintenanceMode]);
 
-  const [localInventory, setLocalInventory] = useState<(Product | Service)[]>([]);
+  const [localInventory, setLocalInventory] = useState<(Product | Service)[]>(() => {
+    try {
+      const cached = localStorage.getItem('cached_local_inventory') || localStorage.getItem('localInventory');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load cached inventory:", e);
+    }
+    return [...PRODUCTS, ...SERVICES];
+  });
 
+  const [approvedVendorIds, setApprovedVendorIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('cached_approved_vendors');
+      if (saved) {
+        return new Set(JSON.parse(saved));
+      }
+    } catch {}
+    return new Set(['admin-store', 'master-admin', 'admin', 'central', 'global', 'Central', 'Local Bandi', 'default_admin']);
+  });
+
+  // Sync approved vendors in real-time to gate vendor-created products in customer view
+  // and trigger in-app notification when Master Admin approves a new vendor
+  useEffect(() => {
+    if (!db) return;
+    const unsubVendors = onSnapshot(collection(db, 'vendors'), { includeMetadataChanges: true }, (snap) => {
+      const approvedIds = new Set<string>([
+        'admin-store', 
+        'master-admin', 
+        'admin', 
+        'central', 
+        'global', 
+        'Central', 
+        'Local Bandi', 
+        'default_admin'
+      ]);
+
+      const newlyApprovedVendors: any[] = [];
+
+      snap.docs.forEach(doc => {
+        const data = doc.data();
+        const status = (data.status || '').toLowerCase();
+        const isApproved = status === 'approved' || status === 'active' || status === 'verified' || doc.id === 'admin-store';
+        
+        if (isApproved) {
+          approvedIds.add(doc.id);
+          if (data.userId) approvedIds.add(data.userId);
+          if (data.storeName) approvedIds.add(data.storeName);
+          if (data.businessName) approvedIds.add(data.businessName);
+
+          // Check if this is a newly approved vendor that was not known before
+          if (isInitialVendorsLoadedRef.current && !knownApprovedVendorIdsRef.current.has(doc.id)) {
+            newlyApprovedVendors.push({ id: doc.id, ...data });
+          }
+        }
+      });
+
+      // Update known approved vendor IDs reference
+      knownApprovedVendorIdsRef.current = new Set(approvedIds);
+
+      // Trigger real-time customer in-app toast & invalidate cached inventory when a vendor is approved
+      if (newlyApprovedVendors.length > 0 && isInitialVendorsLoadedRef.current) {
+        const vendor = newlyApprovedVendors[0];
+        const storeName = vendor.businessName || vendor.storeName || vendor.name || 'New Local Partner';
+        
+        console.log(`🎉 [Vendor Approval Detected]: Master Admin approved "${storeName}". Invalidating cached_local_inventory.`);
+        
+        // 1. Trigger in-app toast notification informing the user that new products are now visible
+        setVendorApprovalToast({
+          storeName,
+          id: vendor.id
+        });
+
+        // Auto-dismiss toast after 6 seconds
+        setTimeout(() => {
+          setVendorApprovalToast(prev => prev?.id === vendor.id ? null : prev);
+        }, 6000);
+
+        // 2. Programmatically invalidate local cached_local_inventory to force a fresh pull
+        try {
+          localStorage.removeItem('cached_local_inventory');
+          localStorage.removeItem('localInventory');
+          console.log("🧹 [Cache Invalidation]: Purged local inventory cache. Triggering fresh fetch from Firestore.");
+        } catch (e) {
+          console.warn("Failed to clear local inventory cache:", e);
+        }
+
+        // 3. Signal inventory refresh
+        window.dispatchEvent(new CustomEvent('inventory_invalidated', { detail: { approvedVendorId: vendor.id, storeName } }));
+        RealTimeSyncService.forceRefetchQuery(query(collection(db, 'products'), limit(500)), 'products_post_vendor_approval');
+      }
+
+      isInitialVendorsLoadedRef.current = true;
+      setApprovedVendorIds(approvedIds);
+      try {
+        localStorage.setItem('cached_approved_vendors', JSON.stringify(Array.from(approvedIds)));
+      } catch {}
+    }, (err) => {
+      console.warn("Vendors approval listener error:", err);
+    });
+
+    return () => unsubVendors();
+  }, []);
+
+  // Real-time throttled listener with offline-first caching for cloud inventory
   useEffect(() => {
     if (!db || !currentBranchId) return;
+
+    let throttleTimer: any = null;
 
     // Fetch cloud inventory for BOTH products and services across categories
     const productsQ = query(collection(db, 'products'), limit(500));
     const unsub = onSnapshot(productsQ, (snap) => {
-      const cloudItems = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product | Service));
-      
-      // Merge: Start with hardcoded defaults, then filter them by branch if they have one, 
-      // then priority-merge cloud items
-      const merged = new Map<string, Product | Service>();
-      
-      // 1. Add hardcoded items that are either global or match current branch
-      [...PRODUCTS, ...SERVICES].forEach(item => {
-        if (!item.branchId || item.branchId === currentBranchId || currentBranchId === 'khammam_main') {
-          merged.set(item.id, item);
-        }
-      });
+      if (throttleTimer) clearTimeout(throttleTimer);
 
-      // 2. Overwrite with real database items saved in categories (takes precedence)
-      cloudItems.forEach(item => {
-        if (!item.branchId || item.branchId === currentBranchId || currentBranchId === 'khammam_main') {
-          merged.set(item.id, item);
+      throttleTimer = setTimeout(() => {
+        const cloudItems = snap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() } as Product | Service))
+          .filter(item => {
+            if (!item || (item as any).deleted === true || (item as any).status === 'deleted') return false;
+            
+            const itemVendorId = (item as any).vendorId;
+            const isAdminItem = !itemVendorId || 
+              itemVendorId === 'admin-store' || 
+              itemVendorId === 'admin' || 
+              itemVendorId === 'master-admin' || 
+              itemVendorId === 'global' || 
+              itemVendorId === 'central' ||
+              itemVendorId === 'Central' ||
+              itemVendorId === 'Local Bandi' ||
+              itemVendorId === 'default_admin';
+
+            if (isAdminItem) {
+              // Master Admin / Central products are always visible unless explicitly marked unapproved or pending
+              return (item as any).isApproved !== false && (item as any).status !== 'pending_approval' && (item as any).status !== 'rejected';
+            }
+
+            // Vendor product must have explicit approval or belong to an approved vendor
+            const isVendorApproved = approvedVendorIds.has(itemVendorId) || 
+              (item as any).isApproved === true || 
+              (item as any).status === 'Approved' || 
+              (item as any).status === 'approved';
+
+            const isItemDisapproved = (item as any).isApproved === false || 
+              (item as any).status === 'Pending' || 
+              (item as any).status === 'pending' || 
+              (item as any).status === 'pending_approval' ||
+              (item as any).status === 'rejected' ||
+              (item as any).status === 'banned';
+
+            return isVendorApproved && !isItemDisapproved;
+          });
+        
+        const matchesBranch = (item: Product | Service) => {
+          return (
+            !item.branchId ||
+            item.branchId === 'global' ||
+            item.branchId === 'all' ||
+            item.branchId === '' ||
+            item.branchId === currentBranchId ||
+            currentBranchId === 'khammam_main' ||
+            currentBranchId === 'khammam-main' ||
+            currentBranchId === 'all'
+          );
+        };
+
+        const merged = new Map<string, Product | Service>();
+        
+        if (cloudItems.length === 0) {
+          // 1. Fallback to hardcoded defaults only if database is completely empty
+          [...PRODUCTS, ...SERVICES].forEach(item => {
+            if (matchesBranch(item)) {
+              merged.set(item.id, item);
+            }
+          });
+        } else {
+          // 2. Real database items saved in products collection (Authoritative)
+          cloudItems.forEach(item => {
+            if (matchesBranch(item)) {
+              merged.set(item.id, item);
+            }
+          });
+
+          // 3. Keep essential non-conflicting default services available
+          [...PRODUCTS, ...SERVICES].forEach(item => {
+            if (!merged.has(item.id) && matchesBranch(item)) {
+              merged.set(item.id, item);
+            }
+          });
         }
-      });
-      
-      setLocalInventory(Array.from(merged.values()));
+        
+        const inventoryList = Array.from(merged.values());
+        setLocalInventory(inventoryList);
+        try {
+          localStorage.setItem('cached_local_inventory', JSON.stringify(inventoryList));
+          localStorage.setItem('localInventory', JSON.stringify(inventoryList));
+        } catch {}
+      }, 50); // 50ms throttle batches rapid multi-document writes cleanly
     }, err => {
-      console.warn("Failed to subscribe to cloud inventory (likely cloud quota hit). Merging default items:", err);
+      console.warn("Failed to subscribe to cloud inventory. Loading offline cache / defaults:", err);
+      const cached = localStorage.getItem('cached_local_inventory') || localStorage.getItem('localInventory');
+      if (cached) {
+        try {
+          setLocalInventory(JSON.parse(cached));
+          return;
+        } catch {}
+      }
       const merged = new Map<string, Product | Service>();
       [...PRODUCTS, ...SERVICES].forEach(item => {
         if (!item.branchId || item.branchId === currentBranchId) {
@@ -903,8 +1097,11 @@ function AppContent() {
       handleFirestoreError(err, OperationType.LIST, 'products');
     });
 
-    return () => unsub();
-  }, [currentBranchId]);
+    return () => {
+      if (throttleTimer) clearTimeout(throttleTimer);
+      unsub();
+    };
+  }, [currentBranchId, approvedVendorIds]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1249,16 +1446,22 @@ function AppContent() {
 
       console.log(`[Order Flow] Successfully committed order "${orderId}" to Firestore with paymentStatus: "${orderRecord.paymentStatus}"`);
 
-      // Explicit verification check: ensure the document exists in Firestore before completing navigation
-      console.log(`[Order Flow] Verifying document existence for order "${orderId}"...`);
-      const orderSnap = await getDoc(doc(db, 'orders', orderId));
-      if (!orderSnap.exists()) {
-        console.error(`[Order Flow Error] Document verification failed! Order "${orderId}" not found in Firestore after setDoc.`);
-        alert("⚠️ Order Verification Warning: We encountered a network issue verifying your saved order. The application will refresh now to sync your status.");
-        window.location.reload();
-        return;
+      // Offline-first local order caching
+      try {
+        const cachedOrdersStr = localStorage.getItem('cached_user_orders') || '[]';
+        const currentCached = JSON.parse(cachedOrdersStr);
+        const orderDataForCache = {
+          id: orderId,
+          ...orderRecord,
+          createdAt: new Date().toISOString(),
+          timestamp: new Date().toISOString()
+        };
+        const updatedOrders = [orderDataForCache, ...currentCached.filter((o: any) => o.id !== orderId)];
+        localStorage.setItem('cached_user_orders', JSON.stringify(updatedOrders));
+        window.dispatchEvent(new CustomEvent('orders_updated', { detail: { orderId, order: orderDataForCache } }));
+      } catch (cacheErr) {
+        console.warn("Local orders cache notice:", cacheErr);
       }
-      console.log(`[Order Flow Verification] Verified order "${orderId}" exists in Firestore with status "${orderSnap.data()?.status}"!`);
 
       // Real-time SMS Gateway Integration
       const phone = userProfile?.phone || user?.phoneNumber;
@@ -1959,6 +2162,41 @@ function AppContent() {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Real-time In-App Vendor Approval Toast Notification */}
+      <AnimatePresence>
+        {vendorApprovalToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -40, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -30, scale: 0.95 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            className="fixed top-4 left-4 right-4 max-w-md mx-auto z-[10002] bg-slate-900/95 border-2 border-amber-400/60 shadow-2xl backdrop-blur-xl p-4 rounded-2xl flex items-center justify-between gap-3 text-white"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-400/20 border border-amber-400/40 flex items-center justify-center text-amber-400 flex-shrink-0">
+                <Store className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">New Store Approved & Live</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                </div>
+                <p className="text-xs font-bold text-slate-100 leading-snug mt-0.5">
+                  <span className="text-amber-300 font-extrabold">{vendorApprovalToast.storeName}</span> is now approved! New products are now visible in your catalog.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setVendorApprovalToast(null)}
+              className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors flex-shrink-0"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
     </>

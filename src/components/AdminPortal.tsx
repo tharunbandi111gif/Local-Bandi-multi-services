@@ -10,8 +10,12 @@ import {
   Star, Check, X, Shield, Globe, AlertCircle, Home,
   Zap, Award, RotateCcw, Sparkles, Timer, Gift, Trophy,
   UserPlus, UserMinus, UserCheck, Smartphone, Key, AlertOctagon, CheckCircle2,
-  Lock, Unlock, PhoneCall
+  Lock, Unlock, PhoneCall, Upload, Camera, Image as ImageIcon, Link as LinkIcon,
+  CheckSquare, Square, Filter, SlidersHorizontal, Layers,
+  Printer, Receipt, Copy, ExternalLink, Clock, CreditCard, PackageCheck, Truck, Phone, MessageSquare, Navigation, Eye, Share2,
+  Play, Pause, Wrench, Download
 } from 'lucide-react';
+import { compressImage, validateImageFile, processImageUpload, MAX_IMAGE_FILE_SIZE_BYTES } from '../lib/imageUtils';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
@@ -28,6 +32,8 @@ import { getStoredQuizQuestions, DEFAULT_LOW_PRICE_QUIZ_QUESTIONS, QuizQuestion 
 import { AuthorizedAdmin, AuthorizedAdminsConfig, SOSAlert } from '../types';
 import SOSAlertIndicator from './common/SOSAlertIndicator';
 import { AttractionCampaignsManager } from './AttractionCampaignsManager';
+import { RealTimeSyncService } from '../services/realTimeSyncService';
+import { DeploymentReadinessWidget, ApkGenerationHub } from './AdminApkHub';
 
 export default function AdminPortal() {
   const { 
@@ -79,7 +85,7 @@ export default function AdminPortal() {
 
   const [adminPasscode, setAdminPasscode] = useState('');
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'sos' | 'ai_desk' | 'attractions' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'apk_hub' | 'sos' | 'ai_desk' | 'attractions' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz'>('dashboard');
 
   // --- EMERGENCY SOS DISTRESS ALERTS STATES ---
   const [sosAlerts, setSosAlerts] = useState<SOSAlert[]>([]);
@@ -105,9 +111,12 @@ export default function AdminPortal() {
   // --- LOGISTICS HUB STATES ---
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [logisticsFilter, setLogisticsFilter] = useState<'All' | 'Pending' | 'Accepted' | 'Preparing' | 'OutForDelivery' | 'Delivered' | 'Cancelled'>('All');
+  const [logisticsSearchQuery, setLogisticsSearchQuery] = useState('');
   const [bulkSelectedOrderIds, setBulkSelectedOrderIds] = useState<string[]>([]);
   const [editingOrder, setEditingOrder] = useState<any | null>(null);
   const [showOrderModal, setShowOrderModal] = useState(false);
+  const [inspectingOrder, setInspectingOrder] = useState<any | null>(null);
+  const [showOrderDossierModal, setShowOrderDossierModal] = useState(false);
 
   // App metrics state
   const [stats, setStats] = useState({
@@ -149,6 +158,18 @@ export default function AdminPortal() {
     image: '', description: '', isAvailable: true, vendorId: 'admin-store', branchId: 'khammam_main',
     subCategory: '', stock: ''
   });
+  const [itemImageError, setItemImageError] = useState<string | null>(null);
+  const [categoryImageError, setCategoryImageError] = useState<string | null>(null);
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
+
+  // Admin Catalog Search, Filter & Batch Selection States
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [productCategoryFilter, setProductCategoryFilter] = useState('all');
+  const [productStockFilter, setProductStockFilter] = useState<'all' | 'in_stock' | 'out_of_stock'>('all');
+  const [productVendorFilter, setProductVendorFilter] = useState('all');
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   // Hospital Booking Edit/Delete & Filters State
   const [showHospitalBookingModal, setShowHospitalBookingModal] = useState(false);
@@ -288,6 +309,26 @@ export default function AdminPortal() {
 
   // --- FOUNDER CONTROL PANEL STATES ---
   const [banners, setBanners] = useState<any[]>([]);
+  const [bannerSliderConfig, setBannerSliderConfig] = useState<{
+    autoSlideEnabled: boolean;
+    bannerAnimationEnabled: boolean;
+    intervalMs: number;
+    transitionType: 'fade' | 'slide' | 'none';
+    pauseOnHover: boolean;
+    pauseOnTouch: boolean;
+    antiFlickerMode: boolean;
+    updatedAt?: string;
+  }>({
+    autoSlideEnabled: true,
+    bannerAnimationEnabled: true,
+    intervalMs: 6000,
+    transitionType: 'slide',
+    pauseOnHover: true,
+    pauseOnTouch: true,
+    antiFlickerMode: true
+  });
+  const [isSavingBannerConfig, setIsSavingBannerConfig] = useState(false);
+  const [isFixingBanners, setIsFixingBanners] = useState(false);
   const [deals, setDeals] = useState<any[]>([]);
   const [showDealModal, setShowDealModal] = useState(false);
   const [editingDeal, setEditingDeal] = useState<any | null>(null);
@@ -546,7 +587,16 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
   const [showBannerModal, setShowBannerModal] = useState(false);
   const [editingBanner, setEditingBanner] = useState<any | null>(null);
   const [bannerForm, setBannerForm] = useState({
-    title: '', description: '', image: '', route: 'restaurant', status: 'active'
+    title: '',
+    description: '',
+    image: '',
+    route: 'restaurant',
+    type: 'top',
+    color: 'bg-slate-900',
+    status: 'active',
+    cta: 'Shop Now',
+    categoryId: '',
+    productId: ''
   });
 
   const [showPromoModal, setShowPromoModal] = useState(false);
@@ -1044,21 +1094,41 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
   useEffect(() => {
     if (!isAdminAuthenticated || !user) return;
 
-    // 1. Sync Vendors
-    const unsubVendors = onSnapshot(collection(db, 'vendors'), (snap) => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setVendors(list);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'vendors');
-    });
+    // 1. Sync Vendors with real-time pending approvals tracking
+    const unsubVendors = RealTimeSyncService.subscribeQuery(
+      'admin_vendors_master',
+      collection(db, 'vendors'),
+      (docs, meta) => {
+        setVendors(docs);
+        const pendVendors = docs.filter((v: any) => v.status === 'Pending').length;
+        setStats(prev => ({
+          ...prev,
+          totalVendors: docs.length,
+          pendingVendors: pendVendors
+        }));
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'vendors');
+      }
+    );
 
-    // 2. Sync Riders
-    const unsubRiders = onSnapshot(collection(db, 'deliveryPartners'), (snap) => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setRiders(list);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'deliveryPartners');
-    });
+    // 2. Sync Riders with real-time pending approvals tracking
+    const unsubRiders = RealTimeSyncService.subscribeQuery(
+      'admin_riders_master',
+      collection(db, 'deliveryPartners'),
+      (docs, meta) => {
+        setRiders(docs);
+        const pendRiders = docs.filter((r: any) => r.status === 'Pending').length;
+        setStats(prev => ({
+          ...prev,
+          totalRiders: docs.length,
+          pendingRiders: pendRiders
+        }));
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'deliveryPartners');
+      }
+    );
 
     // 3. Sync Products
     const unsubProducts = onSnapshot(collection(db, 'products'), (snap) => {
@@ -1161,23 +1231,37 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       handleFirestoreError(err, OperationType.LIST, 'categories');
     });
 
-    // 7. Sync orders for quick metrics helper
-    const unsubOrders = onSnapshot(collection(db, 'orders'), (snap) => {
-      let revenue = 0;
-      let active = 0;
-      snap.docs.forEach((doc) => {
-        const d = doc.data();
-        if (d.total) revenue += Number(d.total) || 0;
-        if (['Pending', 'Preparing', 'On Trip'].includes(d.status)) active++;
-      });
-      setStats(prev => ({
-        ...prev,
-        activeOrders: active,
-        totalSales: revenue
-      }));
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'orders');
-    });
+    // 7. Real-Time Dashboard Analytics & Unified Master Orders Listener
+    const unsubOrders = RealTimeSyncService.subscribeQuery(
+      'admin_orders_master',
+      collection(db, 'orders'),
+      (docs, meta) => {
+        setOrders(docs);
+
+        let totalRevenue = 0;
+        let activeOrdersCount = 0;
+
+        docs.forEach((d: any) => {
+          if (d.total) {
+            totalRevenue += Number(d.total) || 0;
+          }
+          if (['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery', 'PickedUp', 'On Trip'].includes(d.status)) {
+            activeOrdersCount++;
+          }
+        });
+
+        console.log(`📊 [Admin RealTime Analytics] Synchronized ${docs.length} orders across branches. Total Revenue: ₹${totalRevenue}, Active Orders: ${activeOrdersCount} (${meta.fromCache ? 'Cache' : 'Live'})`);
+
+        setStats(prev => ({
+          ...prev,
+          activeOrders: activeOrdersCount,
+          totalSales: totalRevenue
+        }));
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'orders');
+      }
+    );
 
     // 8. Sync Banners
     const unsubBanners = onSnapshot(collection(db, 'banners'), (snap) => {
@@ -1247,6 +1331,26 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       console.warn("Failed to subscribe to banners:", err);
     });
 
+    // 8a. Sync Banner Slider Configuration & Anti-Flicker Settings
+    const unsubBannerConfig = onSnapshot(doc(db, 'settings', 'banner_config'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setBannerSliderConfig(prev => ({
+          ...prev,
+          autoSlideEnabled: data.autoSlideEnabled !== false,
+          bannerAnimationEnabled: data.bannerAnimationEnabled !== false,
+          intervalMs: typeof data.intervalMs === 'number' && data.intervalMs >= 1000 ? data.intervalMs : 6000,
+          transitionType: data.transitionType || 'slide',
+          pauseOnHover: data.pauseOnHover !== false,
+          pauseOnTouch: data.pauseOnTouch !== false,
+          antiFlickerMode: data.antiFlickerMode !== false,
+          updatedAt: data.updatedAt
+        }));
+      }
+    }, (err) => {
+      console.warn("Failed to subscribe to banner slider config:", err);
+    });
+
     // 8b. Sync Deals of the Day
     const unsubDeals = onSnapshot(collection(db, 'deals_of_the_day'), (snap) => {
       if (snap.empty) {
@@ -1310,12 +1414,8 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       console.warn("Failed to subscribe to users:", err);
     });
 
-    // 12. Full Orders Sync for Dispatch Overrides
-    const unsubOrdersFull = onSnapshot(collection(db, 'orders'), (snap) => {
-      setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, (err) => {
-      console.warn("Failed to subscribe to full orders:", err);
-    });
+    // 12. Full Orders Sync for Dispatch Overrides (Handled by unified RealTimeSyncService listener above)
+    const unsubOrdersFull = () => {};
 
     // 13. Sync Dispatch Automation Toggle Config
     const unsubDispatchConfig = onSnapshot(doc(db, 'settings', 'dispatch_config'), (snap) => {
@@ -1449,6 +1549,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       unsubCategories();
       unsubOrders();
       unsubBanners();
+      unsubBannerConfig();
       unsubDeals();
       unsubReviews();
       unsubBranches();
@@ -1627,7 +1728,24 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
   // Vendor approvals & suspensions operations
   const handleUpdateVendorStatus = async (id: string, status: 'Approved' | 'Banned' | 'Pending') => {
     try {
-      await updateDoc(doc(db, 'vendors', id), { status });
+      await RealTimeSyncService.validatedUpdateDoc(doc(db, 'vendors', id), { 
+        status,
+        isApproved: status === 'Approved',
+        updatedAt: serverTimestamp()
+      });
+      // Also update linked partner_applications if any
+      try {
+        const vendorDoc = vendors.find(v => v.id === id);
+        const phone = vendorDoc?.phone;
+        const uid = vendorDoc?.userId;
+        if (phone || uid) {
+          const appsQuery = query(collection(db, 'partner_applications'), where('phone', '==', phone || ''));
+          const appSnap = await getDocs(appsQuery);
+          appSnap.forEach(async (d) => {
+            await RealTimeSyncService.validatedUpdateDoc(doc(db, 'partner_applications', d.id), { status });
+          });
+        }
+      } catch (_) {}
       triggerToast(`✓ Vendor status updated to: ${status}`);
     } catch (err) {
       console.error(err);
@@ -1637,13 +1755,29 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
   // Rider approvals & status operations
   const handleUpdateRiderStatus = async (id: string, status: 'Approved' | 'Banned' | 'Pending', isOnline?: boolean) => {
     try {
-      const updates: any = { status };
+      const updates: any = { 
+        status,
+        isApproved: status === 'Approved',
+        updatedAt: serverTimestamp()
+      };
       if (typeof isOnline === 'boolean') {
         updates.isOnline = isOnline;
-        updates.status = isOnline ? 'Online' : 'Offline';
       }
-      await updateDoc(doc(db, 'deliveryPartners', id), updates);
-      triggerToast(`✓ Rider status updated successfully`);
+      await RealTimeSyncService.validatedUpdateDoc(doc(db, 'deliveryPartners', id), updates);
+      // Also update linked partner_applications if any
+      try {
+        const riderDoc = riders.find(r => r.id === id);
+        const phone = riderDoc?.phone;
+        const uid = riderDoc?.userId;
+        if (phone || uid) {
+          const appsQuery = query(collection(db, 'partner_applications'), where('phone', '==', phone || ''));
+          const appSnap = await getDocs(appsQuery);
+          appSnap.forEach(async (d) => {
+            await RealTimeSyncService.validatedUpdateDoc(doc(db, 'partner_applications', d.id), { status });
+          });
+        }
+      } catch (_) {}
+      triggerToast(`✓ Rider status updated successfully to: ${status}`);
     } catch (err) {
       console.error(err);
     }
@@ -1667,31 +1801,48 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
 
   const handleSaveBanner = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!bannerForm.title.trim()) return;
     try {
+      const bannerData = {
+        title: bannerForm.title.trim(),
+        description: bannerForm.description.trim(),
+        sub: bannerForm.description.trim(),
+        image: bannerForm.image.trim(),
+        img: bannerForm.image.trim(),
+        route: bannerForm.route || 'restaurant',
+        type: bannerForm.type || 'top',
+        color: bannerForm.color || 'bg-slate-900',
+        status: bannerForm.status || 'active',
+        cta: bannerForm.cta.trim() || 'Shop Now',
+        categoryId: bannerForm.categoryId || (bannerForm.route && bannerForm.route !== 'restaurant' ? bannerForm.route : ''),
+        productId: bannerForm.productId || '',
+        updatedAt: serverTimestamp()
+      };
+
       if (editingBanner) {
-        await updateDoc(doc(db, 'banners', editingBanner.id), {
-          title: bannerForm.title.trim(),
-          description: bannerForm.description.trim(),
-          image: bannerForm.image.trim(),
-          route: bannerForm.route,
-          status: bannerForm.status,
-          updatedAt: serverTimestamp()
-        });
-        triggerToast('✓ Banner saved successfully');
+        await updateDoc(doc(db, 'banners', editingBanner.id), bannerData);
+        triggerToast('✓ Banner updated successfully');
       } else {
         await addDoc(collection(db, 'banners'), {
-          title: bannerForm.title.trim(),
-          description: bannerForm.description.trim(),
-          image: bannerForm.image.trim(),
-          route: bannerForm.route,
-          status: bannerForm.status,
+          ...bannerData,
           createdAt: serverTimestamp()
         });
         triggerToast('✓ Created new promotional slide banner');
       }
       setShowBannerModal(false);
       setEditingBanner(null);
-      setBannerForm({ title: '', description: '', image: '', route: 'restaurant', status: 'active' });
+      setBannerForm({
+        title: '',
+        description: '',
+        image: '',
+        route: 'restaurant',
+        type: 'top',
+        color: 'bg-slate-900',
+        status: 'active',
+        cta: 'Shop Now',
+        categoryId: '',
+        productId: ''
+      });
     } catch (e) {
       console.error(e);
       alert('Error updating brochure banner');
@@ -1705,6 +1856,80 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       triggerToast('✓ Brochure slide deleted successfully');
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleToggleBannerStatus = async (banner: any) => {
+    const newStatus = banner.status === 'inactive' || banner.status === 'hidden' ? 'active' : 'inactive';
+    try {
+      await updateDoc(doc(db, 'banners', banner.id), { status: newStatus, updatedAt: serverTimestamp() });
+      triggerToast(`✓ Banner "${banner.title}" set to ${newStatus}`);
+    } catch (err: any) {
+      console.error("Error toggling banner status:", err);
+      handleFirestoreError(err, OperationType.UPDATE, `banners/${banner.id}`);
+    }
+  };
+
+  const handleSaveBannerSliderConfig = async (overrides?: Partial<typeof bannerSliderConfig>) => {
+    setIsSavingBannerConfig(true);
+    try {
+      const payload = {
+        ...bannerSliderConfig,
+        ...(overrides || {}),
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.phoneNumber || user?.email || 'admin'
+      };
+      await setDoc(doc(db, 'settings', 'banner_config'), payload, { merge: true });
+      if (overrides) {
+        setBannerSliderConfig(prev => ({ ...prev, ...overrides }));
+      }
+      triggerToast('✓ Banner slider settings updated and synced across all apps!');
+    } catch (err: any) {
+      console.error("Error updating banner slider settings:", err);
+      handleFirestoreError(err, OperationType.WRITE, 'settings/banner_config');
+    } finally {
+      setIsSavingBannerConfig(false);
+    }
+  };
+
+  const handleFixAndStabilizeBanners = async () => {
+    setIsFixingBanners(true);
+    try {
+      // 1. Stabilize and enforce Anti-Flicker settings
+      const stableConfig = {
+        autoSlideEnabled: true,
+        bannerAnimationEnabled: true,
+        intervalMs: 6000,
+        transitionType: 'slide' as const,
+        pauseOnHover: true,
+        pauseOnTouch: true,
+        antiFlickerMode: true,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.phoneNumber || user?.email || 'Admin (Anti-Flicker Stabilizer)'
+      };
+      await setDoc(doc(db, 'settings', 'banner_config'), stableConfig, { merge: true });
+      setBannerSliderConfig(stableConfig);
+
+      // 2. Scan and repair all banners in Firestore to ensure valid IDs, status, colors and fallbacks
+      let repairedCount = 0;
+      for (const b of banners) {
+        if (!b.id) continue;
+        const updates: any = {};
+        if (!b.status || b.status === '') updates.status = 'active';
+        if (!b.color) updates.color = 'bg-slate-900';
+        if (!b.type) updates.type = 'top';
+        if (Object.keys(updates).length > 0) {
+          await updateDoc(doc(db, 'banners', b.id), updates).catch(() => {});
+          repairedCount++;
+        }
+      }
+
+      triggerToast(`✓ All Banners Stabilized! Anti-flicker mode enabled and ${repairedCount} banner entries optimized.`);
+    } catch (err: any) {
+      console.error("Error fixing banners:", err);
+      triggerToast('⚠️ Unable to stabilize banners. Please check connection.');
+    } finally {
+      setIsFixingBanners(false);
     }
   };
 
@@ -2029,7 +2254,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     if (!riderId) return;
     try {
       const selectedRider = riders.find(r => r.id === riderId);
-      await updateDoc(doc(db, 'orders', orderId), {
+      await RealTimeSyncService.validatedUpdateDoc(doc(db, 'orders', orderId), {
         riderId,
         deliveryPartnerId: riderId,
         riderName: selectedRider?.name || 'Assigned Driver',
@@ -2049,7 +2274,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
 
   const handleAcceptOrder = async (orderId: string) => {
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
+      await RealTimeSyncService.validatedUpdateDoc(doc(db, 'orders', orderId), {
         status: 'Accepted',
         adminAccepted: true,
         acceptedAt: serverTimestamp(),
@@ -2064,7 +2289,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
 
   const handleCancelOrderEx = async (orderId: string) => {
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
+      await RealTimeSyncService.validatedUpdateDoc(doc(db, 'orders', orderId), {
         status: 'Cancelled',
         cancelledAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -2094,7 +2319,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
 
   const handleUpdateOrderStatusEx = async (orderId: string, newStatus: string) => {
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
+      await RealTimeSyncService.validatedUpdateDoc(doc(db, 'orders', orderId), {
         status: newStatus,
         adminAccepted: true,
         updatedAt: serverTimestamp()
@@ -2104,6 +2329,122 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       console.error(e);
       triggerToast(`❌ Failed to update status.`);
     }
+  };
+
+  const handlePrintOrderInvoice = (ord: any) => {
+    if (!ord) return;
+    const printWindow = window.open('', '_blank', 'width=800,height=900');
+    if (!printWindow) {
+      alert('Please allow popups to print order invoice');
+      return;
+    }
+    const isCOD = (ord.paymentMethod || ord.paymentType || '').toUpperCase().includes('COD') || (ord.paymentMethod || '').toLowerCase() === 'cash_on_delivery' || !ord.paymentMethod;
+    const items = ord.orderItems || ord.items || [];
+    const createdDate = ord.createdAt 
+      ? (typeof ord.createdAt === 'string' ? new Date(ord.createdAt).toLocaleString() : (ord.createdAt.seconds ? new Date(ord.createdAt.seconds * 1000).toLocaleString() : 'Recent')) 
+      : 'Recent';
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Order Invoice #${ord.id?.slice(0, 8).toUpperCase()}</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #0f172a; max-width: 700px; margin: auto; }
+            .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 20px; }
+            .title { font-size: 22px; font-weight: 900; text-transform: uppercase; color: #0f172a; margin: 0; }
+            .subtitle { font-size: 11px; color: #64748b; font-weight: 700; margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+            .box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
+            .box h4 { margin: 0 0 6px; font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; }
+            .box p { margin: 2px 0; font-size: 12px; font-weight: 600; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
+            th { background: #0f172a; color: white; text-align: left; padding: 8px 12px; font-size: 10px; text-transform: uppercase; }
+            td { border-bottom: 1px solid #e2e8f0; padding: 8px 12px; }
+            .totals { margin-left: auto; width: 280px; font-size: 12px; }
+            .totals-row { display: flex; justify-content: space-between; padding: 4px 0; }
+            .totals-row.grand { font-size: 15px; font-weight: 900; border-top: 2px solid #0f172a; padding-top: 8px; margin-top: 6px; color: #059669; }
+            .footer { text-align: center; margin-top: 30px; font-size: 10px; color: #94a3b8; font-weight: bold; border-top: 1px dashed #cbd5e1; padding-top: 12px; }
+            @media print {
+              body { padding: 0; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1 class="title">Local Bandi Multi Services</h1>
+            <div class="subtitle">Official Tax Invoice & Delivery Manifest &bull; Order #${ord.id?.toUpperCase()}</div>
+          </div>
+          <div class="grid">
+            <div class="box">
+              <h4>Customer Details</h4>
+              <p><strong>${ord.customerName || ord.userName || 'Customer'}</strong></p>
+              <p>Phone: ${ord.phone || ord.userPhone || 'N/A'}</p>
+              <p>Address: ${ord.address || 'Khammam Delivery'}</p>
+            </div>
+            <div class="box">
+              <h4>Order & Payment Details</h4>
+              <p>Date: ${createdDate}</p>
+              <p>Payment: <strong>${isCOD ? 'Cash on Delivery (COD)' : 'Paid Online (UPI/Card)'}</strong></p>
+              <p>Status: <strong>${ord.status?.toUpperCase()}</strong></p>
+              <p>Merchant: ${ord.vendorName || 'Local Bandi Central Hub'}</p>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th style="text-align: center;">Qty</th>
+                <th style="text-align: right;">Unit Price</th>
+                <th style="text-align: right;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items.map((it: any) => `
+                <tr>
+                  <td><strong>${it.name || 'Item'}</strong> ${it.unit ? `<span style="color:#64748b;font-size:10px;">(${it.unit})</span>` : ''}</td>
+                  <td style="text-align: center; font-weight: bold;">${it.quantity || 1}</td>
+                  <td style="text-align: right;">₹${it.price || 0}</td>
+                  <td style="text-align: right; font-weight: bold;">₹${(it.price || 0) * (it.quantity || 1)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div class="totals">
+            <div class="totals-row"><span>Items Subtotal:</span> <span>₹${ord.subtotal || ord.total || 0}</span></div>
+            ${ord.deliveryFee ? `<div class="totals-row"><span>Delivery Fee:</span> <span>₹${ord.deliveryFee}</span></div>` : ''}
+            ${ord.discount ? `<div class="totals-row" style="color:#dc2626;"><span>Discount:</span> <span>-₹${ord.discount}</span></div>` : ''}
+            <div class="totals-row grand"><span>Total Payable:</span> <span>₹${ord.total || ord.totalPrice || 0}</span></div>
+          </div>
+          <div class="footer">
+            Thank you for ordering with Local Bandi &bull; Support: support@localbandi.com
+          </div>
+          <script>
+            window.onload = function() { window.print(); }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleCopyOrderSummary = (ord: any) => {
+    if (!ord) return;
+    const items = (ord.orderItems || ord.items || []).map((it: any) => `• ${it.name} x${it.quantity} (₹${(it.price || 0) * (it.quantity || 1)})`).join('\n');
+    const summary = `📦 LOCAL BANDI ORDER #${ord.id.slice(0, 8).toUpperCase()}
+Status: ${ord.status}
+Customer: ${ord.customerName || ord.userName || 'Customer'} (📞 ${ord.phone || ord.userPhone || 'N/A'})
+Address: ${ord.address || 'N/A'}
+Store: ${ord.vendorName || 'Central Hub'}
+Rider: ${ord.riderName || ord.deliveryPartnerName || 'Unassigned'}
+Items:
+${items}
+Total Amount: ₹${ord.total || 0}
+Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
+
+    navigator.clipboard.writeText(summary);
+    triggerToast('📋 Order summary copied to clipboard!');
   };
 
   const handleUpdateOrderDetailsEx = async (e: React.FormEvent) => {
@@ -2486,7 +2827,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
         description: itemForm.description,
         isAvailable: itemForm.isAvailable,
         vendorId: itemForm.vendorId || 'admin-store',
-        branchId: itemForm.branchId || 'khammam_main',
+        branchId: itemForm.branchId || 'global',
         updatedAt: serverTimestamp()
       };
 
@@ -2529,7 +2870,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       setEditingItem(null);
       setItemForm({
         name: '', price: '', originalPrice: '', unit: '', category: 'groceries', 
-        image: '', description: '', isAvailable: true, vendorId: 'admin-store', branchId: 'khammam_main',
+        image: '', description: '', isAvailable: true, vendorId: 'admin-store', branchId: 'global',
         subCategory: '', stock: ''
       });
     } catch (err) {
@@ -2538,19 +2879,61 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     }
   };
 
-  // Delete inventory catalog item
+  // Delete single inventory catalog item
   const handleDeleteCatalogItem = async (id: string) => {
     if (!window.confirm("Are you sure you want to delete this listing permanently from the database?")) return;
     try {
       await deleteDoc(doc(db, 'products', id));
+      setSelectedProductIds(prev => prev.filter(item => item !== id));
       triggerToast('🗑️ Listing deleted from database');
     } catch (err) {
       console.error(err);
+      triggerToast('❌ Failed to delete product');
+    }
+  };
+
+  // Toggle selection for a product ID
+  const handleToggleSelectProduct = (id: string) => {
+    setSelectedProductIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  // Select all or deselect all currently filtered products
+  const handleSelectAllFiltered = (filteredItems: any[]) => {
+    const filteredIds = filteredItems.map(p => p.id);
+    const allSelected = filteredIds.length > 0 && filteredIds.every(id => selectedProductIds.includes(id));
+    if (allSelected) {
+      // Deselect all filtered items
+      setSelectedProductIds(prev => prev.filter(id => !filteredIds.includes(id)));
+    } else {
+      // Select all filtered items
+      setSelectedProductIds(prev => Array.from(new Set([...prev, ...filteredIds])));
+    }
+  };
+
+  // Bulk delete selected products with batch execution
+  const handleBulkDeleteProducts = async () => {
+    if (selectedProductIds.length === 0) return;
+    setIsBulkDeleting(true);
+    try {
+      const deletePromises = selectedProductIds.map(id => deleteDoc(doc(db, 'products', id)));
+      await Promise.all(deletePromises);
+      const count = selectedProductIds.length;
+      setSelectedProductIds([]);
+      setShowBulkDeleteModal(false);
+      triggerToast(`🗑️ Successfully deleted ${count} products from catalog`);
+    } catch (err) {
+      console.error("Bulk delete error:", err);
+      alert("Error deleting some products. Please check Firestore permissions.");
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
   const handleEditCatalogItemClick = (item: any) => {
     setEditingItem(item);
+    setItemImageError(null);
     setItemForm({
       name: item.name || '',
       price: String(item.price || ''),
@@ -2561,7 +2944,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
       description: item.description || '',
       isAvailable: item.isAvailable ?? true,
       vendorId: item.vendorId || 'admin-store',
-      branchId: item.branchId || 'khammam_main',
+      branchId: item.branchId || 'global',
       subCategory: item.subCategory || '',
       stock: item.stock ? String(item.stock) : ''
     });
@@ -2666,7 +3049,7 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {['dashboard', 'sos', 'ai_desk', 'attractions', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz'].map((tab) => {
+          {['dashboard', 'apk_hub', 'sos', 'ai_desk', 'attractions', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz'].map((tab) => {
             const isPendingSupport = tab === 'support' && complaints.some(c => c.status === 'Pending');
             const activeSosCount = sosAlerts.filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED').length;
             const isSosTab = tab === 'sos';
@@ -2679,32 +3062,38 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
                   activeTab === tab 
                     ? isSosTab 
                       ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50 font-extrabold border border-rose-400'
-                      : tab === 'attractions'
-                        ? 'bg-gradient-to-r from-amber-400 to-yellow-400 text-slate-950 shadow-md shadow-amber-950/30 font-black border border-amber-300'
-                        : 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20 font-extrabold border border-yellow-300' 
+                      : tab === 'apk_hub'
+                        ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-black border border-indigo-300 ring-2 ring-indigo-400/40'
+                        : tab === 'attractions'
+                          ? 'bg-gradient-to-r from-amber-400 to-yellow-400 text-slate-950 shadow-md shadow-amber-950/30 font-black border border-amber-300'
+                          : 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20 font-extrabold border border-yellow-300' 
                     : isSosTab
                       ? activeSosCount > 0
                         ? 'bg-rose-950/60 text-rose-300 border border-rose-500/60 font-bold hover:bg-rose-900/60 animate-pulse'
                         : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
-                      : tab === 'attractions'
-                        ? 'bg-gradient-to-r from-amber-950/40 to-indigo-950/40 text-amber-300 border border-amber-500/40 font-black hover:border-amber-400/70 shadow-sm'
-                        : tab === 'quiz'
-                          ? 'bg-amber-950/40 text-amber-400 border border-amber-500/30 font-bold hover:bg-amber-950/60'
-                          : tab === 'ai_desk'
-                            ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
-                            : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
+                      : tab === 'apk_hub'
+                        ? 'bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-500/40 font-bold hover:border-indigo-400/70 shadow-sm'
+                        : tab === 'attractions'
+                          ? 'bg-gradient-to-r from-amber-950/40 to-indigo-950/40 text-amber-300 border border-amber-500/40 font-black hover:border-amber-400/70 shadow-sm'
+                          : tab === 'quiz'
+                            ? 'bg-amber-950/40 text-amber-400 border border-amber-500/30 font-bold hover:bg-amber-950/60'
+                            : tab === 'ai_desk'
+                              ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
+                              : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
                 }`}
               >
                 <span>
-                  {tab === 'sos' 
-                    ? `🚨 SOS (${activeSosCount})` 
-                    : tab === 'attractions'
-                      ? '🎁 Attraction Campaigns'
-                      : tab === 'quiz' 
-                        ? '⚡ 40s Quiz' 
-                        : tab === 'ai_desk' 
-                          ? '🧠 AI Developer Desk' 
-                          : tab}
+                  {tab === 'apk_hub'
+                    ? '📦 APK Hub & CLI'
+                    : tab === 'sos' 
+                      ? `🚨 SOS (${activeSosCount})` 
+                      : tab === 'attractions'
+                        ? '🎁 Attraction Campaigns'
+                        : tab === 'quiz' 
+                          ? '⚡ 40s Quiz' 
+                          : tab === 'ai_desk' 
+                            ? '🧠 AI Developer Desk' 
+                            : tab}
                 </span>
                 {isSosTab && activeSosCount > 0 && (
                   <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping absolute -top-0.5 -right-0.5" />
@@ -2771,6 +3160,9 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
                 This panel aggregates key performance signals, merchant onboarding application arrays, and online delivery agent data across all branches.
               </p>
             </div>
+
+            {/* PWA & APK DEPLOYMENT READINESS RADAR & MANIFEST VALIDATOR */}
+            <DeploymentReadinessWidget onOpenHub={() => setActiveTab('apk_hub')} />
 
             {/* Micro details metrics grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -2896,17 +3288,31 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
               {/* RECENT ORDERS LEDGER */}
               <div className="space-y-3 pt-4 border-t border-white/5">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Order-by-Order Transaction Ledger ({orders.slice(0, 10).length} Recent)</h4>
-                  <span className="text-[8px] font-black text-slate-500 uppercase tracking-wider">Scroll for full audit trail</span>
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-400">Order-by-Order Transaction Ledger ({orders.slice(0, 15).length} Recent)</h4>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('logistics')}
+                    className="text-[9px] font-black text-amber-400 hover:text-amber-300 uppercase tracking-wider cursor-pointer"
+                  >
+                    Open Live Logistics Hub &rarr;
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[300px] overflow-y-auto pr-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[360px] overflow-y-auto pr-1">
                   {orders.slice(0, 15).map((ord) => {
                     const isCOD = (ord.paymentMethod || ord.paymentType || '').toUpperCase().includes('COD') || (ord.paymentMethod || '').toLowerCase() === 'cash_on_delivery' || !ord.paymentMethod;
                     return (
-                      <div key={ord.id} className="bg-slate-950/80 border border-white/5 p-4 rounded-2xl space-y-2">
+                      <div
+                        key={ord.id}
+                        onClick={() => {
+                          setInspectingOrder(ord);
+                          setSelectedOrderId(ord.id);
+                          setShowOrderDossierModal(true);
+                        }}
+                        className="bg-slate-950/80 hover:bg-slate-950 border border-white/5 hover:border-amber-400/30 p-4 rounded-2xl space-y-2 cursor-pointer transition-all hover:scale-[1.01] shadow-sm group"
+                      >
                         <div className="flex items-center justify-between">
-                          <span className="text-[9px] font-mono text-slate-500">#{ord.id.slice(0, 8).toUpperCase()}</span>
+                          <span className="text-[9px] font-mono text-slate-400 group-hover:text-amber-400 transition-colors font-bold">#{ord.id.slice(0, 8).toUpperCase()}</span>
                           <span className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-widest rounded-full ${
                             isCOD ? 'bg-amber-500/10 text-amber-500' : 'bg-emerald-500/10 text-emerald-400'
                           }`}>
@@ -2914,12 +3320,20 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
                           </span>
                         </div>
                         <div className="flex items-baseline justify-between">
-                          <p className="text-xs font-black text-white uppercase truncate max-w-[150px]">{ord.vendorName || 'Lokal Hub'}</p>
-                          <p className="text-sm font-black text-white">₹{ord.total}</p>
+                          <div>
+                            <p className="text-xs font-black text-white uppercase truncate max-w-[150px]">{ord.vendorName || 'Lokal Hub'}</p>
+                            <p className="text-[9px] text-slate-400 truncate max-w-[150px]">{ord.customerName || ord.userName || 'Customer'}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-black text-white">₹{ord.total}</p>
+                            <span className="text-[7.5px] font-mono text-slate-500 uppercase font-semibold">{(ord.orderItems?.length || ord.items || 0)} items</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between items-center text-[8px] text-slate-500 font-bold uppercase tracking-wider pt-1 border-t border-white/5">
-                          <span>Status: <strong className="text-indigo-400">{ord.status}</strong></span>
-                          <span>Share: <strong className="text-yellow-400">₹{(Number(ord.total || 0) * 0.25).toFixed(1)}</strong></span>
+                        <div className="flex justify-between items-center text-[8.5px] text-slate-400 font-bold uppercase tracking-wider pt-1.5 border-t border-white/5">
+                          <span>Status: <strong className={ord.status === 'Delivered' ? 'text-emerald-400' : ord.status === 'Pending' ? 'text-amber-400 animate-pulse' : 'text-indigo-400'}>{ord.status}</strong></span>
+                          <span className="text-amber-400 font-bold group-hover:underline flex items-center gap-0.5">
+                            Inspect 🔍
+                          </span>
                         </div>
                       </div>
                     );
@@ -3817,6 +4231,11 @@ const reconcileDocSync = async (branchId, docBody) => {
           </div>
         )}
 
+        {/* TAB: APK GENERATION HUB & CLI BUILD CONSOLE */}
+        {activeTab === 'apk_hub' && (
+          <ApkGenerationHub />
+        )}
+
         {/* TAB 1B: LOGISTICS & LIVE ORDERS HUB */}
         {activeTab === 'logistics' && (
           <div className="space-y-6">
@@ -3858,10 +4277,31 @@ const reconcileDocSync = async (branchId, docBody) => {
               {/* Order List: spans 5 cols */}
               <div className="lg:col-span-5 bg-slate-900 border border-white/5 p-5 rounded-[2.5rem] space-y-4 text-left">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">Orders Stream</h3>
-                  <span className="px-2 py-0.5 bg-slate-950 text-[8.5px] font-mono text-slate-300 rounded border border-white/5 uppercase">
-                    {orders.length} Total
+                  <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">Live Orders Stream</h3>
+                  <span className="px-2.5 py-0.5 bg-slate-950 text-[9px] font-mono text-amber-400 rounded-full border border-amber-500/20 uppercase font-black">
+                    {orders.length} Active in System
                   </span>
+                </div>
+
+                {/* Real-time Search Bar */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-500" />
+                  <input
+                    type="text"
+                    value={logisticsSearchQuery}
+                    onChange={(e) => setLogisticsSearchQuery(e.target.value)}
+                    placeholder="Search by ID, customer, phone, store, rider, item..."
+                    className="w-full bg-slate-950/80 border border-white/10 pl-9 pr-8 py-2 rounded-xl text-[10px] font-bold text-white placeholder-slate-500 outline-none focus:border-amber-400 transition-all"
+                  />
+                  {logisticsSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setLogisticsSearchQuery('')}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white text-xs cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Filters */}
@@ -3881,7 +4321,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                         onClick={() => {
                           setLogisticsFilter(f);
                         }}
-                        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${logisticsFilter === f ? 'bg-yellow-400 text-slate-950 font-black' : 'bg-slate-950/60 hover:bg-slate-950 text-slate-400 border border-white/5'}`}
+                        className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${logisticsFilter === f ? 'bg-yellow-400 text-slate-950 font-black shadow-md shadow-yellow-950/20' : 'bg-slate-950/60 hover:bg-slate-950 text-slate-400 border border-white/5'}`}
                       >
                         {f === 'OutForDelivery' ? 'In Transit' : f} ({count})
                       </button>
@@ -3955,33 +4395,49 @@ const reconcileDocSync = async (branchId, docBody) => {
 
                 {/* Filtered Order feed list */}
                 <div className="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
-                  {orders.filter(o => {
-                    if (logisticsFilter === 'All') return true;
-                    if (logisticsFilter === 'Accepted') return o.status === 'Accepted';
-                    if (logisticsFilter === 'Preparing') return o.status === 'Preparing';
-                    if (logisticsFilter === 'OutForDelivery') return o.status === 'OutForDelivery' || o.status === 'PickedUp';
-                    return o.status === logisticsFilter;
-                  }).length === 0 ? (
-                    <div className="text-center py-12 text-slate-500 text-[10px] uppercase font-bold border border-dashed border-white/5 rounded-2xl">
-                      No matching orders found under filter: {logisticsFilter}
-                    </div>
-                  ) : (
-                    orders.filter(o => {
-                      if (logisticsFilter === 'All') return true;
-                      if (logisticsFilter === 'Accepted') return o.status === 'Accepted';
-                      if (logisticsFilter === 'Preparing') return o.status === 'Preparing';
-                      if (logisticsFilter === 'OutForDelivery') return o.status === 'OutForDelivery' || o.status === 'PickedUp';
-                      return o.status === logisticsFilter;
-                    }).map((ord) => {
+                  {(() => {
+                    const filteredOrders = orders.filter(o => {
+                      // Status filter
+                      if (logisticsFilter !== 'All') {
+                        if (logisticsFilter === 'Accepted' && o.status !== 'Accepted') return false;
+                        if (logisticsFilter === 'Preparing' && o.status !== 'Preparing') return false;
+                        if (logisticsFilter === 'OutForDelivery' && !(o.status === 'OutForDelivery' || o.status === 'PickedUp')) return false;
+                        if (!['Accepted', 'Preparing', 'OutForDelivery'].includes(logisticsFilter) && o.status !== logisticsFilter) return false;
+                      }
+                      // Query filter
+                      if (logisticsSearchQuery.trim()) {
+                        const q = logisticsSearchQuery.toLowerCase();
+                        const idMatch = o.id?.toLowerCase().includes(q);
+                        const custMatch = (o.customerName || o.userName || '').toLowerCase().includes(q);
+                        const phoneMatch = (o.phone || o.userPhone || '').toLowerCase().includes(q);
+                        const vendorMatch = (o.vendorName || '').toLowerCase().includes(q);
+                        const riderMatch = (o.riderName || o.deliveryPartnerName || '').toLowerCase().includes(q);
+                        const addrMatch = (o.address || '').toLowerCase().includes(q);
+                        const itemsMatch = (o.orderItems || o.items || []).some((it: any) => (it.name || '').toLowerCase().includes(q));
+                        return idMatch || custMatch || phoneMatch || vendorMatch || riderMatch || addrMatch || itemsMatch;
+                      }
+                      return true;
+                    });
+
+                    if (filteredOrders.length === 0) {
+                      return (
+                        <div className="text-center py-12 text-slate-500 text-[10px] uppercase font-bold border border-dashed border-white/5 rounded-2xl">
+                          No matching orders found {logisticsSearchQuery ? `for "${logisticsSearchQuery}"` : `under filter: ${logisticsFilter}`}
+                        </div>
+                      );
+                    }
+
+                    return filteredOrders.map((ord) => {
                       const isSelected = selectedOrderId === ord.id;
                       const hasRider = !!(ord.riderId || ord.deliveryPartnerId);
                       const isPending = ord.status === 'Pending';
+                      const isCOD = (ord.paymentMethod || ord.paymentType || '').toUpperCase().includes('COD') || (ord.paymentMethod || '').toLowerCase() === 'cash_on_delivery' || !ord.paymentMethod;
                       
                       return (
                         <div
                           key={ord.id}
                           onClick={() => setSelectedOrderId(ord.id)}
-                          className={`p-4 rounded-2xl border transition-all cursor-pointer text-left relative ${isSelected ? 'bg-slate-950 border-yellow-400/40 shadow-lg shadow-yellow-950/10' : 'bg-slate-950/50 hover:bg-slate-950 border-white/5'}`}
+                          className={`p-4 rounded-2xl border transition-all cursor-pointer text-left relative ${isSelected ? 'bg-slate-950 border-yellow-400/60 shadow-lg shadow-yellow-950/20 ring-1 ring-yellow-400/30' : 'bg-slate-950/50 hover:bg-slate-950 border-white/5'}`}
                         >
                           <div className="flex justify-between items-start">
                             <div className="flex items-start gap-2.5">
@@ -4009,19 +4465,29 @@ const reconcileDocSync = async (branchId, docBody) => {
                                   )}
                                 </p>
                                 <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">
-                                  {ord.vendorName || 'Branch Hub'} • ₹{ord.total}
+                                  {ord.vendorName || 'Branch Hub'} • <span className="text-white font-extrabold">₹{ord.total}</span>
+                                  <span className={`ml-2 text-[8px] font-black px-1.5 py-0.2 rounded ${isCOD ? 'text-amber-400 bg-amber-500/10' : 'text-emerald-400 bg-emerald-500/10'}`}>
+                                    {isCOD ? 'COD' : 'PAID'}
+                                  </span>
                                 </p>
                               </div>
                             </div>
                             <span className={`px-2.5 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider ${
-                              ord.status === 'Pending' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/10' :
-                              ['Accepted', 'Preparing'].includes(ord.status) ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/10' :
-                              ['OutForDelivery', 'PickedUp'].includes(ord.status) ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' :
-                              ord.status === 'Delivered' ? 'bg-slate-500/15 text-slate-450 border border-white/5' :
-                              'bg-rose-500/15 text-rose-500 border border-rose-500/10'
+                              ord.status === 'Pending' ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20' :
+                              ['Accepted', 'Preparing'].includes(ord.status) ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/20' :
+                              ['OutForDelivery', 'PickedUp'].includes(ord.status) ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' :
+                              ord.status === 'Delivered' ? 'bg-slate-500/20 text-slate-300 border border-white/10' :
+                              'bg-rose-500/15 text-rose-500 border border-rose-500/20'
                             }`}>
                               {ord.status === 'PickedUp' || ord.status === 'OutForDelivery' ? 'In Transit' : ord.status}
                             </span>
+                          </div>
+
+                          {/* Customer & Address Quick Peek */}
+                          <div className="mt-2 text-[9.5px] text-slate-300 flex items-center gap-1.5 truncate">
+                            <span className="font-bold text-white">{ord.customerName || ord.userName || 'Customer'}</span>
+                            <span>•</span>
+                            <span className="truncate text-slate-400">{ord.address || 'Khammam Central'}</span>
                           </div>
 
                           {/* 15-Minute Driver Acceptance Timeout Telemetry Bar */}
@@ -4083,8 +4549,8 @@ const reconcileDocSync = async (branchId, docBody) => {
                           </div>
                         </div>
                       );
-                    })
-                  )}
+                    });
+                  })()}
                 </div>
               </div>
 
@@ -4108,16 +4574,21 @@ const reconcileDocSync = async (branchId, docBody) => {
                         <div className="w-12 h-12 rounded-full bg-slate-950/60 border border-white/5 flex items-center justify-center text-slate-550 shadow-inner">
                           <Activity className="w-6 h-6 text-slate-500 animate-pulse" />
                         </div>
-                        <h3 className="text-xs font-black uppercase tracking-widest text-slate-300">Radar Telemetry Standby</h3>
+                        <h3 className="text-xs font-black uppercase tracking-widest text-slate-300">Master Order Detail Standby</h3>
                         <p className="text-[10px] text-slate-500 max-w-xs mx-auto leading-normal font-semibold">
-                          Click any thermal hotspot glow point on the interactive map above, or select an order from the list stream to initiate rider matching.
+                          Click any order from the live stream on the left or interactive hotspot map to inspect complete order details, billing breakdown, live delivery tracking, and admin controls.
                         </p>
                       </div>
                     );
                   }
 
+                  // Format timestamps cleanly
+                  const createdDate = activeOrd.createdAt 
+                    ? (typeof activeOrd.createdAt === 'string' ? new Date(activeOrd.createdAt).toLocaleString() : (activeOrd.createdAt.seconds ? new Date(activeOrd.createdAt.seconds * 1000).toLocaleString() : 'Just now')) 
+                    : 'Recent';
+                  const isCOD = (activeOrd.paymentMethod || activeOrd.paymentType || '').toUpperCase().includes('COD') || (activeOrd.paymentMethod || '').toLowerCase() === 'cash_on_delivery' || !activeOrd.paymentMethod;
+
                   // Find Best Rider Recommendation
-                  // Rule: rider is online (or in approved status), has fewest active ongoing orders
                   const getRiderMetrics = (rider: any) => {
                     const activeCount = orders.filter(o => 
                       (o.riderId === rider.id || o.deliveryPartnerId === rider.id) && 
@@ -4129,14 +4600,12 @@ const reconcileDocSync = async (branchId, docBody) => {
                   const approvedRiders = riders.filter(r => r.status === 'Approved');
                   const onlineRiders = approvedRiders.filter(r => r.isOnline);
                   
-                  // Sort online riders by lowest workload
                   let bestRider: any = null;
                   if (onlineRiders.length > 0) {
                     bestRider = [...onlineRiders].sort((a,b) => {
                       return getRiderMetrics(a).activeCount - getRiderMetrics(b).activeCount;
                     })[0];
                   } else if (approvedRiders.length > 0) {
-                    // Fallback to offline approved riders
                     bestRider = [...approvedRiders].sort((a,b) => {
                       return getRiderMetrics(a).activeCount - getRiderMetrics(b).activeCount;
                     })[0];
@@ -4144,65 +4613,320 @@ const reconcileDocSync = async (branchId, docBody) => {
 
                   return (
                     <div className="space-y-6 text-left">
-                      {/* Section A: Selected Order Details */}
-                      <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-6">
-                        <div className="flex justify-between items-center border-b border-white/5 pb-4">
+                      {/* Section A: Comprehensive Master Order Dossier Card */}
+                      <div className="bg-slate-900 border border-white/10 p-6 rounded-[2.5rem] space-y-6 shadow-2xl">
+                        {/* Dossier Header */}
+                        <div className="flex flex-wrap justify-between items-start gap-4 border-b border-white/10 pb-4">
                           <div>
-                            <span className="text-[9px] font-black text-indigo-400 bg-indigo-505/10 border border-indigo-500/10 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                              Active Workspace
-                            </span>
-                            <h3 className="text-base font-black uppercase text-white mt-2">
-                              Order #{activeOrd.id.slice(0, 8).toUpperCase()}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[9px] font-black text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                                Order Details Dossier
+                              </span>
+                              <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                                activeOrd.status === 'Pending' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                                ['Accepted', 'Preparing'].includes(activeOrd.status) ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' :
+                                ['OutForDelivery', 'PickedUp'].includes(activeOrd.status) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                                activeOrd.status === 'Delivered' ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30' :
+                                'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                              }`}>
+                                ● {activeOrd.status === 'PickedUp' || activeOrd.status === 'OutForDelivery' ? 'In Transit' : activeOrd.status}
+                              </span>
+                            </div>
+                            <h3 className="text-lg font-black uppercase text-white mt-2 flex items-center gap-2">
+                              <span>Order #{activeOrd.id.toUpperCase()}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(activeOrd.id);
+                                  triggerToast('Order ID copied to clipboard');
+                                }}
+                                className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-all cursor-pointer"
+                                title="Copy Order ID"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
                             </h3>
+                            <p className="text-[10px] text-slate-400 font-medium mt-0.5 flex items-center gap-1.5">
+                              <Clock className="w-3 h-3 text-slate-500" />
+                              <span>Placed: {createdDate}</span>
+                              <span>•</span>
+                              <span>Branch: {activeOrd.branchId || 'Khammam Main'}</span>
+                            </p>
                           </div>
                           
-                          <div className="text-right">
-                            <span className="text-[8px] font-black text-slate-505 uppercase tracking-widest">Total Transaction Value</span>
-                            <p className="text-lg font-black text-emerald-400">₹{activeOrd.total}</p>
+                          {/* Financial Summary & Quick Tools */}
+                          <div className="flex flex-col items-end gap-2">
+                            <div className="text-right">
+                              <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Grand Total Value</span>
+                              <p className="text-2xl font-black text-emerald-400">₹{activeOrd.total}</p>
+                              <span className={`text-[8.5px] font-black px-2 py-0.5 rounded-full uppercase ${isCOD ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'}`}>
+                                {isCOD ? 'Cash on Delivery' : 'Paid Online (UPI/Card)'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handlePrintOrderInvoice(activeOrd)}
+                                className="px-2.5 py-1.5 bg-slate-950 hover:bg-slate-800 border border-white/10 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow"
+                                title="Print Tax Invoice / Bill"
+                              >
+                                <Printer className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Print Bill</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyOrderSummary(activeOrd)}
+                                className="px-2.5 py-1.5 bg-slate-950 hover:bg-slate-800 border border-white/10 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow"
+                                title="Copy WhatsApp Summary"
+                              >
+                                <Share2 className="w-3.5 h-3.5 text-indigo-400" />
+                                <span>Copy Text</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
 
-                        {/* Customer & Merchant Blocks */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-2">
-                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Merchant Restaurant / Hub</h4>
-                            <p className="text-xs font-extrabold text-white">{activeOrd.vendorName || 'Central Hub'}</p>
-                            <p className="text-[10px] text-slate-550 font-semibold">{activeOrd.vendorAddress || 'Main branch'}</p>
+                        {/* Customer, Merchant & Rider Matrix (3 Cards Grid) */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {/* 1. Customer Card */}
+                          <div className="bg-slate-950 p-4 rounded-2xl border border-white/10 space-y-2.5">
+                            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                              <h4 className="text-[10px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Users className="w-3.5 h-3.5" />
+                                <span>Customer Profile</span>
+                              </h4>
+                            </div>
+                            <p className="text-xs font-black text-white">{activeOrd.userName || activeOrd.customerName || 'Customer'}</p>
+                            {(activeOrd.phone || activeOrd.userPhone) ? (
+                              <div className="flex items-center gap-2">
+                                <a
+                                  href={`tel:${activeOrd.phone || activeOrd.userPhone}`}
+                                  className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20"
+                                >
+                                  <Phone className="w-3 h-3" />
+                                  <span>{activeOrd.phone || activeOrd.userPhone}</span>
+                                </a>
+                                <a
+                                  href={`https://wa.me/91${(activeOrd.phone || activeOrd.userPhone || '').replace(/\D/g, '')}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 font-bold bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20 flex items-center gap-1"
+                                  title="Chat on WhatsApp"
+                                >
+                                  <MessageSquare className="w-3 h-3" />
+                                  <span>WhatsApp</span>
+                                </a>
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-slate-500 italic">No phone number recorded</p>
+                            )}
+                            <div className="pt-1">
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Delivery Address</p>
+                              <p className="text-[10.5px] text-slate-200 font-medium leading-relaxed mt-0.5">{activeOrd.address || 'Khammam Standard Handover'}</p>
+                              {activeOrd.landmark && (
+                                <p className="text-[9.5px] text-amber-300 font-semibold mt-0.5">Landmark: {activeOrd.landmark}</p>
+                              )}
+                              {activeOrd.notes && (
+                                <p className="text-[9.5px] text-indigo-300 font-medium italic mt-0.5">Note: "{activeOrd.notes}"</p>
+                              )}
+                            </div>
                           </div>
-                          <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-2">
-                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Customer Delivery Address</h4>
-                            <p className="text-xs font-extrabold text-white">{activeOrd.userName || activeOrd.customerName || 'Anonymous Customer'}</p>
-                            <p className="text-[10px] text-slate-300 font-medium">{activeOrd.address || 'Standard Handover'}</p>
-                            {(activeOrd.phone || activeOrd.userPhone) && (
-                              <p className="text-[10px] font-mono text-slate-550 mt-1">📞 {activeOrd.phone || activeOrd.userPhone}</p>
+
+                          {/* 2. Merchant / Store Card */}
+                          <div className="bg-slate-950 p-4 rounded-2xl border border-white/10 space-y-2.5">
+                            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                              <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Store className="w-3.5 h-3.5" />
+                                <span>Merchant Store</span>
+                              </h4>
+                            </div>
+                            <p className="text-xs font-black text-white">{activeOrd.vendorName || 'Local Bandi Central Hub'}</p>
+                            <p className="text-[10px] text-slate-400 font-semibold">{activeOrd.vendorAddress || 'Main Branch, Khammam'}</p>
+                            {activeOrd.vendorPhone && (
+                              <a
+                                href={`tel:${activeOrd.vendorPhone}`}
+                                className="inline-flex items-center gap-1 text-[10px] font-mono text-indigo-400 hover:text-indigo-300 font-bold bg-indigo-500/10 px-2 py-1 rounded-lg border border-indigo-500/20"
+                              >
+                                <Phone className="w-3 h-3" />
+                                <span>{activeOrd.vendorPhone}</span>
+                              </a>
+                            )}
+                            <div className="pt-1 border-t border-white/5 text-[9px] text-slate-400">
+                              <span>Vendor ID: </span>
+                              <span className="font-mono text-slate-300">{activeOrd.vendorId || 'Central-Hub'}</span>
+                            </div>
+                          </div>
+
+                          {/* 3. Assigned Rider / Fleet Card */}
+                          <div className="bg-slate-950 p-4 rounded-2xl border border-white/10 space-y-2.5">
+                            <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                              <h4 className="text-[10px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
+                                <Bike className="w-3.5 h-3.5" />
+                                <span>Delivery Partner</span>
+                              </h4>
+                            </div>
+                            {activeOrd.riderName || activeOrd.deliveryPartnerName ? (
+                              <>
+                                <p className="text-xs font-black text-emerald-400 flex items-center gap-1.5">
+                                  <span>{activeOrd.riderName || activeOrd.deliveryPartnerName}</span>
+                                  <span className="text-[8px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded uppercase font-bold">Assigned</span>
+                                </p>
+                                {(activeOrd.riderPhone || activeOrd.deliveryPartnerPhone) && (
+                                  <a
+                                    href={`tel:${activeOrd.riderPhone || activeOrd.deliveryPartnerPhone}`}
+                                    className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 hover:text-emerald-300 font-bold bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20"
+                                  >
+                                    <Phone className="w-3 h-3" />
+                                    <span>{activeOrd.riderPhone || activeOrd.deliveryPartnerPhone}</span>
+                                  </a>
+                                )}
+                                <div className="text-[9.5px] text-slate-400 pt-1">
+                                  <span>Rider Status: </span>
+                                  <span className="font-black text-white uppercase">{activeOrd.deliveryStatus || activeOrd.status}</span>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="py-2 space-y-2">
+                                <p className="text-xs font-black text-amber-400 animate-pulse flex items-center gap-1">
+                                  <AlertCircle className="w-3.5 h-3.5" />
+                                  <span>Rider Not Assigned Yet</span>
+                                </p>
+                                <p className="text-[9px] text-slate-400">Select a recommended rider from the dispatch matrix below to assign.</p>
+                              </div>
                             )}
                           </div>
                         </div>
 
-                        {/* Order Items */}
-                        <div className="bg-slate-950/70 p-4 rounded-2xl border border-white/5 space-y-2">
-                          <div className="flex justify-between items-center border-b border-white/5 pb-2">
-                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Line Items ({activeOrd.orderItems?.length || activeOrd.items || 0})</h4>
+                        {/* Order Items Detailed Table */}
+                        <div className="bg-slate-950/90 p-5 rounded-2xl border border-white/10 space-y-3">
+                          <div className="flex justify-between items-center border-b border-white/5 pb-2.5">
+                            <div className="flex items-center gap-2">
+                              <PackageCheck className="w-4 h-4 text-amber-400" />
+                              <h4 className="text-xs font-black text-white uppercase tracking-widest">
+                                Ordered Line Items ({activeOrd.orderItems?.length || activeOrd.items || 0})
+                              </h4>
+                            </div>
                             <button
                               type="button"
                               onClick={() => {
                                 setEditingOrder(JSON.parse(JSON.stringify(activeOrd)));
                                 setShowOrderModal(true);
                               }}
-                              className="px-2.5 py-1 bg-yellow-400/10 hover:bg-yellow-400 text-yellow-400 hover:text-slate-950 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all"
+                              className="px-3 py-1.5 bg-yellow-400/10 hover:bg-yellow-400 text-yellow-400 hover:text-slate-950 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all cursor-pointer flex items-center gap-1.5"
                             >
-                              ✏️ Edit Order Details
+                              <Edit2 className="w-3 h-3" />
+                              <span>Edit Order Items</span>
                             </button>
                           </div>
-                          <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
-                            {(activeOrd.orderItems || []).map((item: any, idx: number) => (
-                              <div key={idx} className="flex justify-between items-center text-xs">
-                                <span className="font-extrabold text-white">
-                                  {item.name} <span className="text-yellow-400 text-[10px] ml-1">x{item.quantity}</span>
-                                </span>
-                                <span className="font-bold text-slate-400">₹{item.price * item.quantity}</span>
+                          
+                          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                            {((activeOrd.orderItems || []).length > 0 ? activeOrd.orderItems : (Array.isArray(activeOrd.items) ? activeOrd.items : [])).map((item: any, idx: number) => {
+                              const qty = item.quantity || 1;
+                              const unitPrice = Number(item.price) || 0;
+                              const itemTotal = unitPrice * qty;
+
+                              return (
+                                <div key={idx} className="flex justify-between items-center p-2.5 bg-slate-900/60 rounded-xl border border-white/5 text-xs">
+                                  <div className="flex items-center gap-2.5">
+                                    <div className="w-7 h-7 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center font-bold text-amber-400 text-[10px]">
+                                      {idx + 1}
+                                    </div>
+                                    <div>
+                                      <p className="font-black text-white text-xs">
+                                        {item.name || 'Custom Product'}
+                                        {item.unit && <span className="text-[10px] text-slate-400 font-normal ml-1">({item.unit})</span>}
+                                      </p>
+                                      <p className="text-[9.5px] text-slate-400 font-mono">
+                                        ₹{unitPrice} × {qty}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <span className="font-black text-white text-sm">₹{itemTotal}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Free Promo / Bonus Items (if present) */}
+                          {activeOrd.bonusItem && (
+                            <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-between text-xs text-amber-300 font-bold">
+                              <span className="flex items-center gap-1.5">
+                                <Gift className="w-4 h-4 text-amber-400" />
+                                <span>Complimentary Bonus: {activeOrd.bonusItem.name || 'Free Promo Gift'}</span>
+                              </span>
+                              <span className="text-[9px] font-black uppercase bg-amber-500/20 px-2 py-0.5 rounded text-amber-400">FREE GIFT</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Financial Ledger & Revenue Split Breakdown */}
+                        <div className="bg-slate-950/90 p-5 rounded-2xl border border-white/10 space-y-3">
+                          <h4 className="text-xs font-black text-slate-300 uppercase tracking-widest flex items-center gap-2 border-b border-white/5 pb-2">
+                            <CreditCard className="w-4 h-4 text-emerald-400" />
+                            <span>Billing Audit & Financial Settlement</span>
+                          </h4>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+                            {/* Left: Customer Bill Details */}
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between text-slate-400">
+                                <span>Items Subtotal:</span>
+                                <span className="font-mono text-white">₹{activeOrd.subtotal || activeOrd.total || 0}</span>
                               </div>
-                            ))}
+                              {Number(activeOrd.deliveryFee || 0) > 0 && (
+                                <div className="flex justify-between text-slate-400">
+                                  <span>Delivery Fee:</span>
+                                  <span className="font-mono text-white">₹{activeOrd.deliveryFee}</span>
+                                </div>
+                              )}
+                              {Number(activeOrd.packagingFee || 0) > 0 && (
+                                <div className="flex justify-between text-slate-400">
+                                  <span>Packaging & Handling:</span>
+                                  <span className="font-mono text-white">₹{activeOrd.packagingFee}</span>
+                                </div>
+                              )}
+                              {Number(activeOrd.discount || 0) > 0 && (
+                                <div className="flex justify-between text-rose-400 font-semibold">
+                                  <span>Coupon Discount {activeOrd.couponCode ? `(${activeOrd.couponCode})` : ''}:</span>
+                                  <span className="font-mono">-₹{activeOrd.discount}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between text-white font-black text-sm pt-2 border-t border-white/10">
+                                <span>Net Total Payable:</span>
+                                <span className="text-emerald-400">₹{activeOrd.total}</span>
+                              </div>
+                              <div className="flex justify-between text-[10px] text-slate-400 pt-1">
+                                <span>Payment Mode:</span>
+                                <span className="font-black text-white uppercase">{isCOD ? 'Cash on Delivery (COD)' : 'Prepaid Online (UPI)'}</span>
+                              </div>
+                              {activeOrd.transactionId && (
+                                <div className="flex justify-between text-[9px] text-slate-500 font-mono">
+                                  <span>Txn ID:</span>
+                                  <span>{activeOrd.transactionId}</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Right: Platform HQ (25%) & Partner Settlement */}
+                            <div className="space-y-2 bg-slate-900/80 p-3.5 rounded-xl border border-white/5">
+                              <p className="text-[10px] font-black uppercase text-amber-400 tracking-wider">Revenue Distribution (Automated)</p>
+                              <div className="space-y-1 text-[11px]">
+                                <div className="flex justify-between text-slate-300">
+                                  <span>HQ Platform Share (25%):</span>
+                                  <span className="font-black text-yellow-400">₹{(Number(activeOrd.total || 0) * 0.25).toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between text-slate-300">
+                                  <span>Merchant Share (75% net):</span>
+                                  <span className="font-mono text-white">₹{(Number(activeOrd.total || 0) * 0.75).toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between text-slate-300">
+                                  <span>Rider Delivery Payout:</span>
+                                  <span className="font-mono text-emerald-400">₹{activeOrd.deliveryFee || 40}</span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
 
@@ -4234,7 +4958,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                           <div className="w-full flex items-center gap-2 mt-2 bg-slate-950 p-3.5 rounded-2xl border border-white/5">
                             <span className="text-[9px] font-black uppercase text-slate-400 whitespace-nowrap">Status Override:</span>
                             <div className="flex gap-1.5 flex-wrap">
-                              {['Accepted', 'Preparing', 'OutForDelivery', 'Delivered'].map(st => (
+                              {['Pending', 'Accepted', 'Preparing', 'OutForDelivery', 'Delivered'].map(st => (
                                 <button
                                   key={st}
                                   type="button"
@@ -5183,72 +5907,267 @@ const reconcileDocSync = async (branchId, docBody) => {
             </div>
 
             {catalogSubTab === 'products' ? (
-              <div className="bg-slate-900 border border-white/5 rounded-[2.5rem] p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto pr-1">
-                  {products.length === 0 ? (
-                    <div className="col-span-full text-center p-12">
-                      <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-relaxed">No custom listings synced in this catalog</p>
-                    </div>
-                  ) : (
-                    products.map((item) => (
-                      <div key={item.id} className="bg-slate-950/80 border border-white/5 rounded-2xl overflow-hidden shadow-sm flex flex-col justify-between">
-                        <div className="aspect-video relative select-none bg-slate-900 flex items-center justify-center">
-                          {item.image ? (
-                            <img src={item.image} referrerPolicy="no-referrer" alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <Store className="w-8 h-8 text-slate-700" />
-                          )}
-                          <div className="absolute top-3 left-3 flex flex-wrap gap-1">
-                            <span className="bg-slate-900/90 text-[9px] font-black uppercase tracking-widest text-slate-300 px-2.5 py-1 rounded-full">{item.category}</span>
-                            {item.subCategory && (
-                              <span className="bg-indigo-900/90 text-[9px] font-black uppercase tracking-widest text-white px-2.5 py-1 rounded-full">{item.subCategory}</span>
-                            )}
-                          </div>
-                          {!item.isAvailable && (
-                            <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center">
-                              <span className="px-3 py-1 bg-rose-600 text-white rounded-full font-black uppercase tracking-widest text-[9px]">Out of stock</span>
-                            </div>
+              <div className="bg-slate-900 border border-white/5 rounded-[2.5rem] p-6 space-y-5">
+                {/* Search, Filter & Bulk Action Toolbar */}
+                {(() => {
+                  const allCategories = Array.from(new Set([
+                    ...CATEGORIES.map(c => c.id),
+                    ...categories.map(c => c.id),
+                    ...products.map(p => p.category).filter(Boolean)
+                  ]));
+
+                  const allVendors = Array.from(new Set([
+                    ...products.map(p => p.hotelName || p.vendorId).filter(Boolean)
+                  ]));
+
+                  const filteredProducts = products.filter(item => {
+                    const matchesSearch = !productSearchQuery.trim() || 
+                      (item.name || '').toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+                      (item.category || '').toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+                      (item.subCategory || '').toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+                      (item.hotelName || item.vendorId || '').toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+                      (item.description || '').toLowerCase().includes(productSearchQuery.toLowerCase());
+
+                    const matchesCategory = productCategoryFilter === 'all' || 
+                      item.category?.toLowerCase() === productCategoryFilter.toLowerCase();
+
+                    const matchesStock = productStockFilter === 'all' ||
+                      (productStockFilter === 'in_stock' && (item.isAvailable !== false && (item.stock === undefined || item.stock === null || item.stock > 0))) ||
+                      (productStockFilter === 'out_of_stock' && (item.isAvailable === false || item.stock === 0));
+
+                    const matchesVendor = productVendorFilter === 'all' ||
+                      (item.hotelName === productVendorFilter || item.vendorId === productVendorFilter);
+
+                    return matchesSearch && matchesCategory && matchesStock && matchesVendor;
+                  });
+
+                  const isAllFilteredSelected = filteredProducts.length > 0 && 
+                    filteredProducts.every(p => selectedProductIds.includes(p.id));
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Search and Filters Header */}
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-950/80 p-4 rounded-2xl border border-white/5">
+                        {/* Search Input */}
+                        <div className="md:col-span-2 relative">
+                          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                          <input
+                            type="text"
+                            value={productSearchQuery}
+                            onChange={(e) => setProductSearchQuery(e.target.value)}
+                            placeholder="Search products by name, tag, vendor..."
+                            className="w-full bg-slate-900 border border-white/10 pl-10 pr-9 py-2.5 rounded-xl text-xs font-bold text-white placeholder-slate-500 outline-none focus:border-yellow-400"
+                          />
+                          {productSearchQuery && (
+                            <button
+                              onClick={() => setProductSearchQuery('')}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
                           )}
                         </div>
-                        <div className="p-4 flex-1 flex flex-col justify-between gap-4">
-                          <div>
-                            <h4 className="text-sm font-black text-white uppercase tracking-tight leading-snug line-clamp-1">{item.name}</h4>
-                            <div className="flex items-baseline gap-2 mt-1">
-                              <span className="text-slate-200 text-[12px] font-bold">₹{item.price} per {item.unit}</span>
-                              {item.originalPrice && (
-                                <span className="text-slate-400 line-through text-[10px] font-bold">₹{item.originalPrice}</span>
-                              )}
-                            </div>
-                            <p className="text-[10px] text-slate-500 italic line-clamp-2 mt-2 leading-normal">{item.description}</p>
-                            <div className="flex flex-wrap gap-2 mt-2.5 border-t border-white/5 pt-2 text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">
-                              <span>Vendor: {item.hotelName || item.vendorId || 'Central'}</span>
-                              {item.stock !== undefined && item.stock !== null && (
-                                <span className="text-amber-400 border-l border-white/10 pl-2">Stock: {item.stock} qty</span>
-                              )}
-                            </div>
-                          </div>
 
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => handleEditCatalogItemClick(item)}
-                              className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 transition-all"
-                            >
-                              <Edit2 className="w-3.5 h-3.5 text-yellow-400" />
-                              <span>Edit</span>
-                            </button>
-                            <button
-                              onClick={() => handleDeleteCatalogItem(item.id)}
-                              className="p-2 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl transition-all"
-                              title="Delete Item"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
+                        {/* Category Filter */}
+                        <div className="relative">
+                          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                          <select
+                            value={productCategoryFilter}
+                            onChange={(e) => setProductCategoryFilter(e.target.value)}
+                            className="w-full bg-slate-900 border border-white/10 pl-8 pr-3 py-2.5 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-400 uppercase tracking-tight"
+                          >
+                            <option value="all">All Categories ({products.length})</option>
+                            {allCategories.map(cat => {
+                              const count = products.filter(p => p.category?.toLowerCase() === cat.toLowerCase()).length;
+                              return (
+                                <option key={cat} value={cat}>
+                                  {cat} ({count})
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+
+                        {/* Stock & Availability Filter */}
+                        <div>
+                          <select
+                            value={productStockFilter}
+                            onChange={(e) => setProductStockFilter(e.target.value as any)}
+                            className="w-full bg-slate-900 border border-white/10 px-3 py-2.5 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-400 uppercase tracking-tight"
+                          >
+                            <option value="all">All Status</option>
+                            <option value="in_stock">In Stock / Available</option>
+                            <option value="out_of_stock">Out of Stock</option>
+                          </select>
                         </div>
                       </div>
-                    ))
-                  )}
-                </div>
+
+                      {/* Filter stats & Batch Selection Action Bar */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/50 px-4 py-2.5 rounded-xl border border-white/5">
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => handleSelectAllFiltered(filteredProducts)}
+                            disabled={filteredProducts.length === 0}
+                            className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-slate-300 hover:text-yellow-400 transition-colors disabled:opacity-40"
+                          >
+                            {isAllFilteredSelected ? (
+                              <CheckSquare className="w-4 h-4 text-yellow-400" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-500" />
+                            )}
+                            <span>{isAllFilteredSelected ? 'Deselect All' : 'Select All Filtered'}</span>
+                          </button>
+
+                          <span className="text-[11px] text-slate-500 font-bold border-l border-white/10 pl-3">
+                            Showing {filteredProducts.length} of {products.length} items
+                          </span>
+                        </div>
+
+                        {/* Bulk Action Controls */}
+                        {selectedProductIds.length > 0 && (
+                          <div className="flex items-center gap-2 animate-fadeIn">
+                            <span className="text-[11px] font-black uppercase tracking-wider text-yellow-400 bg-yellow-400/10 border border-yellow-400/20 px-2.5 py-1 rounded-lg">
+                              {selectedProductIds.length} Selected
+                            </span>
+                            <button
+                              onClick={() => setSelectedProductIds([])}
+                              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all"
+                            >
+                              Clear
+                            </button>
+                            <button
+                              onClick={() => setShowBulkDeleteModal(true)}
+                              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-black uppercase tracking-wider rounded-lg flex items-center gap-1.5 shadow-lg active:scale-95 transition-all"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete Selected ({selectedProductIds.length})</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Products Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[600px] overflow-y-auto pr-1">
+                        {filteredProducts.length === 0 ? (
+                          <div className="col-span-full text-center p-12 bg-slate-950/40 rounded-2xl border border-white/5">
+                            <SlidersHorizontal className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                            <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-relaxed">
+                              {productSearchQuery || productCategoryFilter !== 'all' || productStockFilter !== 'all'
+                                ? 'No products matched your search/filter criteria'
+                                : 'No custom listings synced in this catalog'}
+                            </p>
+                            {(productSearchQuery || productCategoryFilter !== 'all' || productStockFilter !== 'all') && (
+                              <button
+                                onClick={() => {
+                                  setProductSearchQuery('');
+                                  setProductCategoryFilter('all');
+                                  setProductStockFilter('all');
+                                }}
+                                className="mt-3 text-[10px] font-black uppercase text-yellow-400 hover:underline"
+                              >
+                                Reset Filters
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          filteredProducts.map((item) => {
+                            const isSelected = selectedProductIds.includes(item.id);
+                            return (
+                              <div 
+                                key={item.id} 
+                                className={`bg-slate-950/80 border rounded-2xl overflow-hidden shadow-sm flex flex-col justify-between transition-all ${
+                                  isSelected 
+                                    ? 'border-yellow-400/80 ring-2 ring-yellow-400/30' 
+                                    : 'border-white/5 hover:border-white/20'
+                                }`}
+                              >
+                                <div className="aspect-video relative select-none bg-slate-900 flex items-center justify-center">
+                                  {item.image ? (
+                                    <img src={item.image} referrerPolicy="no-referrer" alt="" className="w-full h-full object-cover" />
+                                  ) : (
+                                    <Store className="w-8 h-8 text-slate-700" />
+                                  )}
+
+                                  {/* Selection Checkbox on Card */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleSelectProduct(item.id);
+                                    }}
+                                    className="absolute top-3 right-3 p-1.5 bg-slate-950/80 backdrop-blur-sm rounded-lg border border-white/10 hover:border-yellow-400 z-10 transition-all"
+                                    title={isSelected ? 'Deselect product' : 'Select product for batch action'}
+                                  >
+                                    {isSelected ? (
+                                      <CheckSquare className="w-4 h-4 text-yellow-400" />
+                                    ) : (
+                                      <Square className="w-4 h-4 text-slate-400 hover:text-white" />
+                                    )}
+                                  </button>
+
+                                  <div className="absolute top-3 left-3 flex flex-wrap gap-1">
+                                    <span className="bg-slate-900/90 text-[9px] font-black uppercase tracking-widest text-slate-300 px-2.5 py-1 rounded-full border border-white/5">
+                                      {item.category}
+                                    </span>
+                                    {item.subCategory && (
+                                      <span className="bg-indigo-900/90 text-[9px] font-black uppercase tracking-widest text-white px-2.5 py-1 rounded-full">
+                                        {item.subCategory}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {!item.isAvailable && (
+                                    <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center">
+                                      <span className="px-3 py-1 bg-rose-600 text-white rounded-full font-black uppercase tracking-widest text-[9px]">
+                                        Out of stock
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="p-4 flex-1 flex flex-col justify-between gap-4">
+                                  <div>
+                                    <h4 className="text-sm font-black text-white uppercase tracking-tight leading-snug line-clamp-1">{item.name}</h4>
+                                    <div className="flex items-baseline gap-2 mt-1">
+                                      <span className="text-slate-200 text-[12px] font-bold">₹{item.price} per {item.unit || 'unit'}</span>
+                                      {item.originalPrice && (
+                                        <span className="text-slate-400 line-through text-[10px] font-bold">₹{item.originalPrice}</span>
+                                      )}
+                                    </div>
+                                    <p className="text-[10px] text-slate-500 italic line-clamp-2 mt-2 leading-normal">{item.description}</p>
+                                    <div className="flex flex-wrap gap-2 mt-2.5 border-t border-white/5 pt-2 text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">
+                                      <span>Vendor: {item.hotelName || item.vendorId || 'Central'}</span>
+                                      {item.stock !== undefined && item.stock !== null && (
+                                        <span className="text-amber-400 border-l border-white/10 pl-2">Stock: {item.stock} qty</span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => handleEditCatalogItemClick(item)}
+                                      className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl border border-white/5 text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 transition-all"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5 text-yellow-400" />
+                                      <span>Edit</span>
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteCatalogItem(item.id)}
+                                      className="p-2 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl transition-all"
+                                      title="Delete Item"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             ) : (
               <div className="bg-slate-900 border border-white/5 rounded-[2.5rem] p-6 space-y-4">
@@ -5739,6 +6658,15 @@ const reconcileDocSync = async (branchId, docBody) => {
                 >
                   <Activity className="w-4 h-4" />
                   <span>Transmitters & Settlement Logs</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('apk_hub')}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer bg-slate-950/70 text-indigo-400 hover:text-white border border-indigo-500/30 hover:border-indigo-400"
+                  id="settings_subtab_apk_hub"
+                >
+                  <Smartphone className="w-4 h-4 text-indigo-400" />
+                  <span>APK Generation Hub</span>
                 </button>
               </div>
 
@@ -7091,46 +8019,240 @@ const reconcileDocSync = async (branchId, docBody) => {
               <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4">
                 <div className="flex items-center justify-between border-b border-white/5 pb-3">
                   <div>
-                    <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight">Category Promotion Banners</h3>
-                    <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">App home interactive carousel slides</p>
+                    <h3 className="text-sm font-black uppercase text-yellow-400 tracking-tight flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-yellow-400" />
+                      Category Promotion Banners
+                    </h3>
+                    <p className="text-[9px] text-slate-500 uppercase tracking-widest font-mono">App home interactive carousel slides & controls</p>
                   </div>
-                  <button
-                    onClick={() => {
-                      setEditingBanner(null);
-                      setBannerForm({ title: '', description: '', image: '', route: 'restaurant', status: 'active' });
-                      setShowBannerModal(true);
-                    }}
-                    className="p-2.5 bg-yellow-400 text-slate-900 hover:bg-yellow-300 rounded-xl font-bold flex items-center gap-1.5 text-[9px] uppercase tracking-widest active:scale-95 transition-all"
-                  >
-                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                    <span>Add Slide</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setEditingBanner(null);
+                        setBannerForm({
+                          title: '',
+                          description: '',
+                          image: '',
+                          route: 'restaurant',
+                          type: 'top',
+                          color: 'bg-slate-900',
+                          status: 'active',
+                          cta: 'Shop Now',
+                          categoryId: '',
+                          productId: ''
+                        });
+                        setShowBannerModal(true);
+                      }}
+                      className="p-2.5 bg-yellow-400 text-slate-900 hover:bg-yellow-300 rounded-xl font-bold flex items-center gap-1.5 text-[9px] uppercase tracking-widest active:scale-95 transition-all"
+                    >
+                      <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>Add Slide</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1 font-sans">
+                {/* --- SLIDER ENGINE & ANTI-FLICKER CONTROLS --- */}
+                <div className="bg-slate-950/90 border border-yellow-400/20 rounded-2xl p-4 space-y-3.5 shadow-inner">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <SlidersHorizontal className="w-4 h-4 text-yellow-400" />
+                      <span className="text-[11px] font-black uppercase tracking-wider text-white">Slider & Anti-Flicker Controls</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${bannerSliderConfig.autoSlideEnabled ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                        {bannerSliderConfig.autoSlideEnabled ? `Auto-Slide (${(bannerSliderConfig.intervalMs / 1000).toFixed(1)}s)` : 'Paused (Static Only)'}
+                      </span>
+                      <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded text-[8px] font-black uppercase tracking-wider">
+                        {bannerSliderConfig.transitionType === 'fade' ? 'Fade (Anti-Flicker)' : bannerSliderConfig.transitionType === 'slide' ? 'Smooth Slide' : 'Instant (No Anim)'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 1. Master Auto-Slide Toggle, Animation Effects & Anti-Flicker Mode */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div className="bg-slate-900/80 border border-white/5 p-3 rounded-xl flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] font-black text-white uppercase tracking-tight">Auto-Slide</p>
+                        <p className="text-[8px] text-slate-400">Automatic rotation</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveBannerSliderConfig({ autoSlideEnabled: !bannerSliderConfig.autoSlideEnabled })}
+                        disabled={isSavingBannerConfig}
+                        className={`px-3 py-1.5 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all flex items-center gap-1 ${
+                          bannerSliderConfig.autoSlideEnabled 
+                            ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400' 
+                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}
+                      >
+                        {bannerSliderConfig.autoSlideEnabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                        {bannerSliderConfig.autoSlideEnabled ? 'On' : 'Off'}
+                      </button>
+                    </div>
+
+                    <div className="bg-slate-900/80 border border-white/5 p-3 rounded-xl flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] font-black text-white uppercase tracking-tight">Animation Effects</p>
+                        <p className="text-[8px] text-slate-400">Sliding / Motion FX</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveBannerSliderConfig({ bannerAnimationEnabled: !bannerSliderConfig.bannerAnimationEnabled })}
+                        disabled={isSavingBannerConfig}
+                        className={`px-3 py-1.5 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all ${
+                          bannerSliderConfig.bannerAnimationEnabled 
+                            ? 'bg-yellow-400 text-slate-950 hover:bg-yellow-300 font-bold' 
+                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}
+                      >
+                        {bannerSliderConfig.bannerAnimationEnabled ? 'Active ✓' : 'Disabled'}
+                      </button>
+                    </div>
+
+                    <div className="bg-slate-900/80 border border-white/5 p-3 rounded-xl flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] font-black text-white uppercase tracking-tight">Anti-Flicker Mode</p>
+                        <p className="text-[8px] text-slate-400">Hardware GPU accel</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveBannerSliderConfig({ antiFlickerMode: !bannerSliderConfig.antiFlickerMode })}
+                        disabled={isSavingBannerConfig}
+                        className={`px-3 py-1.5 rounded-lg font-black text-[9px] uppercase tracking-wider transition-all ${
+                          bannerSliderConfig.antiFlickerMode 
+                            ? 'bg-indigo-600 text-white hover:bg-indigo-500' 
+                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                        }`}
+                      >
+                        {bannerSliderConfig.antiFlickerMode ? 'Active ✓' : 'Off'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. Slide Speed & Transition Engine */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="bg-slate-900/80 border border-white/5 p-3 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Slide Speed (Interval)</label>
+                        <span className="text-[9px] font-mono text-yellow-400 font-bold">{(bannerSliderConfig.intervalMs / 1000).toFixed(0)} seconds</span>
+                      </div>
+                      <div className="flex gap-1 flex-wrap">
+                        {[3000, 5000, 6000, 8000, 10000, 15000].map((ms) => (
+                          <button
+                            key={ms}
+                            type="button"
+                            onClick={() => handleSaveBannerSliderConfig({ intervalMs: ms })}
+                            className={`px-2 py-1 rounded text-[8px] font-black tracking-wider transition-all ${
+                              bannerSliderConfig.intervalMs === ms 
+                                ? 'bg-yellow-400 text-slate-950 font-bold' 
+                                : 'bg-slate-950 text-slate-400 hover:text-white border border-white/5'
+                            }`}
+                          >
+                            {ms / 1000}s
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/80 border border-white/5 p-3 rounded-xl space-y-2">
+                      <label className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">Transition Animation</label>
+                      <div className="grid grid-cols-3 gap-1">
+                        {[
+                          { id: 'fade', label: 'Fade (Anti-Flicker)' },
+                          { id: 'slide', label: 'Smooth Slide' },
+                          { id: 'none', label: 'Instant' }
+                        ].map((mode) => (
+                          <button
+                            key={mode.id}
+                            type="button"
+                            onClick={() => handleSaveBannerSliderConfig({ transitionType: mode.id as any })}
+                            className={`px-1.5 py-1.5 rounded text-[8px] font-black uppercase tracking-tight text-center truncate transition-all ${
+                              bannerSliderConfig.transitionType === mode.id 
+                                ? 'bg-yellow-400 text-slate-950 font-bold' 
+                                : 'bg-slate-950 text-slate-400 hover:text-white border border-white/5'
+                            }`}
+                          >
+                            {mode.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 3. Emergency Stabilizer / Fix Banners One-Click Button */}
+                  <div className="pt-1 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 border-t border-white/5">
+                    <p className="text-[8px] text-slate-400 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-yellow-400 shrink-0" />
+                      Changes sync in real-time across Customer, Vendor & Mobile apps without rebuild.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleFixAndStabilizeBanners}
+                      disabled={isFixingBanners}
+                      className="px-3 py-2 bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-slate-950 rounded-xl font-black text-[9px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all shrink-0 disabled:opacity-50"
+                    >
+                      {isFixingBanners ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Wrench className="w-3.5 h-3.5 stroke-[2.5]" />
+                      )}
+                      <span>Fix & Stabilize Banners</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* --- BANNER CARDS LIST --- */}
+                <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1 font-sans">
                   {banners.length === 0 ? (
                     <p className="text-center py-12 text-slate-500 text-[10px] font-black uppercase">No slide banners configured yet</p>
                   ) : (
                     banners.map((b) => (
-                      <div key={b.id} className="bg-slate-950/70 border border-white/5 p-4 rounded-2xl flex items-center gap-4">
-                        {b.image && (
-                          <img src={b.image} className="w-16 h-12 rounded-lg object-cover bg-slate-900 shrink-0 border border-white/5" alt="Banner thumb" />
+                      <div key={b.id} className="bg-slate-950/70 border border-white/5 p-4 rounded-2xl flex items-center gap-4 group">
+                        {(b.image || b.img) && (
+                          <img src={b.image || b.img} className="w-16 h-12 rounded-lg object-cover bg-slate-900 shrink-0 border border-white/5" alt="Banner thumb" />
                         )}
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-black text-white truncate uppercase">{b.title}</p>
-                          <p className="text-[10px] text-slate-400 truncate">{b.description}</p>
-                          <span className="inline-block mt-1 px-2 py-0.5 bg-indigo-500/10 text-indigo-400 text-[8px] font-black uppercase tracking-widest rounded-full">Route: {b.route}</span>
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-black text-white truncate uppercase">{b.title}</p>
+                            <span className={`px-1.5 py-0.5 text-[8px] font-black uppercase rounded ${b.type === 'bottom' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                              {b.type === 'bottom' ? 'Bottom Offer' : 'Top Carousel'}
+                            </span>
+                            <span className={`px-1.5 py-0.5 text-[8px] font-black uppercase rounded ${b.status === 'inactive' || b.status === 'hidden' ? 'bg-rose-500/20 text-rose-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                              {b.status === 'inactive' || b.status === 'hidden' ? 'Inactive' : 'Active'}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 truncate">{b.description || b.sub}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="inline-block px-2 py-0.5 bg-indigo-500/10 text-indigo-400 text-[8px] font-black uppercase tracking-widest rounded-full">Route: {b.route || b.categoryId || 'General'}</span>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBannerStatus(b)}
+                            title={b.status === 'inactive' || b.status === 'hidden' ? 'Click to Activate' : 'Click to Pause/Hide'}
+                            className={`p-2 rounded-lg border text-[8px] font-black uppercase tracking-wider transition-all ${
+                              b.status === 'inactive' || b.status === 'hidden'
+                                ? 'bg-slate-900 text-slate-400 border-white/10 hover:text-emerald-400'
+                                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500 hover:text-slate-950'
+                            }`}
+                          >
+                            {b.status === 'inactive' || b.status === 'hidden' ? 'Paused' : 'Active'}
+                          </button>
                           <button
                             onClick={() => {
                               setEditingBanner(b);
                               setBannerForm({
                                 title: b.title || '',
-                                description: b.description || '',
-                                image: b.image || '',
-                                route: b.route || 'restaurant',
-                                status: b.status || 'active'
+                                description: b.description || b.sub || '',
+                                image: b.image || b.img || '',
+                                route: b.route || b.categoryId || 'restaurant',
+                                type: b.type || 'top',
+                                color: b.color || 'bg-slate-900',
+                                status: b.status || 'active',
+                                cta: b.cta || 'Shop Now',
+                                categoryId: b.categoryId || '',
+                                productId: b.productId || ''
                               });
                               setShowBannerModal(true);
                             }}
@@ -7503,6 +8625,188 @@ const reconcileDocSync = async (branchId, docBody) => {
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                     localbandimultiservices.in
                   </p>
+                </div>
+              </div>
+            </div>
+
+            {/* ANDROID APK & PWA DISTRIBUTION CENTER */}
+            <div className="bg-slate-900 border border-emerald-500/30 rounded-[2.5rem] p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Smartphone className="w-5 h-5 text-emerald-400" />
+                    <h3 className="text-sm font-black uppercase text-white tracking-tight">Android APK Generation & Distribution Center</h3>
+                  </div>
+                  <p className="text-[10px] text-slate-400 font-sans mt-0.5">
+                    Direct entry points, standalone manifests & 1-click cloud APK builder links for all 4 distinct apps.
+                  </p>
+                </div>
+                <a
+                  href="https://www.pwabuilder.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 rounded-xl font-black text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-lg active:scale-95 transition-all shrink-0"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open Cloud APK Builder</span>
+                </a>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 1. Customer App */}
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-yellow-400/20 text-yellow-400 flex items-center justify-center font-black text-xs">
+                        LB
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black uppercase text-white">1. Customer App</h4>
+                        <p className="text-[8px] font-mono text-slate-400">com.localbandi.app</p>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-yellow-400/10 text-yellow-400 rounded text-[8px] font-black uppercase">
+                      PWA Manifest: /manifest.json
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Consumer app for multi-services, e-commerce, instant food/grocery delivery, and doctor appointments.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <a
+                      href="/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 border border-white/5"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Test Web App
+                    </a>
+                    <a
+                      href={`https://www.pwabuilder.com?site=${encodeURIComponent(window.location.origin + '/')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> Generate APK
+                    </a>
+                  </div>
+                </div>
+
+                {/* 2. Partner & Rider Hub */}
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-black text-xs">
+                        PR
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black uppercase text-white">2. Partner & Rider Hub</h4>
+                        <p className="text-[8px] font-mono text-slate-400">com.localbandi.partner</p>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded text-[8px] font-black uppercase">
+                      Manifest: /manifest-partner.json
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Dedicated standalone portal for delivery drivers, store vendors, and service partners with audio sirens.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <a
+                      href="/partner.html"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 border border-white/5"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Open Partner App
+                    </a>
+                    <a
+                      href={`https://www.pwabuilder.com?site=${encodeURIComponent(window.location.origin + '/partner.html')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> Generate APK
+                    </a>
+                  </div>
+                </div>
+
+                {/* 3. Franchise App */}
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-black text-xs">
+                        FH
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black uppercase text-white">3. Franchise App</h4>
+                        <p className="text-[8px] font-mono text-slate-400">com.localbandi.franchise</p>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 rounded text-[8px] font-black uppercase">
+                      Manifest: /manifest-franchise.json
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Branch management & revenue console for regional franchise partners and city branch operators.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <a
+                      href="/franchise.html"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 border border-white/5"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Open Franchise App
+                    </a>
+                    <a
+                      href={`https://www.pwabuilder.com?site=${encodeURIComponent(window.location.origin + '/franchise.html')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 border border-indigo-500/30 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> Generate APK
+                    </a>
+                  </div>
+                </div>
+
+                {/* 4. Master Admin Console */}
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-rose-500/20 text-rose-400 flex items-center justify-center font-black text-xs">
+                        MA
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black uppercase text-white">4. Master Admin Console</h4>
+                        <p className="text-[8px] font-mono text-slate-400">com.localbandi.admin</p>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-rose-500/10 text-rose-400 rounded text-[8px] font-black uppercase">
+                      Manifest: /manifest-admin.json
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Tarun Bandi executive command center for inventory control, slider banners, radius approvals and finances.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <a
+                      href="/admin.html"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 border border-white/5"
+                    >
+                      <ExternalLink className="w-3 h-3" /> Open Admin Portal
+                    </a>
+                    <a
+                      href={`https://www.pwabuilder.com?site=${encodeURIComponent(window.location.origin + '/admin.html')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1"
+                    >
+                      <Download className="w-3 h-3" /> Generate APK
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>
@@ -7918,29 +9222,139 @@ const reconcileDocSync = async (branchId, docBody) => {
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Assigned Store Vendor</label>
-                  <select 
-                    value={itemForm.vendorId} 
-                    onChange={(e) => setItemForm({...itemForm, vendorId: e.target.value})}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold"
-                  >
-                    <option value="admin-store">Lokal Central Hub (Admin)</option>
-                    {vendors.map((v) => (
-                      <option key={v.id} value={v.id}>{v.businessName || v.name || v.ownerName} ({v.status})</option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Assigned Store Vendor</label>
+                    <select 
+                      value={itemForm.vendorId} 
+                      onChange={(e) => setItemForm({...itemForm, vendorId: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-400"
+                    >
+                      <option value="admin-store">Lokal Central Hub (Admin)</option>
+                      {vendors.map((v) => (
+                        <option key={v.id} value={v.id}>{v.businessName || v.name || v.ownerName} ({v.status})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Branch Scope / Visibility</label>
+                    <select 
+                      value={itemForm.branchId || 'global'} 
+                      onChange={(e) => setItemForm({...itemForm, branchId: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white outline-none focus:border-yellow-400"
+                    >
+                      <option value="global">🌐 Global Scope (All Customer Apps)</option>
+                      <option value="khammam_main">Khammam Main (khammam_main)</option>
+                      <option value="khammam_rural">Khammam Rural (khammam_rural)</option>
+                      <option value="madhira">Madhira (madhira)</option>
+                      <option value="sathupally">Sathupally (sathupally)</option>
+                      <option value="kothagudem">Kothagudem (kothagudem)</option>
+                      <option value="palvancha">Palvancha (palvancha)</option>
+                      <option value="yellandu">Yellandu (yellandu)</option>
+                      <option value="bhadrachalam">Bhadrachalam (bhadrachalam)</option>
+                      <option value="manuguru">Manuguru (manuguru)</option>
+                      <option value="aswaraopeta">Aswaraopeta (aswaraopeta)</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Image Resource Link</label>
-                  <input 
-                    type="url" 
-                    value={itemForm.image} 
-                    onChange={(e) => setItemForm({...itemForm, image: e.target.value})}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold" 
-                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E" 
-                  />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Product Image</label>
+                    {itemForm.image && (
+                      <button 
+                        type="button" 
+                        onClick={() => setItemForm({ ...itemForm, image: '' })}
+                        className="text-[9px] font-bold text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                      >
+                        Clear Image
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Image Preview and File Upload Options */}
+                  <div className="space-y-2">
+                    <div className="flex gap-3 items-center bg-slate-950 p-3 rounded-2xl border border-white/10">
+                      <div className="w-16 h-16 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 relative group">
+                        {itemForm.image ? (
+                          <img 
+                            src={itemForm.image} 
+                            alt="Product Preview" 
+                            className="w-full h-full object-cover" 
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <ImageIcon className="w-6 h-6 text-slate-600" />
+                        )}
+                        {isProcessingImage && (
+                          <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+                            <RefreshCw className="w-4 h-4 text-yellow-400 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex-1 space-y-2">
+                        <label className="w-full py-2.5 px-3 bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-xl font-black uppercase text-[9px] tracking-wider flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Upload From File</span>
+                          <input 
+                            type="file" 
+                            accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml" 
+                            className="hidden" 
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                setIsProcessingImage(true);
+                                setItemImageError(null);
+                                try {
+                                  const result = await processImageUpload(file, {
+                                    maxSizeBytes: 5 * 1024 * 1024,
+                                    maxWidth: 800,
+                                    maxHeight: 800,
+                                    quality: 0.8
+                                  });
+                                  if (!result.success) {
+                                    setItemImageError(result.error || 'Invalid image file.');
+                                  } else {
+                                    setItemForm(prev => ({ ...prev, image: result.dataUrl || '' }));
+                                    setItemImageError(null);
+                                    triggerToast('✓ Image uploaded successfully');
+                                  }
+                                } catch (err: any) {
+                                  console.error("File upload error:", err);
+                                  setItemImageError(err.message || 'Error processing image.');
+                                } finally {
+                                  setIsProcessingImage(false);
+                                  e.target.value = '';
+                                }
+                              }
+                            }}
+                          />
+                        </label>
+                        <p className="text-[8px] text-slate-400 font-bold uppercase tracking-tight">JPG, PNG, WebP, SVG • Max 5MB</p>
+                      </div>
+                    </div>
+
+                    {/* Image validation error feedback */}
+                    {itemImageError && (
+                      <div className="flex items-center gap-2 p-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-[10px] font-bold">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                        <span>{itemImageError}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                    <input 
+                      type="url" 
+                      value={itemForm.image} 
+                      onChange={(e) => setItemForm({...itemForm, image: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 pl-8 pr-3 py-2.5 rounded-xl text-xs font-bold" 
+                      placeholder="Or paste external image URL..." 
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1">
@@ -8197,16 +9611,102 @@ const reconcileDocSync = async (branchId, docBody) => {
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Thumbnail Image URL</label>
-                  <input 
-                    type="url" 
-                    value={categoryForm.image} 
-                    onChange={(e) => setCategoryForm({...categoryForm, image: e.target.value})}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold" 
-                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E" 
-                  />
-                  <p className="text-[8px] text-slate-500 font-bold uppercase leading-snug">Provide an Unsplash graphic to render a rich picture tile for users (optional).</p>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Thumbnail Image</label>
+                    {categoryForm.image && (
+                      <button 
+                        type="button" 
+                        onClick={() => setCategoryForm({ ...categoryForm, image: '' })}
+                        className="text-[9px] font-bold text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                      >
+                        Clear Image
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Thumbnail Preview and File Upload Options */}
+                  <div className="space-y-2">
+                    <div className="flex gap-3 items-center bg-slate-950 p-3 rounded-2xl border border-white/10">
+                      <div className="w-16 h-16 rounded-xl bg-slate-900 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 relative group">
+                        {categoryForm.image ? (
+                          <img 
+                            src={categoryForm.image} 
+                            alt="Category Preview" 
+                            className="w-full h-full object-cover" 
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <ImageIcon className="w-6 h-6 text-slate-600" />
+                        )}
+                        {isProcessingImage && (
+                          <div className="absolute inset-0 bg-black/70 flex items-center justify-center">
+                            <RefreshCw className="w-4 h-4 text-yellow-400 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex-1 space-y-2">
+                        <label className="w-full py-2.5 px-3 bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-xl font-black uppercase text-[9px] tracking-wider flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Upload Category Icon/Photo</span>
+                          <input 
+                            type="file" 
+                            accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml" 
+                            className="hidden" 
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                setIsProcessingImage(true);
+                                setCategoryImageError(null);
+                                try {
+                                  const result = await processImageUpload(file, {
+                                    maxSizeBytes: 5 * 1024 * 1024,
+                                    maxWidth: 600,
+                                    maxHeight: 600,
+                                    quality: 0.8
+                                  });
+                                  if (!result.success) {
+                                    setCategoryImageError(result.error || 'Invalid category image.');
+                                  } else {
+                                    setCategoryForm(prev => ({ ...prev, image: result.dataUrl || '' }));
+                                    setCategoryImageError(null);
+                                    triggerToast('✓ Category image uploaded');
+                                  }
+                                } catch (err: any) {
+                                  console.error("Category file upload error:", err);
+                                  setCategoryImageError(err.message || 'Error processing image.');
+                                } finally {
+                                  setIsProcessingImage(false);
+                                  e.target.value = '';
+                                }
+                              }
+                            }}
+                          />
+                        </label>
+                        <p className="text-[8px] text-slate-400 font-bold uppercase tracking-tight">JPG, PNG, WebP, SVG • Max 5MB</p>
+                      </div>
+                    </div>
+
+                    {/* Category Image validation error feedback */}
+                    {categoryImageError && (
+                      <div className="flex items-center gap-2 p-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-[10px] font-bold">
+                        <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                        <span>{categoryImageError}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <LinkIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                    <input 
+                      type="url" 
+                      value={categoryForm.image} 
+                      onChange={(e) => setCategoryForm({...categoryForm, image: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 pl-8 pr-3 py-2.5 rounded-xl text-xs font-bold" 
+                      placeholder="Or paste external image URL..." 
+                    />
+                  </div>
                 </div>
 
                 <div className="flex gap-3 pt-2">
@@ -8230,30 +9730,119 @@ const reconcileDocSync = async (branchId, docBody) => {
         )}
       </AnimatePresence>
 
-      {/* BANNER EDIT/ADD MODAL */}
+      {/* BULK DELETE PRODUCTS CONFIRMATION MODAL */}
       <AnimatePresence>
-        {showBannerModal && (
-          <div className="fixed inset-0 z-[10002] flex items-center justify-center p-6 bg-slate-950/85 backdrop-blur-sm">
+        {showBulkDeleteModal && (
+          <div className="fixed inset-0 z-[10005] flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-slate-900 border border-white/10 rounded-[2.5rem] p-6 max-w-sm w-full space-y-5 text-white shadow-2xl overflow-y-auto max-h-[90vh]"
+              className="bg-slate-900 border border-rose-500/20 rounded-[2.5rem] p-6 sm:p-8 max-w-md w-full space-y-5 text-white shadow-2xl"
             >
-              <div className="flex items-center gap-3">
-                <Laptop className="w-6 h-6 text-yellow-400" />
-                <h3 className="text-lg font-black uppercase tracking-tight">{editingBanner ? 'Edit Promo Banner' : 'Create Promo Banner'}</h3>
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-6 h-6 text-rose-500" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black uppercase tracking-tight text-white">Bulk Delete Products</h3>
+                  <p className="text-[11px] font-bold text-slate-400">Irreversible catalog removal</p>
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-950 rounded-2xl border border-white/5 space-y-2">
+                <p className="text-xs font-bold text-slate-300">
+                  You are about to delete <span className="text-yellow-400 font-black">{selectedProductIds.length}</span> product{selectedProductIds.length > 1 ? 's' : ''} from the database.
+                </p>
+                <div className="max-h-32 overflow-y-auto space-y-1 pr-1 border-t border-white/5 pt-2">
+                  {selectedProductIds.map((id, index) => {
+                    const prod = products.find(p => p.id === id);
+                    if (!prod) return null;
+                    return (
+                      <div key={id} className="text-[10px] font-bold text-slate-400 flex items-center justify-between">
+                        <span className="truncate max-w-[200px]">{index + 1}. {prod.name}</span>
+                        <span className="text-slate-500 text-[9px] uppercase">₹{prod.price}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-start gap-2 text-rose-400 text-[10px] font-bold">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>This action will permanently delete these products from Firestore and remove them from all customer apps immediately.</span>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => setShowBulkDeleteModal(false)}
+                  disabled={isBulkDeleting}
+                  className="flex-1 py-3 bg-slate-950 hover:bg-slate-800 text-slate-400 border border-white/5 rounded-xl font-black uppercase text-[10px] tracking-widest active:scale-95 transition-all disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button"
+                  onClick={handleBulkDeleteProducts}
+                  disabled={isBulkDeleting}
+                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-rose-900/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isBulkDeleting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" />
+                      <span>Confirm Delete ({selectedProductIds.length})</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BANNER EDIT/ADD MODAL */}
+      <AnimatePresence>
+        {showBannerModal && (
+          <div className="fixed inset-0 z-[10002] flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-slate-900 border border-white/10 rounded-[2.5rem] p-6 max-w-md w-full space-y-4 text-white shadow-2xl overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-yellow-400/10 text-yellow-400 flex items-center justify-center">
+                    <Laptop className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black uppercase tracking-tight">{editingBanner ? 'Edit Promo Banner' : 'Create Promo Banner'}</h3>
+                    <p className="text-[9px] text-slate-400 font-mono">Syncs instantly with Customer App</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setShowBannerModal(false); setEditingBanner(null); }}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
               
-              <form onSubmit={handleSaveBanner} className="space-y-4 text-left">
+              <form onSubmit={handleSaveBanner} className="space-y-3.5 text-left">
                 <div className="space-y-1">
                   <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Banner Title</label>
                   <input 
                     type="text" required 
                     value={bannerForm.title} 
                     onChange={(e) => setBannerForm({...bannerForm, title: e.target.value})}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold" 
-                    placeholder="E.g., 50% Ghee Sale!" 
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-yellow-400 outline-none" 
+                    placeholder="E.g., 50% Fresh Ghee Special Offer!" 
                   />
                 </div>
 
@@ -8263,33 +9852,154 @@ const reconcileDocSync = async (branchId, docBody) => {
                     type="text" required 
                     value={bannerForm.description} 
                     onChange={(e) => setBannerForm({...bannerForm, description: e.target.value})}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold" 
-                    placeholder="E.g., Homemade traditional products..." 
+                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white focus:border-yellow-400 outline-none" 
+                    placeholder="E.g., 100% Traditional pure farm products..." 
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider font-mono">Redirect Route Trigger</label>
-                  <select 
-                    value={bannerForm.route} 
-                    onChange={(e) => setBannerForm({...bannerForm, route: e.target.value})}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white font-mono"
-                  >
-                    <option value="restaurant">restaurant (Food Dispatch)</option>
-                    <option value="groceries">groceries (Fresh Veg/Fruits)</option>
-                    <option value="organic">organic (Pure Farm Ghee/Honey)</option>
-                    <option value="medical">medical (Clinical OPD Consultations)</option>
-                  </select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Display Slot</label>
+                    <select 
+                      value={bannerForm.type} 
+                      onChange={(e) => setBannerForm({...bannerForm, type: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white focus:border-yellow-400 outline-none"
+                    >
+                      <option value="top">Top Carousel Banner</option>
+                      <option value="bottom">Middle / Bottom Offer</option>
+                      <option value="both">Both Top & Bottom</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Card Theme Style</label>
+                    <select 
+                      value={bannerForm.color} 
+                      onChange={(e) => setBannerForm({...bannerForm, color: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white focus:border-yellow-400 outline-none"
+                    >
+                      <option value="bg-slate-900">Slate Dark (Default)</option>
+                      <option value="bg-emerald-600">Emerald Fresh</option>
+                      <option value="bg-indigo-600">Indigo Royal</option>
+                      <option value="bg-amber-600">Amber Gold</option>
+                      <option value="bg-rose-600">Ruby Crimson</option>
+                      <option value="bg-cyan-600">Ocean Cyan</option>
+                      <option value="bg-purple-600">Purple Velvet</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Public Banner Image Link</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider font-mono">Redirect Route / Category</label>
+                    <select 
+                      value={bannerForm.route} 
+                      onChange={(e) => setBannerForm({...bannerForm, route: e.target.value, categoryId: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white font-mono focus:border-yellow-400 outline-none"
+                    >
+                      <option value="restaurant">Restaurant (Food)</option>
+                      <option value="groceries">Groceries & Produce</option>
+                      <option value="organic">Organic Farm Fresh</option>
+                      <option value="medical">Medical & Clinical</option>
+                      <option value="dairy">Dairy & Milk</option>
+                      <option value="services">Home Services</option>
+                      <option value="marriage">Marriage Bureau</option>
+                      <option value="properties">Real Estate</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Button CTA Text</label>
+                    <input 
+                      type="text"
+                      value={bannerForm.cta} 
+                      onChange={(e) => setBannerForm({...bannerForm, cta: e.target.value})}
+                      className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white focus:border-yellow-400 outline-none" 
+                      placeholder="Shop Now / Order Now" 
+                    />
+                  </div>
+                </div>
+
+                {/* Banner Image Upload & URL */}
+                <div className="space-y-1.5 p-3 rounded-2xl bg-slate-950 border border-white/5">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-wider">Banner Image</label>
+                  
+                  {bannerForm.image && (
+                    <div className="relative mb-2 w-full h-24 rounded-xl overflow-hidden bg-slate-900 border border-white/10">
+                      <img 
+                        src={bannerForm.image} 
+                        alt="Banner Preview" 
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).src = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800&q=80'; }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setBannerForm({ ...bannerForm, image: '' })}
+                        className="absolute top-1.5 right-1.5 p-1 bg-black/60 hover:bg-rose-600 rounded-full text-white transition-all text-xs"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <label className="flex-1 cursor-pointer flex items-center justify-center gap-1.5 py-2.5 px-3 bg-yellow-400/10 hover:bg-yellow-400/20 text-yellow-400 border border-yellow-400/30 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload Image File</span>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = async () => {
+                              try {
+                                const compressed = await compressImage(reader.result as string, 1000, 600, 0.8);
+                                setBannerForm(prev => ({ ...prev, image: compressed }));
+                              } catch {
+                                setBannerForm(prev => ({ ...prev, image: reader.result as string }));
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+
+                    <label className="cursor-pointer flex items-center justify-center p-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-white/10 rounded-xl text-[10px] font-black transition-all active:scale-95" title="Take photo with camera">
+                      <Camera className="w-4 h-4 text-emerald-400" />
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        capture="environment"
+                        className="hidden" 
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = async () => {
+                              try {
+                                const compressed = await compressImage(reader.result as string, 1000, 600, 0.8);
+                                setBannerForm(prev => ({ ...prev, image: compressed }));
+                              } catch {
+                                setBannerForm(prev => ({ ...prev, image: reader.result as string }));
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+
                   <input 
-                    type="url" required 
+                    type="text" 
                     value={bannerForm.image} 
                     onChange={(e) => setBannerForm({...bannerForm, image: e.target.value})}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold font-mono" 
-                    placeholder="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20400%22%20width%3D%22100%25%22%20height%3D%22100%25%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22grad%22%20x1%3D%220%25%22%20y1%3D%220%25%22%20x2%3D%22100%25%22%20y2%3D%22100%25%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%23fef3c7%22%2F%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%23fde68a%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22400%22%20height%3D%22400%22%20rx%3D%2232%22%20fill%3D%22url(%23grad)%22%2F%3E%3Ccircle%20cx%3D%22200%22%20cy%3D%22170%22%20r%3D%2280%22%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.6%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22195%22%20font-size%3D%2270%22%20text-anchor%3D%22middle%22%20font-family%3D%22system-ui%2C%20sans-serif%22%3E%E2%9C%A8%3C%2Ftext%3E%3Crect%20x%3D%2230%22%20y%3D%22290%22%20width%3D%22340%22%20height%3D%2260%22%20rx%3D%2216%22%20fill%3D%22%230f172a%22%20fill-opacity%3D%220.85%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22328%22%20font-size%3D%2220%22%20font-weight%3D%22900%22%20text-anchor%3D%22middle%22%20fill%3D%22%23ffffff%22%20font-family%3D%22system-ui%2C%20-apple-system%2C%20sans-serif%22%20letter-spacing%3D%221%22%3ELocal%2520Bandi%3C%2Ftext%3E%3C%2Fsvg%3E" 
+                    className="w-full bg-slate-900 border border-white/10 p-2.5 rounded-xl text-[10px] font-bold text-slate-300 font-mono focus:border-yellow-400 outline-none" 
+                    placeholder="Or paste public image URL here..." 
                   />
                 </div>
 
@@ -8298,10 +10008,10 @@ const reconcileDocSync = async (branchId, docBody) => {
                   <select 
                     value={bannerForm.status} 
                     onChange={(e) => setBannerForm({...bannerForm, status: e.target.value})}
-                    className="w-full bg-slate-950 border border-white/10 p-3 rounded-xl text-xs font-bold text-white"
+                    className="w-full bg-slate-950 border border-white/10 p-2.5 rounded-xl text-xs font-bold text-white focus:border-yellow-400 outline-none"
                   >
-                    <option value="active">Active (On Screen)</option>
-                    <option value="scheduled">Scheduled (Hidden)</option>
+                    <option value="active">Active (Visible in App)</option>
+                    <option value="scheduled">Scheduled / Hidden</option>
                   </select>
                 </div>
 
@@ -8309,13 +10019,13 @@ const reconcileDocSync = async (branchId, docBody) => {
                   <button 
                     type="button" 
                     onClick={() => { setShowBannerModal(false); setEditingBanner(null); }}
-                    className="flex-1 py-3 bg-slate-950 text-slate-400 border border-white/5 rounded-xl font-black uppercase text-[10px] tracking-widest"
+                    className="flex-1 py-3 bg-slate-950 text-slate-400 border border-white/5 rounded-xl font-black uppercase text-[10px] tracking-widest active:scale-95"
                   >
                     Cancel
                   </button>
                   <button 
                     type="submit"
-                    className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-slate-900 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg"
+                    className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-slate-900 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg active:scale-95"
                   >
                     Publish Slide
                   </button>
@@ -9648,6 +11358,292 @@ const reconcileDocSync = async (branchId, docBody) => {
                 </div>
 
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {/* MASTER ORDER DOSSIER MODAL (Full Details Audit & Dispatch) */}
+        {showOrderDossierModal && inspectingOrder && (
+          <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-slate-900 border border-white/10 w-full max-w-3xl rounded-[2.5rem] p-6 sm:p-8 space-y-6 shadow-2xl relative my-8 text-left max-h-[90vh] overflow-y-auto"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOrderDossierModal(false);
+                  setInspectingOrder(null);
+                }}
+                className="absolute top-6 right-6 w-9 h-9 rounded-full bg-slate-950 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all cursor-pointer shadow"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              {/* Dossier Header */}
+              <div className="border-b border-white/10 pb-5 pr-10">
+                <div className="flex items-center gap-2 flex-wrap mb-2">
+                  <span className="px-3 py-1 bg-amber-400/10 border border-amber-400/20 text-amber-400 text-[9px] font-black uppercase tracking-widest rounded-full">
+                    Official Master Order Dossier
+                  </span>
+                  <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                    inspectingOrder.status === 'Pending' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                    ['Accepted', 'Preparing'].includes(inspectingOrder.status) ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' :
+                    ['OutForDelivery', 'PickedUp'].includes(inspectingOrder.status) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                    inspectingOrder.status === 'Delivered' ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/30' :
+                    'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                  }`}>
+                    ● {inspectingOrder.status === 'PickedUp' || inspectingOrder.status === 'OutForDelivery' ? 'In Transit' : inspectingOrder.status}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h3 className="text-xl sm:text-2xl font-black text-white uppercase tracking-tight">
+                    Order #{inspectingOrder.id.toUpperCase()}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(inspectingOrder.id);
+                      triggerToast('Order ID copied to clipboard');
+                    }}
+                    className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-all cursor-pointer"
+                    title="Copy Order ID"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
+                  <span>Placed: {inspectingOrder.createdAt ? (typeof inspectingOrder.createdAt === 'string' ? new Date(inspectingOrder.createdAt).toLocaleString() : (inspectingOrder.createdAt.seconds ? new Date(inspectingOrder.createdAt.seconds * 1000).toLocaleString() : 'Recent')) : 'Recent'}</span>
+                  <span>•</span>
+                  <span>Branch: {inspectingOrder.branchId || 'Khammam Main Hub'}</span>
+                </p>
+              </div>
+
+              {/* 3 Pillars: Customer, Merchant, Rider */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Customer */}
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/10 space-y-2">
+                  <span className="text-[9px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-1.5 border-b border-white/5 pb-1.5">
+                    <Users className="w-3 h-3" />
+                    <span>Customer Details</span>
+                  </span>
+                  <p className="text-xs font-black text-white">{inspectingOrder.customerName || inspectingOrder.userName || 'Customer'}</p>
+                  {(inspectingOrder.phone || inspectingOrder.userPhone) && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <a
+                        href={`tel:${inspectingOrder.phone || inspectingOrder.userPhone}`}
+                        className="text-[9.5px] font-mono text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20"
+                      >
+                        <Phone className="w-3 h-3" />
+                        <span>{inspectingOrder.phone || inspectingOrder.userPhone}</span>
+                      </a>
+                      <a
+                        href={`https://wa.me/91${(inspectingOrder.phone || inspectingOrder.userPhone || '').replace(/\D/g, '')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[9.5px] font-mono text-emerald-400 hover:text-emerald-300 font-bold bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20 flex items-center gap-1"
+                      >
+                        <MessageSquare className="w-3 h-3" />
+                        <span>WhatsApp</span>
+                      </a>
+                    </div>
+                  )}
+                  <div className="pt-1 text-[10px] text-slate-300">
+                    <span className="text-[8.5px] font-black text-slate-500 uppercase block">Address:</span>
+                    <p className="font-medium leading-relaxed">{inspectingOrder.address || 'Khammam Delivery Point'}</p>
+                    {inspectingOrder.landmark && (
+                      <p className="text-amber-300 text-[9px] font-semibold mt-0.5">Landmark: {inspectingOrder.landmark}</p>
+                    )}
+                    {inspectingOrder.notes && (
+                      <p className="text-indigo-300 text-[9px] italic mt-0.5">Note: "{inspectingOrder.notes}"</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Merchant */}
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/10 space-y-2">
+                  <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-1.5 border-b border-white/5 pb-1.5">
+                    <Store className="w-3 h-3" />
+                    <span>Merchant Partner</span>
+                  </span>
+                  <p className="text-xs font-black text-white">{inspectingOrder.vendorName || 'Local Bandi Central Store'}</p>
+                  <p className="text-[10px] text-slate-400">{inspectingOrder.vendorAddress || 'Main Branch, Khammam'}</p>
+                  {inspectingOrder.vendorPhone && (
+                    <a
+                      href={`tel:${inspectingOrder.vendorPhone}`}
+                      className="inline-flex items-center gap-1 text-[9.5px] font-mono text-indigo-400 hover:text-indigo-300 font-bold bg-indigo-500/10 px-2 py-1 rounded-lg border border-indigo-500/20"
+                    >
+                      <Phone className="w-3 h-3" />
+                      <span>{inspectingOrder.vendorPhone}</span>
+                    </a>
+                  )}
+                  <div className="text-[8.5px] text-slate-500 pt-1">
+                    <span>Store ID: </span>
+                    <span className="font-mono text-slate-400">{inspectingOrder.vendorId || 'Central-Hub'}</span>
+                  </div>
+                </div>
+
+                {/* Delivery Rider */}
+                <div className="bg-slate-950 p-4 rounded-2xl border border-white/10 space-y-2">
+                  <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1.5 border-b border-white/5 pb-1.5">
+                    <Bike className="w-3 h-3" />
+                    <span>Assigned Fleet Partner</span>
+                  </span>
+                  {inspectingOrder.riderName || inspectingOrder.deliveryPartnerName ? (
+                    <>
+                      <p className="text-xs font-black text-emerald-400">{inspectingOrder.riderName || inspectingOrder.deliveryPartnerName}</p>
+                      {(inspectingOrder.riderPhone || inspectingOrder.deliveryPartnerPhone) && (
+                        <a
+                          href={`tel:${inspectingOrder.riderPhone || inspectingOrder.deliveryPartnerPhone}`}
+                          className="inline-flex items-center gap-1 text-[9.5px] font-mono text-emerald-400 hover:text-emerald-300 font-bold bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20"
+                        >
+                          <Phone className="w-3 h-3" />
+                          <span>{inspectingOrder.riderPhone || inspectingOrder.deliveryPartnerPhone}</span>
+                        </a>
+                      )}
+                      <p className="text-[9px] text-slate-400 pt-1">
+                        Status: <span className="font-black text-white uppercase">{inspectingOrder.deliveryStatus || inspectingOrder.status}</span>
+                      </p>
+                    </>
+                  ) : (
+                    <div className="py-2 space-y-1">
+                      <p className="text-xs font-black text-amber-400 animate-pulse">🚨 Rider Unassigned</p>
+                      <p className="text-[8.5px] text-slate-400">Head to Logistics tab to assign an active rider.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Order Items Table */}
+              <div className="bg-slate-950 p-5 rounded-2xl border border-white/10 space-y-3">
+                <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
+                    <PackageCheck className="w-4 h-4 text-amber-400" />
+                    <span>Order Items ({inspectingOrder.orderItems?.length || inspectingOrder.items || 0})</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOrderDossierModal(false);
+                      setEditingOrder(JSON.parse(JSON.stringify(inspectingOrder)));
+                      setShowOrderModal(true);
+                    }}
+                    className="text-[9px] font-black uppercase tracking-wider text-yellow-400 hover:text-yellow-300 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                    <span>Edit Line Items</span>
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                  {((inspectingOrder.orderItems || []).length > 0 ? inspectingOrder.orderItems : (Array.isArray(inspectingOrder.items) ? inspectingOrder.items : [])).map((item: any, idx: number) => {
+                    const qty = item.quantity || 1;
+                    const price = Number(item.price) || 0;
+                    return (
+                      <div key={idx} className="flex justify-between items-center p-2.5 bg-slate-900/70 rounded-xl border border-white/5 text-xs">
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-6 h-6 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center text-[10px] font-mono font-bold text-amber-400">
+                            {idx + 1}
+                          </span>
+                          <div>
+                            <p className="font-bold text-white text-xs">{item.name || 'Product'}</p>
+                            <p className="text-[9px] text-slate-400 font-mono">₹{price} × {qty}</p>
+                          </div>
+                        </div>
+                        <span className="font-black text-white text-sm">₹{price * qty}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Financial Audit */}
+              <div className="bg-slate-950 p-5 rounded-2xl border border-white/10 space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-widest text-slate-300 flex items-center gap-2 border-b border-white/5 pb-2">
+                  <CreditCard className="w-4 h-4 text-emerald-400" />
+                  <span>Financial Breakdown & Revenue Share</span>
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+                  <div className="space-y-1.5 text-slate-400">
+                    <div className="flex justify-between">
+                      <span>Items Subtotal:</span>
+                      <span className="font-mono text-white">₹{inspectingOrder.subtotal || inspectingOrder.total || 0}</span>
+                    </div>
+                    {Number(inspectingOrder.deliveryFee || 0) > 0 && (
+                      <div className="flex justify-between">
+                        <span>Delivery Fee:</span>
+                        <span className="font-mono text-white">₹{inspectingOrder.deliveryFee}</span>
+                      </div>
+                    )}
+                    {Number(inspectingOrder.packagingFee || 0) > 0 && (
+                      <div className="flex justify-between">
+                        <span>Packaging Fee:</span>
+                        <span className="font-mono text-white">₹{inspectingOrder.packagingFee}</span>
+                      </div>
+                    )}
+                    {Number(inspectingOrder.discount || 0) > 0 && (
+                      <div className="flex justify-between text-rose-400">
+                        <span>Discount:</span>
+                        <span className="font-mono">-₹{inspectingOrder.discount}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-white font-black text-sm pt-2 border-t border-white/10">
+                      <span>Grand Total:</span>
+                      <span className="text-emerald-400">₹{inspectingOrder.total}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/80 p-3.5 rounded-xl border border-white/5 space-y-1.5 text-[11px]">
+                    <span className="text-[9px] font-black uppercase text-amber-400 tracking-wider block">HQ Accord Share (25%)</span>
+                    <div className="flex justify-between text-slate-300">
+                      <span>Platform Commission:</span>
+                      <span className="font-black text-yellow-400">₹{(Number(inspectingOrder.total || 0) * 0.25).toFixed(1)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-300">
+                      <span>Merchant Payout:</span>
+                      <span className="font-mono text-white">₹{(Number(inspectingOrder.total || 0) * 0.75).toFixed(1)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-300">
+                      <span>Payment Method:</span>
+                      <span className="font-bold text-white uppercase">{inspectingOrder.paymentMethod || 'COD'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Toolbar */}
+              <div className="flex flex-wrap gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => handlePrintOrderInvoice(inspectingOrder)}
+                  className="flex-1 py-3 bg-slate-950 hover:bg-slate-800 border border-white/10 text-white rounded-xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer shadow"
+                >
+                  <Printer className="w-4 h-4 text-amber-400" />
+                  <span>Print Tax Invoice</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopyOrderSummary(inspectingOrder)}
+                  className="flex-1 py-3 bg-slate-950 hover:bg-slate-800 border border-white/10 text-white rounded-xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer shadow"
+                >
+                  <Share2 className="w-4 h-4 text-indigo-400" />
+                  <span>Copy Summary</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowOrderDossierModal(false);
+                    setActiveTab('logistics');
+                  }}
+                  className="flex-1 py-3 bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer shadow"
+                >
+                  <Truck className="w-4 h-4" />
+                  <span>Open in Logistics Radar</span>
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

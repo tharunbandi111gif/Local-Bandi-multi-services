@@ -6,6 +6,11 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "build:all": "vite build",
+    "build:customer": "vite build",
+    "build:partner": "vite build",
+    "build:franchise": "vite build",
+    "build:admin": "vite build",
     "preview": "vite preview",
     "start": "node server.ts",
     "clean": "rm -rf dist",

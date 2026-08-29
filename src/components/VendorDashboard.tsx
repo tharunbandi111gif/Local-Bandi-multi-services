@@ -58,8 +58,10 @@ import {
   User,
   ShieldCheck,
   Bike,
-  Globe
+  Globe,
+  Upload
 } from 'lucide-react';
+import { compressImage } from '../lib/imageUtils';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { useTranslation } from '../i18n';
 import { VendorProfile, Product, VendorOrder, SupportMessage, LanguageCode } from '../types';
@@ -2837,12 +2839,17 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                                 type="file" 
                                 accept="image/*" 
                                 className="hidden" 
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                   const file = e.target.files?.[0];
                                   if (file) {
                                     const reader = new FileReader();
-                                    reader.onloadend = () => {
-                                      setItemImageDraft(reader.result as string);
+                                    reader.onloadend = async () => {
+                                      try {
+                                        const compressed = await compressImage(reader.result as string, 800, 800, 0.75);
+                                        setItemImageDraft(compressed);
+                                      } catch (err) {
+                                        setItemImageDraft(reader.result as string);
+                                      }
                                     };
                                     reader.readAsDataURL(file);
                                   }
@@ -2850,16 +2857,40 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                               />
                             </label>
                             <div className="flex-1 space-y-2">
+                              <label className="w-full py-2.5 px-3 bg-yellow-400 hover:bg-yellow-300 text-gray-950 rounded-xl font-black uppercase text-[9px] tracking-wider flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm">
+                                <Upload className="w-3.5 h-3.5" />
+                                <span>Upload From Device</span>
+                                <input 
+                                  type="file" 
+                                  accept="image/*" 
+                                  className="hidden" 
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onloadend = async () => {
+                                        try {
+                                          const compressed = await compressImage(reader.result as string, 800, 800, 0.75);
+                                          setItemImageDraft(compressed);
+                                        } catch (err) {
+                                          setItemImageDraft(reader.result as string);
+                                        }
+                                      };
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }}
+                                />
+                              </label>
                               <div className="relative">
                                 <LinkIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                                 <input 
                                   value={itemImageDraft}
                                   onChange={(e) => setItemImageDraft(e.target.value)}
                                   placeholder="Or paste image URL here..."
-                                  className="w-full bg-gray-50 pl-11 pr-4 h-12 rounded-xl font-bold text-[11px] outline-none focus:border-yellow-400 border-2 border-transparent transition-all"
+                                  className="w-full bg-gray-50 pl-11 pr-4 h-11 rounded-xl font-bold text-[11px] outline-none focus:border-yellow-400 border-2 border-transparent transition-all"
                                 />
                               </div>
-                              <p className="text-[8px] font-bold text-gray-400 px-2 leading-tight uppercase">TIP: Tap box to upload file, choose preset, or paste URL.</p>
+                              <p className="text-[8px] font-bold text-gray-400 px-2 leading-tight uppercase">Upload file, take camera photo, or paste image URL.</p>
                             </div>
                           </div>
 
@@ -2966,12 +2997,17 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                                 type="file" 
                                 accept="image/*" 
                                 className="hidden" 
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                   const file = e.target.files?.[0];
                                   if (file) {
                                     const reader = new FileReader();
-                                    reader.onloadend = () => {
-                                      setItemImageDraft(reader.result as string);
+                                    reader.onloadend = async () => {
+                                      try {
+                                        const compressed = await compressImage(reader.result as string, 800, 800, 0.75);
+                                        setItemImageDraft(compressed);
+                                      } catch (err) {
+                                        setItemImageDraft(reader.result as string);
+                                      }
                                     };
                                     reader.readAsDataURL(file);
                                   }
@@ -2979,13 +3015,37 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                               />
                             </label>
                             <div className="flex-1 space-y-2">
+                              <label className="w-full py-2.5 px-3 bg-yellow-400 hover:bg-yellow-300 text-gray-950 rounded-xl font-black uppercase text-[9px] tracking-wider flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 transition-all shadow-sm">
+                                <Upload className="w-3.5 h-3.5" />
+                                <span>Upload From Device</span>
+                                <input 
+                                  type="file" 
+                                  accept="image/*" 
+                                  className="hidden" 
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onloadend = async () => {
+                                        try {
+                                          const compressed = await compressImage(reader.result as string, 800, 800, 0.75);
+                                          setItemImageDraft(compressed);
+                                        } catch (err) {
+                                          setItemImageDraft(reader.result as string);
+                                        }
+                                      };
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }}
+                                />
+                              </label>
                               <div className="relative">
                                 <LinkIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                                 <input 
                                   value={itemImageDraft || editingProduct.image}
                                   onChange={(e) => setItemImageDraft(e.target.value)}
                                   placeholder="Or paste image URL..."
-                                  className="w-full bg-gray-50 pl-11 pr-4 h-12 rounded-xl font-bold text-[11px] outline-none focus:border-yellow-400 border-2 border-transparent transition-all"
+                                  className="w-full bg-gray-50 pl-11 pr-4 h-11 rounded-xl font-bold text-[11px] outline-none focus:border-yellow-400 border-2 border-transparent transition-all"
                                 />
                               </div>
                               <div className="flex gap-3">
