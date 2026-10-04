@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Star, Clock, ShieldCheck, Heart, Minus, Plus, MessageSquare, Phone, ZoomIn, X } from 'lucide-react';
+import { ArrowLeft, Star, Clock, ShieldCheck, Heart, Minus, Plus, MessageSquare, Phone, ZoomIn, X, TrendingDown, Bell } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, Review, CartItem } from '../types';
 import ReviewsSection from './ReviewsSection';
@@ -7,6 +7,8 @@ import { HospitalOPForm } from './HospitalOPForm';
 import { useTranslation } from '../i18n';
 import { getLocalizedProductName, getLocalizedProductDescription } from '../utils/localizedContent';
 import ImageZoom from './ImageZoomModal';
+import { PriceTrackerModal } from './PriceTrackerModal';
+import { isProductTracked } from '../utils/priceTracker';
 
 interface ProductDetailsProps {
   product: Product;
@@ -93,6 +95,16 @@ export default function ProductDetails({
   const availableToAdd = Math.max(0, stock - cartCount);
   const [qty, setQty] = useState(availableToAdd > 0 ? 1 : 0);
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [showPriceTracker, setShowPriceTracker] = useState(false);
+  const [isTrackingPrice, setIsTrackingPrice] = useState(() => isProductTracked(product.id));
+
+  React.useEffect(() => {
+    const handleSubUpdate = () => {
+      setIsTrackingPrice(isProductTracked(product.id));
+    };
+    window.addEventListener('price_subscriptions_updated', handleSubUpdate);
+    return () => window.removeEventListener('price_subscriptions_updated', handleSubUpdate);
+  }, [product.id]);
 
   // Reset qty if size changes and current qty is more than available
   React.useEffect(() => {
@@ -233,16 +245,30 @@ export default function ProductDetails({
           </div>
           <div className="flex items-center justify-between gap-4">
             <h2 className="text-3xl font-black text-gray-900 tracking-tight">{getLocalizedProductName(product.name, language)}</h2>
-            <motion.button 
-              whileTap={{ scale: 0.9 }}
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('open_customer_care', { detail: { type: 'user' } }));
-              }}
-              className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0"
-              title="Chat with support about this item"
-            >
-              <MessageSquare className="w-5 h-5" />
-            </motion.button>
+            <div className="flex items-center gap-2 shrink-0">
+              <motion.button 
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setShowPriceTracker(true)}
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border transition-all ${
+                  isTrackingPrice 
+                    ? 'bg-amber-500 text-white border-amber-600 shadow-md shadow-amber-200' 
+                    : 'bg-amber-50 text-amber-700 border-amber-200/80 hover:bg-amber-100'
+                }`}
+                title={isTrackingPrice ? "Price tracking active (click to manage)" : "Subscribe to price drops"}
+              >
+                {isTrackingPrice ? <Bell className="w-5 h-5 fill-current" /> : <TrendingDown className="w-5 h-5" />}
+              </motion.button>
+              <motion.button 
+                whileTap={{ scale: 0.9 }}
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('open_customer_care', { detail: { type: 'user' } }));
+                }}
+                className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0"
+                title="Chat with support about this item"
+              >
+                <MessageSquare className="w-5 h-5" />
+              </motion.button>
+            </div>
           </div>
           {product.hotelName && (
             <p className="text-sm font-black text-yellow-600 mt-1 flex items-center gap-1">
@@ -257,6 +283,39 @@ export default function ProductDetails({
               <span className="text-gray-400 font-bold text-sm line-through">₹{product.originalPrice}</span>
             </div>
           )}
+
+          {/* Interactive Price Tracker Subscription Bar */}
+          <div 
+            onClick={() => setShowPriceTracker(true)}
+            className={`mt-3 p-3.5 rounded-2xl border flex items-center justify-between cursor-pointer transition-all active:scale-98 ${
+              isTrackingPrice 
+                ? 'bg-gradient-to-r from-amber-50 to-amber-100/50 border-amber-300 text-amber-950 shadow-sm' 
+                : 'bg-gray-50 border-gray-100 hover:border-amber-300 hover:bg-amber-50/40 text-gray-700'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                isTrackingPrice ? 'bg-amber-500 text-white shadow-sm' : 'bg-white text-amber-600 border border-gray-200'
+              }`}>
+                {isTrackingPrice ? <Bell className="w-4 h-4 fill-current" /> : <TrendingDown className="w-4 h-4" />}
+              </div>
+              <div>
+                <span className="text-xs font-black uppercase tracking-wider block">
+                  {isTrackingPrice ? 'Price Tracker: Subscribed' : 'Subscribe to Price Drops'}
+                </span>
+                <span className="text-[10px] text-gray-500 block">
+                  {isTrackingPrice 
+                    ? 'You will receive in-app notifications on price reductions' 
+                    : 'Get notified in-app the moment this product gets discounted'}
+                </span>
+              </div>
+            </div>
+            <span className={`text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-xl shrink-0 ${
+              isTrackingPrice ? 'bg-amber-200 text-amber-900' : 'bg-amber-400 text-gray-950 shadow-sm hover:bg-yellow-400'
+            }`}>
+              {isTrackingPrice ? 'Manage' : 'Track Price'}
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-6">
@@ -521,6 +580,13 @@ export default function ProductDetails({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Price Drop Tracker Modal */}
+      <PriceTrackerModal
+        product={product}
+        isOpen={showPriceTracker}
+        onClose={() => setShowPriceTracker(false)}
+      />
     </div>
   );
 }

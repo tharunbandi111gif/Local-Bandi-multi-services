@@ -59,8 +59,27 @@ import {
   ShieldCheck,
   Bike,
   Globe,
-  Upload
+  Upload,
+  Printer,
+  Receipt,
+  Tag,
+  Zap,
+  MessageSquare,
+  FileSpreadsheet,
+  PackageCheck,
+  QrCode,
+  Share2,
+  Copy
 } from 'lucide-react';
+import MerchantQRCodeModal from './MerchantQRCodeModal';
+import RealtimeOrderBillModal from './RealtimeOrderBillModal';
+import ShippingLabelModal from './ShippingLabelModal';
+import VendorOrderPrepTimer from './VendorOrderPrepTimer';
+import VendorQuickRepliesModal from './VendorQuickRepliesModal';
+import { BulkProductImportModal } from './BulkProductImportModal';
+import { VendorAnalyticsTab } from './VendorAnalyticsTab';
+import { VendorStoreHoursSection, checkStoreHoursStatus } from './VendorStoreHoursSection';
+import { printInvoiceRealtime, getOrGenerateInvoiceNo } from '../lib/invoicePrintService';
 import { compressImage } from '../lib/imageUtils';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { useTranslation } from '../i18n';
@@ -71,7 +90,7 @@ import LanguageSelectorModal from './common/LanguageSelectorModal';
 import PartnerOnboarding from './PartnerOnboarding';
 import { getLocalizedVendorContent, getLocalizedCategoryName } from '../utils/localizedContent';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, getDoc, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore';
 
 const formatOrderDate = (createdAt: any): string => {
   if (!createdAt) return 'Recent';
@@ -145,10 +164,16 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
   const [profile, setProfile] = useState<VendorProfile | null>(null);
   const [showJoiningLetter, setShowJoiningLetter] = useState(false);
   const [showVendorOnboarding, setShowVendorOnboarding] = useState(false);
-  const [activeTab, setActiveTab] = useState<'home' | 'orders' | 'inventory' | 'sales' | 'profile' | 'support'>('home');
+  const [showMerchantQRModal, setShowMerchantQRModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'home' | 'orders' | 'inventory' | 'analytics' | 'sales' | 'profile' | 'support'>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'All' | 'Pending' | 'Preparing' | 'ReadyForPickup' | 'Editing' | 'Cancelled' | 'Delivered'>('All');
   const [orderDateFilter, setOrderDateFilter] = useState('');
+
+  // Inline Price & Availability state for product inventory
+  const [editingInlinePriceId, setEditingInlinePriceId] = useState<string | null>(null);
+  const [inlinePriceValue, setInlinePriceValue] = useState<string>('');
+  const [inlinePriceSuccessMap, setInlinePriceSuccessMap] = useState<{ [id: string]: boolean }>({});
   
   const [isSoundEnabled, setIsSoundEnabled] = useState<boolean>(() => {
     return localStorage.getItem('vendor_sound_alerts_enabled') !== 'false';
@@ -201,6 +226,56 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
     }
   };
 
+  const [selectedBillOrder, setSelectedBillOrder] = useState<any>(null);
+  const [billModalOpen, setBillModalOpen] = useState(false);
+  const [selectedShippingOrder, setSelectedShippingOrder] = useState<any>(null);
+  const [shippingModalOpen, setShippingModalOpen] = useState(false);
+  const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
+
+  const handleOpenBillModal = (order: any) => {
+    const extraDet = fetchedExtraDetails[order.id] || {};
+    const mergedOrder = {
+      ...order,
+      orderItems: extraDet.orderItems || order.orderItems || order.items || [],
+      customerInstructions: extraDet.customerInstructions || order.customerInstructions,
+      deliveryInstructions: extraDet.deliveryInstructions || order.deliveryInstructions,
+      vendorName: profile?.businessName || profile?.storeName || 'Local Bandi Store',
+      branchName: profile?.branchId || 'Khammam Central Branch'
+    };
+    setSelectedBillOrder(mergedOrder);
+    setBillModalOpen(true);
+  };
+
+  const handleOpenShippingModal = (order: any) => {
+    const extraDet = fetchedExtraDetails[order.id] || {};
+    const mergedOrder = {
+      ...order,
+      orderItems: extraDet.orderItems || order.orderItems || order.items || [],
+      customerInstructions: extraDet.customerInstructions || order.customerInstructions,
+      deliveryInstructions: extraDet.deliveryInstructions || order.deliveryInstructions,
+      vendorName: profile?.businessName || profile?.storeName || 'Local Bandi Store',
+      branchName: profile?.branchId || 'Khammam Central Branch'
+    };
+    setSelectedShippingOrder(mergedOrder);
+    setShippingModalOpen(true);
+  };
+
+  const handleQuickPrintBill = async (e: React.MouseEvent, order: any) => {
+    e.stopPropagation();
+    setPrintingOrderId(order.id);
+    const extraDet = fetchedExtraDetails[order.id] || {};
+    const mergedOrder = {
+      ...order,
+      orderItems: extraDet.orderItems || order.orderItems || order.items || [],
+      customerInstructions: extraDet.customerInstructions || order.customerInstructions,
+      deliveryInstructions: extraDet.deliveryInstructions || order.deliveryInstructions,
+      vendorName: profile?.businessName || profile?.storeName || 'Local Bandi Store',
+      branchName: profile?.branchId || 'Khammam Central Branch'
+    };
+    await printInvoiceRealtime(mergedOrder, 'thermal');
+    setTimeout(() => setPrintingOrderId(null), 1000);
+  };
+
   const handleBulkAccept = async () => {
     const pendingSelectedIds = Object.keys(selectedOrderIds).filter(
       id => selectedOrderIds[id] && filteredOrders.find(o => o.id === id)?.status === 'Pending'
@@ -223,26 +298,53 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
     }
   };
 
-  const handleBulkDispatch = async () => {
-    const dispatchableSelectedIds = Object.keys(selectedOrderIds).filter(
-      id => selectedOrderIds[id] && ['Preparing', 'Assigned', 'Accepted'].includes(filteredOrders.find(o => o.id === id)?.status || '')
+  const handleBulkMarkReadyForPickup = async () => {
+    const eligibleSelectedIds = Object.keys(selectedOrderIds).filter(
+      id => selectedOrderIds[id] && ['Pending', 'Preparing', 'Assigned', 'Accepted'].includes(filteredOrders.find(o => o.id === id)?.status || '')
     );
-    if (dispatchableSelectedIds.length === 0) {
-      alert("No preparing, assigned, or accepted orders are selected.");
+    if (eligibleSelectedIds.length === 0) {
+      alert("Please select at least one pending or preparing order to move to 'Ready for Pickup'.");
       return;
     }
 
+    const pendingCount = eligibleSelectedIds.filter(
+      id => filteredOrders.find(o => o.id === id)?.status === 'Pending'
+    ).length;
+
     setIsBulkProcessing(true);
     try {
-      await Promise.all(dispatchableSelectedIds.map(id => updateOrderStatus(id, 'ReadyForPickup')));
+      // Atomic writeBatch to update all selected orders instantly
+      const batch = writeBatch(db);
+      eligibleSelectedIds.forEach(orderId => {
+        const orderRef = doc(db, 'orders', orderId);
+        batch.update(orderRef, {
+          status: 'ReadyForPickup',
+          readyAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      });
+      await batch.commit();
+
       setSelectedOrderIds({});
-      alert(`Successfully marked ${dispatchableSelectedIds.length} orders ready for pickup/dispatched!`);
+      const pendingInfo = pendingCount > 0 ? ` (${pendingCount} directly from Pending)` : '';
+      alert(`🎉 Successfully moved ${eligibleSelectedIds.length} order(s)${pendingInfo} to 'Ready for Pickup'! Delivery partners and branch dispatch have been notified.`);
     } catch (e) {
-      console.error("Bulk dispatch error:", e);
-      alert("Something went wrong during bulk dispatch.");
+      console.error("Bulk ready for pickup batch error:", e);
+      try {
+        await Promise.all(eligibleSelectedIds.map(id => updateOrderStatus(id, 'ReadyForPickup', { readyAt: new Date().toISOString() })));
+        setSelectedOrderIds({});
+        alert(`Successfully moved ${eligibleSelectedIds.length} order(s) to 'Ready for Pickup'!`);
+      } catch (fallbackErr) {
+        console.error("Fallback update failed:", fallbackErr);
+        alert("Something went wrong while moving orders to Ready for Pickup.");
+      }
     } finally {
       setIsBulkProcessing(false);
     }
+  };
+
+  const handleBulkDispatch = async () => {
+    return handleBulkMarkReadyForPickup();
   };
   
   const [orders, setOrders] = useState<VendorOrder[]>([]);
@@ -488,6 +590,8 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
 
   const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const [selectedQuickReplyOrder, setSelectedQuickReplyOrder] = useState<any | null>(null);
+  const [showQuickRepliesModal, setShowQuickRepliesModal] = useState<boolean>(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -709,12 +813,14 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
   }, [supportMessages]);
 
   const [isAddingProduct, setIsAddingProduct] = useState(false);
+  const [isBulkImportModalOpen, setIsBulkImportModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [itemImageDraft, setItemImageDraft] = useState('');
   const [showOrderDetails, setShowOrderDetails] = useState<VendorOrder | null>(null);
   const [orderIdToCancel, setOrderIdToCancel] = useState<string | null>(null);
   const [cancelReasonInput, setCancelReasonInput] = useState("");
   const [salesMetricType, setSalesMetricType] = useState<'revenue' | 'orders'>('revenue');
+  const [pendingPrepTimes, setPendingPrepTimes] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (editingProduct) {
@@ -725,17 +831,47 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
   }, [editingProduct]);
 
   // Status Handlers
-  const toggleOnline = React.useCallback(async () => {
+  const toggleOnline = React.useCallback(async (explicitState?: boolean) => {
     if (!profile) return;
+    const nextVal = explicitState !== undefined ? explicitState : !profile.isOnline;
+    setProfile(prev => prev ? { ...prev, isOnline: nextVal, isOpen: nextVal } : null);
     try {
       await updateDoc(doc(db, 'vendors', profile.id), {
-        isOnline: !profile.isOnline,
+        isOnline: nextVal,
+        isOpen: nextVal,
         updatedAt: serverTimestamp()
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `vendors/${profile.id}`);
     }
   }, [profile]);
+
+  // Automated Store Hours Schedule Sync: Toggles Store Open/Closed status based on current time
+  useEffect(() => {
+    if (!profile || !profile.storeHours?.enabled) return;
+
+    const checkAndAutoSyncStatus = async () => {
+      if (!profile?.storeHours?.enabled) return;
+      const { isWithin } = checkStoreHoursStatus(profile.storeHours);
+      if (profile.isOnline !== isWithin) {
+        console.log(`[Store Hours Auto-Sync] Auto-toggling store ${profile.businessName} to ${isWithin ? 'Online/Open' : 'Offline/Closed'} based on operating hours`);
+        setProfile(prev => prev ? { ...prev, isOnline: isWithin, isOpen: isWithin } : null);
+        try {
+          await updateDoc(doc(db, 'vendors', profile.id), {
+            isOnline: isWithin,
+            isOpen: isWithin,
+            updatedAt: serverTimestamp()
+          });
+        } catch (e) {
+          console.warn("Auto-sync store hours Firestore notice:", e);
+        }
+      }
+    };
+
+    checkAndAutoSyncStatus();
+    const interval = setInterval(checkAndAutoSyncStatus, 30000);
+    return () => clearInterval(interval);
+  }, [profile?.id, profile?.storeHours, profile?.isOnline, profile?.businessName]);
 
   const confirmCancelOrder = React.useCallback(async () => {
     if (!orderIdToCancel || !cancelReasonInput.trim()) {
@@ -756,12 +892,24 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
     }
   }, [orderIdToCancel, cancelReasonInput]);
 
-  const updateOrderStatus = React.useCallback(async (orderId: string, nextStatus: VendorOrder['status']) => {
+  const updateOrderStatus = React.useCallback(async (orderId: string, nextStatus: VendorOrder['status'], extraUpdates?: Record<string, any>) => {
     try {
       const updates: any = {
         status: nextStatus,
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
+        ...(extraUpdates || {})
       };
+
+      // If entering Preparing or Accepted, ensure prepStartedAt is set
+      if (['Preparing', 'Accepted'].includes(nextStatus)) {
+        if (!updates.prepStartedAt) {
+          updates.prepStartedAt = new Date().toISOString();
+        }
+        if (!updates.prepTimeMinutes) {
+          const chosen = pendingPrepTimes[orderId] || 15;
+          updates.prepTimeMinutes = chosen;
+        }
+      }
 
       // If Admin is accepting a pending order, take ownership
       if (profileId === 'admin-store' && nextStatus === 'Preparing') {
@@ -776,7 +924,22 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
     }
-  }, [showOrderDetails?.id, profileId]);
+  }, [showOrderDetails?.id, profileId, pendingPrepTimes]);
+
+  const handleUpdatePrepTime = React.useCallback(async (orderId: string, prepTimeMinutes: number) => {
+    try {
+      const updates: any = {
+        prepTimeMinutes,
+        updatedAt: serverTimestamp()
+      };
+      await updateDoc(doc(db, 'orders', orderId), updates);
+      if (showOrderDetails?.id === orderId) {
+        setShowOrderDetails(prev => prev ? { ...prev, ...updates } : null);
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+    }
+  }, [showOrderDetails?.id]);
 
   const assignRider = async (orderId: string, rider: any) => {
     try {
@@ -800,15 +963,56 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
   const toggleProductAvailability = React.useCallback(async (productId: string) => {
     const item = inventory.find(p => p.id === productId);
     if (!item) return;
+    const nextAvailability = !item.isAvailable;
+    // Optimistic UI update
+    setInventory(prev => prev.map(p => p.id === productId ? { ...p, isAvailable: nextAvailability } : p));
     try {
       await updateDoc(doc(db, 'products', productId), {
-        isAvailable: !item.isAvailable,
+        isAvailable: nextAvailability,
         updatedAt: serverTimestamp()
       });
     } catch (err) {
+      setInventory(prev => prev.map(p => p.id === productId ? { ...p, isAvailable: item.isAvailable } : p));
       handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
     }
   }, [inventory]);
+
+  const handleSaveInlinePrice = React.useCallback(async (productId: string, explicitPrice?: number) => {
+    const priceToSet = explicitPrice !== undefined ? explicitPrice : parseFloat(inlinePriceValue);
+    if (isNaN(priceToSet) || priceToSet < 0) {
+      setEditingInlinePriceId(null);
+      return;
+    }
+    const item = inventory.find(p => p.id === productId);
+    if (!item) {
+      setEditingInlinePriceId(null);
+      return;
+    }
+    // Optimistic UI update
+    setInventory(prev => prev.map(p => p.id === productId ? { ...p, price: priceToSet } : p));
+    setEditingInlinePriceId(null);
+    setInlinePriceSuccessMap(prev => ({ ...prev, [productId]: true }));
+    setTimeout(() => {
+      setInlinePriceSuccessMap(prev => ({ ...prev, [productId]: false }));
+    }, 2000);
+
+    try {
+      await updateDoc(doc(db, 'products', productId), {
+        price: priceToSet,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      setInventory(prev => prev.map(p => p.id === productId ? { ...p, price: item.price } : p));
+      handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
+    }
+  }, [inventory, inlinePriceValue]);
+
+  const handleQuickAdjustPrice = React.useCallback(async (productId: string, delta: number) => {
+    const item = inventory.find(p => p.id === productId);
+    if (!item) return;
+    const nextPrice = Math.max(1, (item.price || 0) + delta);
+    handleSaveInlinePrice(productId, nextPrice);
+  }, [inventory, handleSaveInlinePrice]);
 
   const handleCreateProduct = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1096,6 +1300,16 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
           </div>
           
           <div className="flex items-center gap-3">
+            {/* Merchant QR Code Button for Quick Customer Ordering & Menu Access */}
+            <button
+              onClick={() => setShowMerchantQRModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-2xl text-[9px] uppercase tracking-wider transition-all shrink-0 active:scale-95 shadow-md shadow-amber-500/20 cursor-pointer"
+              title="Display Merchant QR Code for Quick Customer Ordering & Menu Access"
+            >
+              <QrCode className="w-3.5 h-3.5" />
+              <span>QR Code</span>
+            </button>
+
             {/* Language Selector Button */}
             <button
               onClick={() => setShowLangModal(true)}
@@ -1132,6 +1346,17 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
             {/* Prominent Store Status Toggle Switch */}
             <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-2xl border border-gray-100 shadow-inner shrink-0">
               <span className="text-[8px] font-black uppercase tracking-wider text-gray-400 pl-3">Store Status</span>
+              {profile.storeHours?.enabled && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('profile')}
+                  className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-[7px] font-black uppercase tracking-wider border border-indigo-100 flex items-center gap-1 transition"
+                  title="Auto-schedule is active. Click to manage store operating hours."
+                >
+                  <Clock className="w-2.5 h-2.5 text-indigo-600" />
+                  Auto ({profile.storeHours.openTime || '08:00'} - {profile.storeHours.closeTime || '22:00'})
+                </button>
+              )}
               <div className="flex rounded-xl overflow-hidden bg-gray-100/50 p-0.5 border border-gray-200/50">
                 <button
                   id="store-status-offline"
@@ -1161,12 +1386,45 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
           </div>
         </div>
 
+        {/* Merchant Performance Summary Sub-bar with QR Code */}
+        <div className="bg-slate-950 text-white rounded-2xl px-4 py-2 mb-3 flex items-center justify-between gap-4 font-mono select-none border border-white/5" id="header-performance-summary">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span className="text-[9.5px] font-black uppercase tracking-wider text-slate-300">
+              Live Merchant Storefront & Orders
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-[9.5px]">
+            <div>
+              <span className="text-slate-400 uppercase font-black text-[8.5px]">Pending: </span>
+              <span className="text-amber-400 font-black">{orders.filter(o => o.status === 'Pending').length} Orders</span>
+            </div>
+            <div className="w-px h-3 bg-white/10" />
+            <div>
+              <span className="text-slate-400 uppercase font-black text-[8.5px]">Completed: </span>
+              <span className="text-emerald-400 font-black">{orders.filter(o => o.status === 'Delivered').length} Orders</span>
+            </div>
+            <div className="w-px h-3 bg-white/10" />
+            <button
+              type="button"
+              id="vendor-header-qr-code-btn"
+              onClick={() => setShowMerchantQRModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-lg text-[8.5px] uppercase tracking-wider transition active:scale-95 shadow-sm cursor-pointer"
+              title="Display Merchant QR Code for Quick Customer Ordering & Menu Access"
+            >
+              <QrCode className="w-3 h-3 text-slate-950" />
+              <span>QR Code</span>
+            </button>
+          </div>
+        </div>
+
         {/* Tab Selection Row (Responsive) */}
         <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
           {[
             { id: 'home', icon: LayoutDashboard, label: 'Overview' },
             { id: 'orders', icon: ClipboardList, label: 'Orders', count: orders.filter(o => o.status === 'Pending').length },
             { id: 'inventory', icon: Box, label: 'Inventory' },
+            { id: 'analytics', icon: BarChart3, label: 'Analytics' },
             { id: 'sales', icon: TrendingUp, label: 'Growth' },
             { id: 'profile', icon: Settings, label: 'Manage' }
           ].map((tab) => (
@@ -1248,12 +1506,92 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                     <span className="text-[7px] font-black text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-md uppercase tracking-wide">Combined processed count</span>
                   </div>
                 </div>
+
+                {/* Direct CTA to Analytics Tab */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('analytics')}
+                  className="mt-5 w-full py-3 bg-white/10 hover:bg-white/20 border border-white/15 rounded-2xl text-[9px] font-black uppercase tracking-widest text-indigo-100 flex items-center justify-center gap-2 transition active:scale-95 relative z-10"
+                >
+                  <BarChart3 className="w-3.5 h-3.5 text-amber-300" />
+                  View Detailed Analytics, Peak Hours & Item Velocity
+                  <ChevronRight className="w-3.5 h-3.5 text-white/60" />
+                </button>
+              </div>
+
+              {/* Store QR Code & Shareable Order Link Generator Widget */}
+              <div className="bg-gradient-to-br from-amber-500/15 via-amber-500/5 to-yellow-500/10 border-2 border-amber-400/50 rounded-[2.5rem] p-6 text-slate-900 shadow-xl space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-amber-500 text-slate-950 rounded-2xl flex items-center justify-center font-black shadow-md shadow-amber-500/20 shrink-0">
+                      <QrCode className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-amber-700 block">Unique Store QR Code &amp; Menu Link</span>
+                      <h3 className="text-base font-black uppercase tracking-tight text-slate-900">{profile?.businessName || profile?.storeName || 'Storefront'} Quick Order Portal</h3>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowMerchantQRModal(true)}
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-wider flex items-center gap-1.5 transition active:scale-95 shadow-md shadow-amber-500/20 cursor-pointer"
+                    >
+                      <QrCode className="w-4 h-4" />
+                      <span>Full QR &amp; Counter Standee</span>
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Share your unique store link directly with customers or print this QR code for your counter &amp; dining tables. Customers can scan to browse your live inventory and place pickup or delivery orders instantly!
+                </p>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+                  <div className="flex-1 bg-white border border-amber-300 rounded-xl px-3 py-2 flex items-center gap-2 overflow-hidden shadow-xs">
+                    <span className="text-[9px] font-mono font-bold text-amber-800 uppercase shrink-0">Order URL:</span>
+                    <input
+                      type="text"
+                      readOnly
+                      value={typeof window !== 'undefined' ? `${window.location.origin}/?vendorId=${encodeURIComponent(profile?.id || profileId || 'merchant-001')}&store=${encodeURIComponent(profile?.businessName || profile?.storeName || 'Local Bandi Merchant')}&ref=qr_quick_order` : ''}
+                      className="flex-1 text-xs font-mono text-slate-700 bg-transparent outline-none truncate"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const url = typeof window !== 'undefined' ? `${window.location.origin}/?vendorId=${encodeURIComponent(profile?.id || profileId || 'merchant-001')}&store=${encodeURIComponent(profile?.businessName || profile?.storeName || 'Local Bandi Merchant')}&ref=qr_quick_order` : '';
+                        navigator.clipboard.writeText(url).then(() => {
+                          alert("✓ Unique Store Order URL copied to clipboard! Share it with your customers.");
+                        }).catch(() => prompt("Copy your store ordering URL:", url));
+                      }}
+                      className="px-3.5 py-2 bg-slate-950 hover:bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Link</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const storeName = profile?.businessName || profile?.storeName || 'Our Store';
+                        const url = typeof window !== 'undefined' ? `${window.location.origin}/?vendorId=${encodeURIComponent(profile?.id || profileId || 'merchant-001')}&store=${encodeURIComponent(storeName)}&ref=qr_quick_order` : '';
+                        const text = encodeURIComponent(`🛒 Order fresh items directly from *${storeName}* on Local Bandi! Tap to view our live catalog and order:\n${url}`);
+                        window.open(`https://wa.me/?text=${text}`, '_blank');
+                      }}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                      <span>WhatsApp</span>
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Quick Actions Row */}
               <div className="space-y-4">
           <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400 px-2">Quick Actions</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <button 
                     onClick={() => {
                       setActiveTab('inventory');
@@ -1267,7 +1605,24 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                     </div>
                     <div className="text-center">
                       <span className="block text-[11px] font-black uppercase tracking-widest text-gray-900 mb-1">Add Product</span>
-                      <span className="block text-[8px] font-bold text-gray-400 uppercase tracking-tighter">Expand Inventory</span>
+                      <span className="block text-[8px] font-bold text-gray-400 uppercase tracking-tighter">Single Listing</span>
+                    </div>
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      setActiveTab('inventory');
+                      setIsBulkImportModalOpen(true);
+                    }}
+                    className="p-8 bg-white rounded-[2.5rem] border-2 border-indigo-100/70 shadow-xl shadow-indigo-100/40 flex flex-col items-center gap-4 active:scale-95 transition-all group relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 right-0 w-12 h-12 bg-indigo-600 rounded-full blur-[40px] opacity-10 group-hover:opacity-20 transition-opacity" />
+                    <div className="w-16 h-16 bg-gradient-to-tr from-indigo-500 to-indigo-700 text-white rounded-[1.5rem] flex items-center justify-center group-hover:scale-105 transition-all transform group-hover:rotate-6 shadow-md shadow-indigo-200">
+                      <FileSpreadsheet className="w-8 h-8" />
+                    </div>
+                    <div className="text-center">
+                      <span className="block text-[11px] font-black uppercase tracking-widest text-gray-900 mb-1">Bulk CSV</span>
+                      <span className="block text-[8px] font-bold text-indigo-600 uppercase tracking-tighter">Multi Import & Update</span>
                     </div>
                   </button>
                   
@@ -1526,11 +1881,14 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                             <p className="text-xs font-medium text-gray-400">₹{order.total} • {Array.isArray(order.items) ? order.items.length : (typeof order.items === 'number' ? order.items : (order.items ? String(order.items) : 1))} items • {formatOrderDate(order.createdAt)}</p>
                           </div>
                        </div>
-                       <div className={`px-4 py-1.5 rounded-full text-[8px] font-black uppercase tracking-[0.2em] ${
-                         order.status === 'Pending' ? 'bg-orange-100 text-orange-600' : 
-                         order.status === 'Preparing' ? 'bg-indigo-100 text-indigo-600' : 'bg-emerald-100 text-emerald-600'
-                       }`}>
-                         {order.status}
+                       <div className="flex items-center gap-2">
+                         <VendorOrderPrepTimer order={order} compact={true} />
+                         <div className={`px-4 py-1.5 rounded-full text-[8px] font-black uppercase tracking-[0.2em] ${
+                           order.status === 'Pending' ? 'bg-orange-100 text-orange-600' : 
+                           order.status === 'Preparing' ? 'bg-indigo-100 text-indigo-600' : 'bg-emerald-100 text-emerald-600'
+                         }`}>
+                           {order.status}
+                         </div>
                        </div>
                      </div>
                    ))}
@@ -1553,12 +1911,23 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                     <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-lg text-[7px] font-black uppercase tracking-widest border border-indigo-100 shadow-sm animate-pulse">Founder Access</span>
                   )}
                 </div>
-                <button 
-                  onClick={() => setIsAddingProduct(true)}
-                  className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-xl active:scale-95 transition-all ${isAdmin ? 'bg-indigo-600 text-white shadow-indigo-100 border-2 border-white' : 'bg-gray-900 text-white shadow-gray-200'}`}
-                >
-                  <Plus className="w-6 h-6" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setIsBulkImportModalOpen(true)}
+                    className="h-12 px-4 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-black text-xs uppercase tracking-wider flex items-center gap-2 shadow-sm active:scale-95 transition-all"
+                    title="Bulk Product Import (CSV)"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
+                    <span className="hidden sm:inline">Bulk CSV Import</span>
+                  </button>
+                  <button 
+                    onClick={() => setIsAddingProduct(true)}
+                    className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-xl active:scale-95 transition-all ${isAdmin ? 'bg-indigo-600 text-white shadow-indigo-100 border-2 border-white' : 'bg-gray-900 text-white shadow-gray-200'}`}
+                    title="Add Single Product"
+                  >
+                    <Plus className="w-6 h-6" />
+                  </button>
+                </div>
               </div>
 
               {/* Inventory Search & Filters */}
@@ -1572,10 +1941,23 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                  />
               </div>
 
+              {/* Fast Inline Editing Helper Banner */}
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100 p-3.5 px-4 rounded-[1.8rem] text-[11px] font-bold text-indigo-900 shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  <span><strong>Fast Inline Editing:</strong> Tap any price to edit inline (or use -/+ steppers), and tap the <strong>Stock</strong> pill to toggle availability directly without opening a modal.</span>
+                </div>
+                <span className="text-[9px] font-black uppercase text-indigo-700 bg-white px-2.5 py-1 rounded-xl border border-indigo-200 shadow-2xs">
+                  {filteredInventory.length} Items Listed
+                </span>
+              </div>
+
               {/* Product Grid */}
               <div className="grid grid-cols-1 gap-4">
                 {filteredInventory.map(item => {
                   const isLowStock = item.stock !== undefined && item.stock !== null && item.stock < 5;
+                  const isEditingPrice = editingInlinePriceId === item.id;
+
                   return (
                     <div 
                       key={item.id} 
@@ -1583,7 +1965,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                         isLowStock 
                           ? 'bg-rose-50/70 border-rose-300 shadow-lg shadow-rose-100/30 hover:bg-rose-100/40 ring-1 ring-rose-200' 
                           : 'bg-white border-gray-100 shadow-sm'
-                      } ${!item.isAvailable ? 'opacity-60 bg-gray-50' : ''}`}
+                      } ${!item.isAvailable ? 'opacity-70 bg-gray-50' : ''}`}
                     >
                       <div className="w-20 h-20 rounded-3xl bg-gray-200 overflow-hidden relative border-2 border-white shadow-sm shrink-0 flex items-center justify-center">
                         {item.image ? (
@@ -1599,7 +1981,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                       </div>
                       
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center justify-between mb-1.5 gap-2">
                           <h4 className="text-[13px] font-black text-gray-900 truncate pr-2 uppercase italic flex items-center gap-1.5">
                             {item.name}
                             {isLowStock && (
@@ -1608,22 +1990,113 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                               </span>
                             )}
                           </h4>
+
+                          {/* Direct Inline Availability Toggle */}
+                          <button
+                            type="button"
+                            onClick={() => toggleProductAvailability(item.id)}
+                            className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-wider flex items-center gap-1.5 shrink-0 transition-all active:scale-95 shadow-xs ${
+                              item.isAvailable
+                                ? 'bg-emerald-500 text-white shadow-emerald-200/50 hover:bg-emerald-600'
+                                : 'bg-rose-500 text-white shadow-rose-200/50 hover:bg-rose-600'
+                            }`}
+                            title={item.isAvailable ? "Click to set Out of Stock" : "Click to set In Stock"}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full ${item.isAvailable ? 'bg-white animate-pulse' : 'bg-white/70'}`} />
+                            {item.isAvailable ? 'In Stock' : 'Out of Stock'}
+                          </button>
+                        </div>
+
+                        {/* Inline Price Editing Row */}
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          {isEditingPrice ? (
+                            <div className="flex items-center gap-1 bg-white p-1 px-1.5 rounded-xl border-2 border-indigo-500 shadow-md">
+                              <span className="text-xs font-black text-gray-600 pl-1">₹</span>
+                              <input
+                                type="number"
+                                value={inlinePriceValue}
+                                onChange={(e) => setInlinePriceValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleSaveInlinePrice(item.id);
+                                  if (e.key === 'Escape') setEditingInlinePriceId(null);
+                                }}
+                                autoFocus
+                                className="w-16 text-xs font-black text-gray-900 outline-none bg-transparent"
+                                min="1"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleSaveInlinePrice(item.id)}
+                                className="p-1 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 active:scale-95 transition"
+                                title="Save price"
+                              >
+                                <Check className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingInlinePriceId(null)}
+                                className="p-1 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 active:scale-95 transition"
+                                title="Cancel"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 bg-gray-50 hover:bg-indigo-50/70 p-1 px-2.5 rounded-xl border border-gray-200 transition-colors group/price">
+                              <span className="text-sm font-black text-gray-900">₹{item.price}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingInlinePriceId(item.id);
+                                  setInlinePriceValue(item.price.toString());
+                                }}
+                                className="text-[8px] font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-wider flex items-center gap-0.5 ml-1 bg-white hover:bg-indigo-100 px-1.5 py-0.5 rounded-md border border-indigo-100 transition active:scale-95"
+                                title="Click to edit price directly inline"
+                              >
+                                <Edit3 className="w-2.5 h-2.5" />
+                                Edit
+                              </button>
+                              <div className="flex items-center gap-0.5 ml-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickAdjustPrice(item.id, -10)}
+                                  disabled={item.price <= 10}
+                                  className="w-5 h-5 flex items-center justify-center bg-white hover:bg-gray-200 text-gray-600 rounded text-[9px] font-black border border-gray-200 active:scale-90 disabled:opacity-30"
+                                  title="Decrease ₹10"
+                                >
+                                  -
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickAdjustPrice(item.id, 10)}
+                                  className="w-5 h-5 flex items-center justify-center bg-white hover:bg-gray-200 text-gray-600 rounded text-[9px] font-black border border-gray-200 active:scale-90"
+                                  title="Increase ₹10"
+                                >
+                                  +
+                                </button>
+                              </div>
+                              {inlinePriceSuccessMap[item.id] && (
+                                <span className="text-[7.5px] font-black text-emerald-600 bg-emerald-100/70 px-1.5 py-0.5 rounded-md flex items-center gap-0.5 animate-bounce">
+                                  <Check className="w-2.5 h-2.5" /> Saved
+                                </span>
+                              )}
+                            </div>
+                          )}
+
                           <span className="text-[8px] font-black uppercase text-gray-400 tracking-widest">{item.unit}</span>
+                          <span className="px-2 py-0.5 bg-gray-100 rounded-md text-[7px] font-black uppercase text-gray-500">{item.category}</span>
+                          <span className={`px-2 py-0.5 rounded-md text-[7px] font-black uppercase flex items-center gap-1 shrink-0 ${
+                            (item.stock || 0) >= 10 
+                              ? 'bg-emerald-50 text-emerald-600' 
+                              : (item.stock || 0) >= 5 
+                              ? 'bg-amber-50 text-amber-600 border border-amber-200/40' 
+                              : 'bg-rose-100 text-rose-700 font-extrabold border border-rose-300 animate-pulse'
+                          }`}>
+                            {(item.stock || 0) < 5 && <AlertCircle className="w-2.5 h-2.5 text-rose-600 shrink-0" />}
+                            Stock: {item.stock || 0}
+                          </span>
                         </div>
-                        <div className="flex items-center gap-3 mb-1.5">
-                           <span className="text-sm font-black text-gray-900">₹{item.price}</span>
-                           <span className="px-2 py-0.5 bg-gray-100 rounded-md text-[7px] font-black uppercase text-gray-500">{item.category}</span>
-                           <span className={`px-2 py-0.5 rounded-md text-[7px] font-black uppercase flex items-center gap-1 shrink-0 ${
-                             (item.stock || 0) >= 10 
-                               ? 'bg-emerald-50 text-emerald-600' 
-                               : (item.stock || 0) >= 5 
-                               ? 'bg-amber-50 text-amber-600 border border-amber-200/40' 
-                               : 'bg-rose-100 text-rose-700 font-extrabold border border-rose-300 animate-pulse'
-                           }`}>
-                             {(item.stock || 0) < 5 && <AlertCircle className="w-2.5 h-2.5 text-rose-600 shrink-0" />}
-                             Stock: {item.stock || 0}
-                           </span>
-                        </div>
+
                         {item.description && (
                           <p className="text-[10px] text-gray-500 line-clamp-1 mb-2.5 leading-relaxed">{item.description}</p>
                         )}
@@ -1634,7 +2107,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                             className="flex-1 py-1.5 bg-gray-50 text-gray-600 rounded-xl text-[8px] font-black uppercase tracking-widest hover:bg-gray-100 active:scale-95 transition-all flex items-center justify-center gap-1.2"
                           >
                             <Edit3 className="w-3 h-3" />
-                            Edit
+                            Full Details
                           </button>
                           <button 
                             onClick={() => toggleProductAvailability(item.id)}
@@ -1694,24 +2167,26 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button
                           onClick={handleBulkAccept}
                           disabled={isBulkProcessing}
-                          className="py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-black uppercase tracking-widest text-[8px] flex items-center gap-1.5 active:scale-95 transition-all shadow-lg shrink-0"
+                          className="py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-black uppercase tracking-widest text-[8px] flex items-center gap-1.5 active:scale-95 transition-all shadow-lg shrink-0 cursor-pointer"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" /> Bulk Accept
                         </button>
                         <button
-                          onClick={handleBulkDispatch}
+                          onClick={handleBulkMarkReadyForPickup}
                           disabled={isBulkProcessing}
-                          className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl font-black uppercase tracking-widest text-[8px] flex items-center gap-1.5 active:scale-95 transition-all shadow-lg shrink-0"
+                          className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl font-black uppercase tracking-widest text-[8px] flex items-center gap-1.5 active:scale-95 transition-all shadow-lg shrink-0 cursor-pointer"
+                          title="Instantly transition selected pending/preparing orders to Ready for Pickup"
                         >
-                          <Truck className="w-3.5 h-3.5" /> Bulk Dispatch
+                          <PackageCheck className="w-3.5 h-3.5 text-emerald-300" />
+                          <span>Move to Ready for Pickup</span>
                         </button>
                         <button
                           onClick={() => setSelectedOrderIds({})}
-                          className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-450 hover:text-white rounded-xl active:scale-95 transition-all shrink-0 border border-white/5"
+                          className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl active:scale-95 transition-all shrink-0 border border-white/5 cursor-pointer"
                           title="Deselect All"
                         >
                           <X className="w-4 h-4" />
@@ -1749,6 +2224,60 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                      </button>
                    ))}
                 </div>
+
+                {/* Smart Pending Orders Dispatch Bar */}
+                {orders.some(o => o.status === 'Pending') && (
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-emerald-500/10 border border-amber-500/20 rounded-2xl shadow-xs">
+                    <div className="flex items-center gap-2.5">
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                      </span>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-wider text-amber-900">
+                          {orders.filter(o => o.status === 'Pending').length} Pending Orders Awaiting Action
+                        </p>
+                        <p className="text-[9px] font-bold text-amber-700/80">
+                          Select pending orders and move them to 'Ready for Pickup' in a single batch.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = { ...selectedOrderIds };
+                          orders.filter(o => o.status === 'Pending').forEach(o => {
+                            updated[o.id] = true;
+                          });
+                          setSelectedOrderIds(updated);
+                        }}
+                        className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-xl text-[9px] font-black uppercase tracking-wider transition active:scale-95 cursor-pointer"
+                      >
+                        Select All Pending
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pendingList = orders.filter(o => o.status === 'Pending');
+                          if (pendingList.length === 0) return;
+                          const updated = { ...selectedOrderIds };
+                          pendingList.forEach(o => {
+                            updated[o.id] = true;
+                          });
+                          setSelectedOrderIds(updated);
+                          setTimeout(() => {
+                            handleBulkMarkReadyForPickup();
+                          }, 100);
+                        }}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition shadow-md shadow-emerald-600/20 active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <PackageCheck className="w-3.5 h-3.5 text-emerald-200" />
+                        <span>Move All to Ready for Pickup</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-4">
@@ -1801,7 +2330,30 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                              </p>
                            </div>
                          </div>
-                         <div className="flex items-center gap-3">
+                         <div className="flex items-center gap-2 sm:gap-3">
+                           <button
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               handleOpenBillModal(order);
+                             }}
+                             className="px-2.5 sm:px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl text-[8px] sm:text-[8.5px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 active:scale-95 transition-all shadow-sm border border-amber-500/20"
+                             title="Print Bill / Invoice"
+                           >
+                             <Printer className="w-3 h-3" />
+                             <span className="hidden sm:inline">Print</span> Bill
+                           </button>
+                           <button
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               handleOpenShippingModal(order);
+                             }}
+                             className="px-2.5 sm:px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[8px] sm:text-[8.5px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 active:scale-95 transition-all shadow-sm border border-white/10"
+                             title="Print Parcel Shipping Label (Order ID & Address)"
+                           >
+                             <Tag className="w-3 h-3 text-amber-400" />
+                             <span className="hidden sm:inline">Ship</span> Label
+                           </button>
+                           <VendorOrderPrepTimer order={order} compact={true} />
                            <div className={`px-4 py-1.5 rounded-full text-[8.5px] font-black uppercase tracking-widest border ${
                              order.status === 'Pending' ? 'bg-orange-100 text-orange-600 border-orange-200' : 
                              order.status === 'Preparing' || order.status === 'Accepted' ? 'bg-blue-100 text-blue-600 border-blue-200' : 
@@ -1874,6 +2426,18 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                                            <Phone className="w-3.5 h-3.5" />
                                         </button>
                                       )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedQuickReplyOrder(order);
+                                          setShowQuickRepliesModal(true);
+                                        }}
+                                        className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 border border-amber-200/80 active:scale-95 transition shadow-2xs"
+                                        title="Customer Quick Replies"
+                                      >
+                                        <Zap className="w-3 h-3 text-amber-600 fill-amber-500" />
+                                        <span>Quick Reply</span>
+                                      </button>
                                     </div>
                                     <div className="mt-1 flex items-start gap-1 max-w-[300px]">
                                       <MapPin className="w-3 h-3 text-gray-400 mt-0.5 shrink-0" />
@@ -1946,26 +2510,127 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                                 ))}
                               </div>
 
+                              {/* OFFICIAL BILL & TAX INVOICE PRINT BAR */}
+                              <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-xl bg-amber-400/20 border border-amber-400/40 flex items-center justify-center text-amber-700 shrink-0">
+                                    <Receipt className="w-5 h-5" />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <h6 className="text-[11px] font-black uppercase tracking-tight text-slate-900">Official Tax Invoice & Bill</h6>
+                                      <span className="text-[8px] font-black uppercase text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md font-mono">
+                                        {getOrGenerateInvoiceNo(order)}
+                                      </span>
+                                    </div>
+                                    <p className="text-[9.5px] text-slate-500 font-semibold mt-0.5">Real-time KOT & parcel bill print with complete order financials</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <button
+                                    onClick={(e) => handleQuickPrintBill(e, order)}
+                                    disabled={printingOrderId === order.id}
+                                    className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+                                  >
+                                    <Printer className="w-3.5 h-3.5" />
+                                    {printingOrderId === order.id ? 'Printing...' : 'Quick Print (80mm)'}
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenBillModal(order)}
+                                    className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                                  >
+                                    <Receipt className="w-3.5 h-3.5 text-amber-400" />
+                                    View / A4
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenShippingModal(order)}
+                                    className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-350 text-slate-950 text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-sm active:scale-95"
+                                    title="Generate Printable Parcel Shipping Label"
+                                  >
+                                    <Tag className="w-3.5 h-3.5 text-slate-950" />
+                                    Shipping Label
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setSelectedQuickReplyOrder(order);
+                                      setShowQuickRepliesModal(true);
+                                    }}
+                                    className="px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-2xs active:scale-95"
+                                    title="Send Quick Reply Update to Customer"
+                                  >
+                                    <Zap className="w-3.5 h-3.5 text-amber-600 fill-amber-500" />
+                                    Quick Reply
+                                  </button>
+                                </div>
+                              </div>
+
                               <div className="flex gap-3 flex-col">
                                {order.status === 'Pending' && (
-                                 <div className="order-actions-container flex gap-3 w-full mt-1">
-                                    <button 
-                                      onClick={() => setOrderIdToCancel(order.id)}
-                                      className="flex-1 py-3 bg-rose-50 hover:bg-rose-100/60 text-rose-600 hover:text-rose-700 rounded-xl font-black uppercase tracking-widest text-[8px] active:scale-95 transition-all flex items-center justify-center gap-1 border border-rose-100"
-                                    >
-                                      <XCircle className="w-3.5 h-3.5" /> Reject
-                                    </button>
-                                    <button 
-                                      onClick={() => updateOrderStatus(order.id, 'Preparing')}
-                                      className="flex-[2] py-3 bg-gray-900 hover:bg-gray-800 text-white rounded-xl font-black uppercase tracking-widest text-[8px] shadow-xl shadow-gray-200 active:scale-95 transition-all flex items-center justify-center gap-1"
-                                    >
-                                      <CheckCircle2 className="w-3.5 h-3.5" /> Accept Order
-                                    </button>
+                                 <div className="p-4 bg-amber-50/70 border border-amber-200/80 rounded-2xl space-y-3">
+                                   <div className="flex items-center justify-between">
+                                     <div className="flex items-center gap-1.5">
+                                       <Clock className="w-4 h-4 text-amber-600" />
+                                       <span className="text-[10px] font-black uppercase tracking-wider text-amber-900">
+                                         Estimated Kitchen Prep Time
+                                       </span>
+                                     </div>
+                                     <span className="text-[11px] font-black text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-lg font-mono border border-amber-300">
+                                       {pendingPrepTimes[order.id] || order.prepTimeMinutes || 15} Mins
+                                     </span>
+                                   </div>
+
+                                   <div className="flex items-center gap-1.5 flex-wrap">
+                                     <span className="text-[9px] font-bold text-slate-500 uppercase mr-1">Choose Prep Time:</span>
+                                     {[10, 15, 20, 25, 30, 45].map((mins) => {
+                                       const currentSelected = pendingPrepTimes[order.id] || order.prepTimeMinutes || 15;
+                                       return (
+                                         <button
+                                           key={mins}
+                                           type="button"
+                                           onClick={() => setPendingPrepTimes(prev => ({ ...prev, [order.id]: mins }))}
+                                           className={`px-3 py-1 rounded-xl text-[9.5px] font-black transition active:scale-95 ${
+                                             currentSelected === mins
+                                               ? "bg-slate-900 text-white shadow-sm"
+                                               : "bg-white text-slate-700 hover:bg-amber-100/60 border border-amber-200 shadow-2xs"
+                                           }`}
+                                         >
+                                           {mins}m
+                                         </button>
+                                       );
+                                     })}
+                                   </div>
+
+                                   <div className="order-actions-container flex gap-3 w-full pt-1">
+                                     <button 
+                                       onClick={() => setOrderIdToCancel(order.id)}
+                                       className="flex-1 py-3 bg-rose-50 hover:bg-rose-100/60 text-rose-600 hover:text-rose-700 rounded-xl font-black uppercase tracking-widest text-[8px] active:scale-95 transition-all flex items-center justify-center gap-1 border border-rose-100"
+                                     >
+                                       <XCircle className="w-3.5 h-3.5" /> Reject
+                                     </button>
+                                     <button 
+                                       onClick={() => {
+                                         const chosenMins = pendingPrepTimes[order.id] || order.prepTimeMinutes || 15;
+                                         updateOrderStatus(order.id, 'Preparing', {
+                                           prepTimeMinutes: chosenMins,
+                                           prepStartedAt: new Date().toISOString()
+                                         });
+                                       }}
+                                       className="flex-[2] py-3 bg-gray-900 hover:bg-gray-800 text-white rounded-xl font-black uppercase tracking-widest text-[8.5px] shadow-xl shadow-gray-200 active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                                     >
+                                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                       Accept Order ({pendingPrepTimes[order.id] || order.prepTimeMinutes || 15}m Prep)
+                                     </button>
+                                   </div>
                                  </div>
                                )}
                                
                                {['Preparing', 'Accepted'].includes(order.status) && (
                                  <div className="w-full space-y-4">
+                                   <VendorOrderPrepTimer 
+                                     order={order} 
+                                     onUpdatePrepTime={handleUpdatePrepTime}
+                                     onMarkReady={(oId) => updateOrderStatus(oId, 'ReadyForPickup')}
+                                   />
                                    <div className="p-4 bg-indigo-50/60 rounded-2xl border border-indigo-100">
                                       <p className="text-[8px] font-black text-indigo-500 uppercase tracking-widest mb-3">Assign Delivery Partner</p>
                                       <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
@@ -2042,6 +2707,22 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
    );
 })}
               </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'analytics' && (
+            <motion.div 
+              key="analytics"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+            >
+              <VendorAnalyticsTab
+                profile={profile}
+                orders={orders}
+                inventory={inventory}
+                onNavigateTab={(tab) => setActiveTab(tab as any)}
+              />
             </motion.div>
           )}
 
@@ -2469,6 +3150,17 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                       )}
                   </div>
 
+                  {/* Operating Store Hours & Auto-Schedule Section */}
+                  <VendorStoreHoursSection
+                    profile={profile}
+                    onStatusChange={(newStatus) => {
+                      setProfile(prev => prev ? { ...prev, isOnline: newStatus, isOpen: newStatus } : null);
+                    }}
+                    onProfileUpdated={(updatedFields) => {
+                      setProfile(prev => prev ? { ...prev, ...updatedFields } : null);
+                    }}
+                  />
+
                   <div className="space-y-3">
                       {[
                         { icon: FileText, label: 'Merchant Onboarding & KYC Wizard', value: 'Submit/Update Business, Banking & Identity Proofs', color: 'text-amber-500', bg: 'bg-amber-50', action: () => setShowVendorOnboarding(true) },
@@ -2580,7 +3272,47 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                 </div>
               </div>
               
-              <div className="p-6 bg-white border-t border-gray-100">
+              <div className="p-6 bg-white border-t border-gray-100 space-y-3">
+                {/* Quick Replies Carousel for Speeding Up Communication */}
+                <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/80">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
+                      Quick Replies
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedQuickReplyOrder(null);
+                        setShowQuickRepliesModal(true);
+                      }}
+                      className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-wider hover:underline"
+                    >
+                      Browse All Replies
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
+                    {[
+                      { label: '🍳 Order is being prepared', text: 'Order is being prepared fresh in our kitchen.' },
+                      { label: '🛵 Rider is assigned', text: 'Rider is assigned and en route to collect the order.' },
+                      { label: '📦 Order packed & ready', text: 'Order is packed, sealed, and ready for pickup.' },
+                      { label: '⏳ Slight delay (+10 mins)', text: 'Kitchen rush: Order will take an additional 10 minutes.' },
+                      { label: '📍 Address landmark needed', text: 'Please confirm nearby landmark for smooth delivery.' },
+                      { label: '🚀 Order out for delivery', text: 'Order has been picked up by partner and is on the way.' }
+                    ].map((qr, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setChatInput(qr.text)}
+                        className="px-3 py-1.5 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl text-[10.5px] font-bold text-slate-700 hover:text-indigo-900 whitespace-nowrap shadow-2xs active:scale-95 transition shrink-0"
+                        title={qr.text}
+                      >
+                        {qr.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <form onSubmit={handleSendMessage} className="flex gap-3 bg-gray-50 p-2.5 rounded-[2.5rem] border border-gray-200 shadow-inner">
                   <input 
                     value={chatInput}
@@ -2741,7 +3473,21 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
 
                    <div className="grid grid-cols-2 gap-4">
                       <div className="bg-white p-5 rounded-2xl border border-gray-100">
-                         <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Customer</p>
+                         <div className="flex items-center justify-between mb-1">
+                           <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Customer</p>
+                           <button
+                             type="button"
+                             onClick={() => {
+                               setSelectedQuickReplyOrder(showOrderDetails);
+                               setShowQuickRepliesModal(true);
+                             }}
+                             className="px-2 py-0.5 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-lg text-[8.5px] font-black uppercase tracking-wider flex items-center gap-1 border border-amber-200/80 active:scale-95 transition shadow-2xs"
+                             title="Send Quick Reply Update"
+                           >
+                             <Zap className="w-3 h-3 text-amber-600 fill-amber-500" />
+                             <span>Quick Reply</span>
+                           </button>
+                         </div>
                          <p className="text-sm font-black text-gray-900">{profileId === 'admin-store' || isAdmin ? showOrderDetails.customerName : "Protected Customer"}</p>
                          <p className="text-[10px] font-bold text-gray-500">{profileId === 'admin-store' || isAdmin ? showOrderDetails.customerPhone : "Restricted to Admin"}</p>
                       </div>
@@ -2755,6 +3501,19 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
                          </span>
                       </div>
                    </div>
+
+                   {['Preparing', 'Accepted'].includes(showOrderDetails.status) && (
+                     <div className="pt-2">
+                       <VendorOrderPrepTimer
+                         order={showOrderDetails}
+                         onUpdatePrepTime={handleUpdatePrepTime}
+                         onMarkReady={(oId) => {
+                           updateOrderStatus(oId, 'ReadyForPickup');
+                           setShowOrderDetails(prev => prev ? { ...prev, status: 'ReadyForPickup' } : null);
+                         }}
+                       />
+                     </div>
+                   )}
 
                    {showOrderDetails.status === 'Pending' && (
                      <div className="pt-4 flex gap-3">
@@ -2788,6 +3547,7 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
           { id: 'home', icon: LayoutDashboard, label: 'Hub' },
           { id: 'orders', icon: ClipboardList, label: 'Orders' },
           { id: 'inventory', icon: Package, label: 'Items' },
+          { id: 'analytics', icon: BarChart3, label: 'Stats' },
           { id: 'sales', icon: IndianRupee, label: 'Sales' },
           { id: 'profile', icon: User, label: 'Store' }
         ].map((btn) => (
@@ -3234,6 +3994,56 @@ export default function VendorDashboard({ profileId, onBack, isAdmin: propIsAdmi
            />
          </div>
        )}
+
+       <RealtimeOrderBillModal
+         isOpen={billModalOpen}
+         onClose={() => {
+           setBillModalOpen(false);
+           setSelectedBillOrder(null);
+         }}
+         order={selectedBillOrder}
+       />
+       <ShippingLabelModal
+         isOpen={shippingModalOpen}
+         onClose={() => {
+           setShippingModalOpen(false);
+           setSelectedShippingOrder(null);
+         }}
+         order={selectedShippingOrder}
+       />
+       <VendorQuickRepliesModal
+         isOpen={showQuickRepliesModal}
+         onClose={() => {
+           setShowQuickRepliesModal(false);
+           setSelectedQuickReplyOrder(null);
+         }}
+         order={selectedQuickReplyOrder}
+         storeName={profile?.businessName || profile?.storeName || 'Local Bandi Partner'}
+         onSendToChat={(text) => {
+           setChatInput(text);
+         }}
+       />
+    
+      <BulkProductImportModal
+        isOpen={isBulkImportModalOpen}
+        onClose={() => setIsBulkImportModalOpen(false)}
+        vendorProfile={profile}
+        existingProducts={inventory}
+        onImportComplete={() => {
+          setActiveTab('inventory');
+        }}
+      />
+
+      {/* Merchant-Specific QR Code Modal for Quick Customer Ordering & Menu Access */}
+      <MerchantQRCodeModal
+        isOpen={showMerchantQRModal}
+        onClose={() => setShowMerchantQRModal(false)}
+        vendorId={profile?.id || profileId || 'merchant-001'}
+        merchantName={profile?.businessName || profile?.storeName || 'Local Bandi Merchant Partner'}
+        merchantBranch={profile?.branchId || profile?.location?.city || 'Khammam Central'}
+        merchantPhone={profile?.phone || '+91 87907 29816'}
+        merchantAddress={profile?.address || 'Khammam, Telangana'}
+      />
     </div>
   );
 }

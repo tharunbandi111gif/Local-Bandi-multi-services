@@ -5,6 +5,7 @@ import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import { FirebaseProvider } from './contexts/FirebaseContext.tsx';
 import { LanguageProvider } from './i18n.ts';
+import StandaloneAppGate from './components/auth/StandaloneAppGate.tsx';
 import './index.css';
 
 // Service Implicit (serv_imp) SMS OTP Verification Gateway Configuration
@@ -49,7 +50,14 @@ createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <FirebaseProvider>
         <LanguageProvider>
-          <App />
+          <StandaloneAppGate 
+            targetApp="customer"
+            appName="Local Bandi Customer App"
+            appDescription="Order Food, Groceries, Local Services & Marriage Bureau"
+            themeColor="yellow"
+          >
+            <App />
+          </StandaloneAppGate>
         </LanguageProvider>
       </FirebaseProvider>
     </ErrorBoundary>

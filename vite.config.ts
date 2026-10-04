@@ -22,6 +22,9 @@ export default defineConfig(({mode}) => {
       rollupOptions: {
         input: {
           main: path.resolve(__dirname, 'index.html'),
+          vendor: path.resolve(__dirname, 'vendor.html'),
+          delivery: path.resolve(__dirname, 'delivery.html'),
+          branchAdmin: path.resolve(__dirname, 'branch-admin.html'),
           partner: path.resolve(__dirname, 'partner.html'),
           admin: path.resolve(__dirname, 'admin.html'),
           franchise: path.resolve(__dirname, 'franchise.html'),

@@ -75,6 +75,8 @@ export interface Branch {
   revenue: number;
   rating?: number;
   pincodes?: string[];
+  enabledServices?: string[];
+  disabledServices?: string[];
 }
 
 export interface Product {
@@ -122,6 +124,20 @@ export interface VendorProfile {
   ifscCode?: string;
   upiId?: string;
   accessCode?: string;
+  coordinates?: { lat: number; lng: number };
+  lat?: number;
+  lng?: number;
+  showOnMap?: boolean;
+  pinNote?: string;
+  isOpen?: boolean;
+  storeHours?: StoreHours;
+}
+
+export interface StoreHours {
+  enabled: boolean;
+  openTime: string; // HH:mm format, e.g. "08:00"
+  closeTime: string; // HH:mm format, e.g. "22:00"
+  days?: number[]; // 0 = Sun, 1 = Mon, ..., 6 = Sat
 }
 
 export interface DeliveryPartnerProfile {
@@ -294,6 +310,9 @@ export interface VendorOrder {
   deliveryInstructions?: string | null;
   notes?: string | null;
   instructions?: string | null;
+  prepTimeMinutes?: number;
+  prepStartedAt?: string;
+  estimatedReadyAt?: string;
 }
 
 export interface DeliveryOrder {
@@ -305,7 +324,7 @@ export interface DeliveryOrder {
   deliveryAddress: string;
   items: string[];
   amount: number;
-  status: 'Pending' | 'Accepted' | 'PickedUp' | 'Delivered' | 'ReadyForPickup' | 'Assigned';
+  status: 'Pending' | 'Accepted' | 'Preparing' | 'PickedUp' | 'OutForDelivery' | 'Delivered' | 'ReadyForPickup' | 'Assigned';
   pickupLocation: { lat: number, lng: number };
   deliveryLocation: { lat: number, lng: number };
   createdAt: string;
@@ -368,6 +387,8 @@ export interface PlatformSettings {
   registrationFee: number;
   upiId?: string;
   accountHolder?: string;
+  storeMapPinsEnabled?: boolean;
+  allowPublicStoreMap?: boolean;
 }
 
 export interface PromoCode {
@@ -457,5 +478,93 @@ export interface SOSAlert {
   resolvedBy?: string;
   resolutionNotes?: string;
   audioSirenActive?: boolean;
+}
+
+export type StandaloneAppRole = 'customer' | 'vendor' | 'delivery' | 'branch_admin' | 'master_admin';
+export type UserRole = 'customer' | 'vendor' | 'delivery' | 'branch_admin' | 'master_admin';
+export type AccountStatus = 'active' | 'disabled' | 'suspended';
+export type ApprovalStatus = 'approved' | 'pending' | 'rejected';
+
+export interface UserAccount {
+  id: string;
+  userId: string;
+  name: string;
+  phone: string;
+  email: string;
+  role: UserRole;
+  accountStatus: AccountStatus;
+  approvalStatus: ApprovalStatus;
+  branchId?: string | null;
+  branchName?: string;
+  vendorId?: string | null;
+  vendorName?: string;
+  deliveryPartnerId?: string | null;
+  isOnline?: boolean;
+  lastLogin?: any;
+  lastActive?: any;
+  createdAt?: any;
+  googleInfo?: {
+    photoURL?: string;
+    email?: string;
+    providerId?: string;
+  };
+  rejectionReason?: string;
+  permissions?: string[];
+  activeApp?: string;
+}
+
+export type OrderRoutingMode = 'manual' | 'direct';
+
+export interface OrderAssignmentRecord {
+  id: string;
+  orderId: string;
+  vendorId?: string;
+  vendorName?: string;
+  routingMode: OrderRoutingMode;
+  assignedBy: string; // Master Admin, Branch Admin, or System
+  assignedAt: any;
+  deliveryPartnerId?: string;
+  deliveryPartnerName?: string;
+  deliveryAssignedBy?: string;
+  deliveryAssignedAt?: any;
+  status: 'assigned' | 'accepted' | 'rejected' | 'reassigned';
+  notes?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actorId: string;
+  actorName: string;
+  actorRole: UserRole | 'system';
+  action: string;
+  targetCollection: string;
+  targetId: string;
+  details?: Record<string, any> | string;
+  ipAddress?: string;
+  branchId?: string | null;
+  timestamp: any;
+}
+
+export interface SearchHistoryItem {
+  id: string;
+  query: string;
+  type?: 'store' | 'product' | 'category' | 'general';
+  targetName?: string;
+  timestamp: number;
+}
+
+export interface PriceSubscription {
+  id: string;
+  userId?: string;
+  productId: string;
+  productName: string;
+  productImage?: string;
+  category?: string;
+  initialPrice: number;
+  targetPrice?: number;
+  currentPrice: number;
+  lastNotifiedPrice?: number;
+  createdAt: number;
+  active: boolean;
 }
 

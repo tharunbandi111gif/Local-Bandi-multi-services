@@ -101,12 +101,25 @@ export default function LocationSelection({ onSelect, userProfile, currentLocati
 
   const handleSearch = async (query: string) => {
     setSearchQuery(query);
-    if (query.length > 2) {
+    if (query.length > 1) {
       setLoading(true);
       try {
+        // First try the Google Maps Places Autocomplete backend proxy
+        const res = await fetch('/api/maps/places-autocomplete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: query })
+        });
+        const data = await res.json();
+        if (data.success && data.predictions?.length) {
+          setSearchResults(data.predictions.map((p: any) => p.description));
+          return;
+        }
+        
+        // Fallback to OSM search if needed
         const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=in&limit=8`);
-        const data = await response.json();
-        setSearchResults(data.map((item: any) => item.display_name));
+        const osmData = await response.json();
+        setSearchResults(osmData.map((item: any) => item.display_name));
       } catch (err) {
         console.error('Error fetching locations:', err);
       } finally {
@@ -167,6 +180,17 @@ export default function LocationSelection({ onSelect, userProfile, currentLocati
       async (position) => {
         const { latitude, longitude } = position.coords;
         try {
+          const res = await fetch('/api/maps/reverse-geocode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat: latitude, lng: longitude })
+          });
+          const data = await res.json();
+          if (data.success && data.formattedAddress) {
+            onSelect(data.formattedAddress);
+            return;
+          }
+
           const response = await fetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
             {
@@ -175,10 +199,10 @@ export default function LocationSelection({ onSelect, userProfile, currentLocati
               }
             }
           );
-          const data = await response.json();
+          const osmData = await response.json();
           
-          if (data && data.display_name) {
-            onSelect(data.display_name);
+          if (osmData && osmData.display_name) {
+            onSelect(osmData.display_name);
           } else {
             onSelect(`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`);
           }

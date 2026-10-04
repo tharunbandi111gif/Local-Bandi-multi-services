@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Package, ChevronRight, Clock, AlertTriangle, X, MapPin, Bike, Check, Search, Filter, StickyNote, Save, ClipboardList, TrendingUp, Loader2, Star, Edit2 } from 'lucide-react';
+import { 
+  ArrowLeft, Package, ChevronRight, Clock, AlertTriangle, X, MapPin, 
+  Bike, Check, Search, Filter, StickyNote, Save, ClipboardList, 
+  TrendingUp, Loader2, Star, Edit2, Printer, Receipt, Tag,
+  RotateCcw, History, ShoppingBag, CheckCircle2, ShieldCheck
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import RealtimeOrderBillModal from './RealtimeOrderBillModal';
+import ShippingLabelModal from './ShippingLabelModal';
 import { LanguageCode, Transaction, CartItem } from '../types';
 import { translations } from '../translations';
 import { referralService } from '../lib/referral';
@@ -11,7 +18,7 @@ import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp }
 
 interface OrdersProps {
   onBack: () => void;
-  onReorder?: (orderId: string) => void;
+  onReorder?: (orderId: string, items?: any[]) => void;
   onTrackOrder?: (orderId: string) => void;
   onEditOrder?: (orderId: string) => void;
   language: LanguageCode;
@@ -116,7 +123,12 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
   }, [onTrackOrder]);
 
   const [selectedOrderDetail, setSelectedOrderDetail] = useState<any | null>(null);
+  const [selectedBillOrder, setSelectedBillOrder] = useState<any | null>(null);
+  const [showBillModal, setShowBillModal] = useState<boolean>(false);
+  const [selectedShippingOrder, setSelectedShippingOrder] = useState<any | null>(null);
+  const [showShippingModal, setShowShippingModal] = useState<boolean>(false);
   const [filterStatus, setFilterStatus] = useState<string>('All');
+  const [viewMode, setViewMode] = useState<'history' | 'active' | 'all'>('history');
   const [dateFilter, setDateFilter] = useState<string>('All');
   const [customDate, setCustomDate] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -125,6 +137,7 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
   const [noteDraft, setNoteDraft] = useState('');
   const [orderToCancel, setOrderToCancel] = useState<string | null>(null);
   const [orderToReorder, setOrderToReorder] = useState<string | null>(null);
+  const [orderToReorderItems, setOrderToReorderItems] = useState<any[] | null>(null);
   const [cancellationStep, setCancellationStep] = useState<'confirm' | 'reason'>('confirm');
   const [selectedReason, setSelectedReason] = useState<string>('');
   const [customReason, setCustomReason] = useState<string>('');
@@ -143,13 +156,17 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'Delivered': return 'bg-green-100 text-green-700';
-      case 'OutForDelivery': return 'bg-emerald-100 text-emerald-700';
-      case 'In Transit': return 'bg-blue-100 text-blue-700';
-      case 'Cancelled': return 'bg-red-100 text-red-700';
-      case 'Processing': return 'bg-yellow-100 text-yellow-700';
-      case 'Editing': return 'bg-indigo-100 text-indigo-700';
-      case 'ReadyForPickup': return 'bg-cyan-100 text-cyan-700';
+      case 'Delivered': return 'bg-emerald-100 text-emerald-800 border border-emerald-300';
+      case 'OutForDelivery':
+      case 'In Transit': return 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse';
+      case 'ReadyForPickup': return 'bg-purple-100 text-purple-800 border border-purple-300';
+      case 'Preparing': return 'bg-orange-100 text-orange-800 border border-orange-300';
+      case 'Accepted': return 'bg-blue-100 text-blue-800 border border-blue-300';
+      case 'Pending':
+      case 'Processing':
+      case 'Placed': return 'bg-yellow-100 text-yellow-800 border border-yellow-300';
+      case 'Editing': return 'bg-indigo-100 text-indigo-800 border border-indigo-300';
+      case 'Cancelled': return 'bg-rose-100 text-rose-800 border border-rose-300';
       default: return 'bg-gray-100 text-gray-700';
     }
   };
@@ -220,12 +237,47 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
     setCancellationStep('confirm');
   };
 
+  const isPastOrder = (status: string) => {
+    const s = String(status || '').toLowerCase();
+    return ['delivered', 'cancelled', 'completed', 'refunded'].includes(s);
+  };
+  const isActiveOrder = (status: string) => {
+    const s = String(status || '').toLowerCase();
+    return ['pending', 'accepted', 'assigned', 'preparing', 'picked-up', 'picked_up', 'pickedup', 'readyforpickup', 'ready', 'outfordelivery', 'in transit', 'processing', 'editing', 'placed'].includes(s);
+  };
+
+  const pastOrdersCount = orders.filter(o => isPastOrder(o.status)).length;
+  const activeOrdersCount = orders.filter(o => isActiveOrder(o.status)).length;
+
   const filteredOrders = orders.filter(order => {
-    const matchesStatus = filterStatus === 'All' || order.status === filterStatus;
+    // 1. View Mode segregation
+    if (viewMode === 'history' && !isPastOrder(order.status)) {
+      return false;
+    }
+    if (viewMode === 'active' && !isActiveOrder(order.status)) {
+      return false;
+    }
+
+    // 2. Status filter
+    let matchesStatus = true;
+    if (filterStatus !== 'All') {
+      if (filterStatus === 'Active') {
+        matchesStatus = isActiveOrder(order.status);
+      } else if (filterStatus === 'In Transit') {
+        matchesStatus = ['OutForDelivery', 'In Transit'].includes(order.status);
+      } else if (filterStatus === 'Preparing') {
+        matchesStatus = ['Preparing', 'Processing'].includes(order.status);
+      } else if (filterStatus === 'Past') {
+        matchesStatus = isPastOrder(order.status);
+      } else {
+        matchesStatus = order.status === filterStatus;
+      }
+    }
     
+    // 3. Date filter
     let matchesDate = true;
     if (dateFilter !== 'All') {
-      const orderDate = new Date(order.date);
+      const orderDate = new Date(order.date || order.createdAt || Date.now());
       const now = new Date();
       if (dateFilter === 'Custom' && customDate) {
         const selectedDate = new Date(customDate);
@@ -243,19 +295,34 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
 
     const sq = (searchQuery || '').toLowerCase();
     const orderIdStr = (order.id || '').toLowerCase();
-    const itemsStr = (order.items ? order.items + ' items' : '').toLowerCase();
+    const itemsStr = (order.items ? (typeof order.items === 'string' ? order.items : JSON.stringify(order.items)) : '').toLowerCase();
     const matchesSearch = !sq || orderIdStr.includes(sq) || itemsStr.includes(sq);
 
     return matchesStatus && matchesDate && matchesSearch;
   });
 
-  const statusFilters = [
-    { id: 'All', label: t.allStatus },
-    { id: 'Processing', label: t.processing },
-    { id: 'In Transit', label: t.inTransit },
-    { id: 'Delivered', label: t.delivered },
-    { id: 'Cancelled', label: t.cancelled }
-  ];
+  const statusFilters = viewMode === 'history' 
+    ? [
+        { id: 'All', label: 'All Past Orders' },
+        { id: 'Delivered', label: 'Delivered (Completed)' },
+        { id: 'Cancelled', label: 'Cancelled' }
+      ]
+    : viewMode === 'active'
+    ? [
+        { id: 'All', label: 'All Active' },
+        { id: 'Preparing', label: 'Preparing' },
+        { id: 'ReadyForPickup', label: 'Ready for Pickup' },
+        { id: 'In Transit', label: 'Out for Delivery' }
+      ]
+    : [
+        { id: 'All', label: 'All Orders' },
+        { id: 'Active', label: 'Active & In-Transit' },
+        { id: 'Preparing', label: 'Preparing' },
+        { id: 'ReadyForPickup', label: 'Ready for Pickup' },
+        { id: 'In Transit', label: 'Out for Delivery' },
+        { id: 'Delivered', label: 'Delivered' },
+        { id: 'Cancelled', label: 'Cancelled' }
+      ];
 
   const dateFilters = [
     { id: 'All', label: t.allDates },
@@ -283,6 +350,72 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
           </button>
         )}
       </header>
+
+      {/* Primary Navigation Segment: Order History vs Active vs All */}
+      <div className="bg-white px-6 pt-3 pb-2 border-b border-gray-100">
+        <div className="flex bg-gray-100/90 p-1.5 rounded-2xl gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode('history');
+              setFilterStatus('All');
+            }}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              viewMode === 'history'
+                ? 'bg-white text-gray-900 shadow-md ring-1 ring-black/5'
+                : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            <History className="w-3.5 h-3.5 text-yellow-600" />
+            <span>Order History</span>
+            {pastOrdersCount > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold ${
+                viewMode === 'history' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-200 text-gray-600'
+              }`}>
+                {pastOrdersCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode('active');
+              setFilterStatus('All');
+            }}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              viewMode === 'active'
+                ? 'bg-white text-gray-900 shadow-md ring-1 ring-black/5'
+                : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            <Bike className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Active</span>
+            {activeOrdersCount > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold ${
+                viewMode === 'active' ? 'bg-indigo-100 text-indigo-800' : 'bg-gray-200 text-gray-600'
+              }`}>
+                {activeOrdersCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setViewMode('all');
+              setFilterStatus('All');
+            }}
+            className={`py-2.5 px-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1 cursor-pointer ${
+              viewMode === 'all'
+                ? 'bg-white text-gray-900 shadow-md ring-1 ring-black/5'
+                : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            <span>All ({orders.length})</span>
+          </button>
+        </div>
+      </div>
 
       <div className="bg-gray-50 border-b border-gray-100 px-6 py-4 space-y-4">
         {/* Search Bar */}
@@ -390,9 +523,20 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
                   <span className="text-sm font-bold text-gray-600">{order.displayDate}</span>
                 </div>
               </div>
-              <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${getStatusColor(order.status)}`}>
-                {order.status}
-              </span>
+              <div className="overflow-hidden">
+                <AnimatePresence mode="wait">
+                  <motion.span
+                    key={order.status}
+                    initial={{ opacity: 0, y: -6, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.95 }}
+                    transition={{ duration: 0.22, ease: "easeOut" }}
+                    className={`inline-block px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest shadow-xs ${getStatusColor(order.status)}`}
+                  >
+                    {order.status}
+                  </motion.span>
+                </AnimatePresence>
+              </div>
             </div>
             
             <div 
@@ -422,6 +566,132 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
                 <span className="text-[8px] font-black uppercase text-indigo-400 mt-1">View Details</span>
               </div>
             </div>
+
+            {/* Delivery OTP & Payment Verification Banner */}
+            {(order.requiresDeliveryOtp || String(order.paymentMethod || '').toLowerCase() === 'cod' || String(order.paymentMethod || '').toLowerCase() === 'cash') ? (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-center justify-between text-left">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-700 shrink-0">
+                    <ShieldCheck className="w-4.5 h-4.5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-950 block">Cash on Delivery Handover OTP</span>
+                    <span className="text-[9px] text-amber-800 font-medium block">Provide code to rider upon cash payment &amp; handoff</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 font-mono text-base font-black px-3 py-1 bg-white rounded-xl text-amber-950 border border-amber-300 shadow-xs tracking-widest">
+                  {order.deliveryOtp || '1234'}
+                </div>
+              </div>
+            ) : (
+              <div className="p-2.5 bg-emerald-50 border border-emerald-200/80 rounded-2xl flex items-center justify-between text-left">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-950 block">Paid Online ({String(order.paymentMethod || 'UPI').toUpperCase()})</span>
+                    <span className="text-[9px] text-emerald-700 font-medium block">Contactless delivery &bull; No OTP required for handover</span>
+                  </div>
+                </div>
+                <span className="text-[8.5px] font-black uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md font-mono">No OTP Needed</span>
+              </div>
+            )}
+
+            {/* Live Progress Timeline for Active Orders (5 Stages: accepted, assigned, preparing, picked-up, delivered) */}
+            {isActiveOrder(order.status) && (
+              <div 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTrackOrder?.(order.id);
+                }}
+                className="p-3.5 bg-yellow-50/60 border border-yellow-200/80 rounded-3xl space-y-2 cursor-pointer hover:bg-yellow-100/50 transition-colors"
+              >
+                <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-amber-900">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span>Live Tracking Sync</span>
+                  </span>
+                  <span className="text-amber-700 font-mono">View Map &amp; ETA →</span>
+                </div>
+                <div className="grid grid-cols-5 gap-1.5 pt-1">
+                  {[
+                    { key: 'accepted', label: 'Accepted' },
+                    { key: 'assigned', label: 'Assigned' },
+                    { key: 'preparing', label: 'Preparing' },
+                    { key: 'picked-up', label: 'Picked-Up' },
+                    { key: 'delivered', label: 'Delivered' }
+                  ].map((st, i) => {
+                    // Compute stage progression index
+                    const s = String(order.status || '').toLowerCase().replace(/[\s_-]+/g, '');
+                    let currentIdx = 0;
+                    if (s.includes('deliver') || s === 'completed') currentIdx = 4;
+                    else if (s.includes('pickup') || s.includes('picked') || s.includes('transit') || s.includes('outfordelivery') || s.includes('ready')) currentIdx = 3;
+                    else if (s.includes('prepar') || s.includes('process')) currentIdx = 2;
+                    else if (s.includes('assign')) currentIdx = 1;
+                    else currentIdx = 0; // accepted / pending
+
+                    const isDone = i <= currentIdx;
+                    const isCurrent = i === currentIdx;
+                    return (
+                      <div key={st.key} className="flex flex-col items-center text-center">
+                        <div className={`w-full h-1.5 rounded-full mb-1 transition-all ${isCurrent ? 'bg-amber-500 animate-pulse' : isDone ? 'bg-emerald-500' : 'bg-gray-200'}`} />
+                        <AnimatePresence mode="wait">
+                          <motion.span 
+                            key={`${st.key}-${isCurrent ? 'curr' : isDone ? 'done' : 'idle'}`}
+                            initial={{ opacity: 0, y: 3 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -3 }}
+                            transition={{ duration: 0.2 }}
+                            className={`text-[8px] font-black uppercase tracking-tighter ${isCurrent ? 'text-amber-950 font-extrabold' : isDone ? 'text-emerald-700' : 'text-gray-400'}`}
+                          >
+                            {st.label}
+                          </motion.span>
+                        </AnimatePresence>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Past Order History Details Card with Final Status & Items Preview */}
+            {isPastOrder(order.status) && (
+              <div className="p-4 bg-slate-50 border border-slate-200/90 rounded-3xl space-y-2.5 text-left">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-slate-500 font-mono">
+                    Past Order Summary
+                  </span>
+                  <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                    order.status === 'Delivered' 
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' 
+                      : 'bg-rose-100 text-rose-800 border border-rose-300'
+                  }`}>
+                    {order.status === 'Delivered' ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : <X className="w-3 h-3 text-rose-600" />}
+                    <span>Final Status: {order.status}</span>
+                  </span>
+                </div>
+
+                {order.orderItems && order.orderItems.length > 0 ? (
+                  <div className="pt-1 space-y-1.5 border-t border-slate-200/60">
+                    <p className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider">Ordered Items:</p>
+                    {order.orderItems.slice(0, 3).map((it: any, i: number) => (
+                      <div key={i} className="flex justify-between items-center text-xs">
+                        <span className="text-gray-800 font-bold truncate max-w-[75%]">
+                          <span className="text-amber-600 font-mono font-black">{it.quantity || 1}x</span> {it.name}
+                        </span>
+                        <span className="font-mono font-bold text-gray-700">₹{(it.price || 0) * (it.quantity || 1)}</span>
+                      </div>
+                    ))}
+                    {order.orderItems.length > 3 && (
+                      <p className="text-[9px] font-bold text-indigo-500 italic">
+                        +{order.orderItems.length - 3} more items in this order
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[9.5px] font-bold text-slate-400">Total Paid: ₹{order.total}</p>
+                )}
+              </div>
+            )}
 
             {/* Private Notes Section */}
             <div className="bg-slate-50/50 rounded-3xl p-4 space-y-3">
@@ -484,7 +754,31 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
               )}
             </div>
             
-            <div className="pt-2 flex gap-3">
+            <div className="pt-2 flex items-center gap-2">
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedBillOrder(order);
+                  setShowBillModal(true);
+                }}
+                className="py-4 px-3.5 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 border border-amber-200 transition-all active:scale-95 shadow-sm shrink-0 cursor-pointer"
+                title="Print Real-time Tax Bill"
+              >
+                <Printer className="w-3.5 h-3.5 text-amber-600" />
+                <span>Bill</span>
+              </button>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedShippingOrder(order);
+                  setShowShippingModal(true);
+                }}
+                className="py-4 px-3.5 bg-slate-100 hover:bg-slate-200 text-slate-900 rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 border border-slate-200 transition-all active:scale-95 shadow-sm shrink-0 cursor-pointer"
+                title="Print Shipping Label (Order ID & Address)"
+              >
+                <Tag className="w-3.5 h-3.5 text-slate-700" />
+                <span>Label</span>
+              </button>
               {['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'Editing', 'Placed', 'Processing'].includes(order.status) && onEditOrder && (
                 <button 
                   onClick={(e) => {
@@ -526,10 +820,13 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
                   onClick={(e) => {
                     e.stopPropagation();
                     setOrderToReorder(order.id);
+                    setOrderToReorderItems(order.orderItems || order.items || null);
                   }}
-                  className="flex-1 py-4 bg-yellow-400 text-gray-900 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-yellow-100 active:scale-95 transition-all"
+                  className="flex-1 py-4 bg-yellow-400 hover:bg-yellow-350 text-gray-900 rounded-2xl text-[10px] font-black uppercase tracking-wider shadow-lg shadow-yellow-400/20 active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  title="Add all items from this order to cart"
                 >
-                  {t.reorder}
+                  <RotateCcw className="w-3.5 h-3.5 text-gray-900" />
+                  <span>{t.reorder || 'Reorder'}</span>
                 </button>
               )}
             </div>
@@ -714,11 +1011,19 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
                   <div className="space-y-2 pt-2 border-t border-white/10">
                     <div className="flex justify-between items-center">
                       <span className="text-xs font-bold text-white/70">Subtotal ({selectedOrderDetail.items} items)</span>
-                      <span className="text-xs font-black">₹{selectedOrderDetail.total}</span>
+                      <span className="text-xs font-black">₹{selectedOrderDetail.subtotal || selectedOrderDetail.total}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-white/70">Delivery Distance</span>
+                      <span className="text-xs font-black text-amber-400">{selectedOrderDetail.distanceKm || selectedOrderDetail.deliveryDistanceKm || 2.5} km</span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-xs font-bold text-white/70">Delivery Fee</span>
-                      <span className="text-xs font-black text-emerald-400">FREE</span>
+                      <span className="text-xs font-black text-white">
+                        {selectedOrderDetail.deliveryFee ? `₹${selectedOrderDetail.deliveryFee}` : (
+                          Number(selectedOrderDetail.distanceKm || 2.5) <= 3 ? '₹25' : `₹${25 + Math.ceil(Number(selectedOrderDetail.distanceKm || 2.5) - 3) * 10}`
+                        )}
+                      </span>
                     </div>
                     <div className="flex justify-between items-center pt-2 mt-2 border-t border-white/20">
                       <span className="text-sm font-black italic tracking-tight">Total Paid</span>
@@ -739,6 +1044,26 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
               </div>
 
               <div className="pt-8 flex flex-col gap-3">
+                <button 
+                  onClick={() => {
+                    setSelectedBillOrder(selectedOrderDetail);
+                    setShowBillModal(true);
+                  }}
+                  className="w-full py-4.5 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-xl shadow-amber-400/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  Download / Print Official Bill
+                </button>
+                <button 
+                  onClick={() => {
+                    setSelectedShippingOrder(selectedOrderDetail);
+                    setShowShippingModal(true);
+                  }}
+                  className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white border border-slate-700 rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Tag className="w-4 h-4 text-amber-400" />
+                  Print Shipping Label (Order ID &amp; Address)
+                </button>
                 {selectedOrderDetail.status === 'Processing' && (
                   <button 
                     onClick={() => handleCompleteOrder(selectedOrderDetail.id)}
@@ -777,10 +1102,12 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
                 <button 
                   onClick={() => {
                     setOrderToReorder(selectedOrderDetail.id);
+                    setOrderToReorderItems(selectedOrderDetail.orderItems || selectedOrderDetail.items || null);
                   }}
-                  className="flex-1 py-5 bg-yellow-400 text-gray-900 rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-xl shadow-yellow-100 active:scale-95 transition-all"
+                  className="w-full py-5 bg-yellow-400 hover:bg-yellow-350 text-gray-900 rounded-[2rem] font-black text-xs uppercase tracking-widest shadow-xl shadow-yellow-400/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  Reorder Now
+                  <RotateCcw className="w-4 h-4 text-gray-900" />
+                  <span>Reorder All Items</span>
                 </button>
               </div>
             </motion.div>
@@ -932,13 +1259,15 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
                 <div className="w-full space-y-3">
                   <button 
                     onClick={() => {
-                      onReorder?.(orderToReorder);
+                      onReorder?.(orderToReorder, orderToReorderItems || undefined);
                       setOrderToReorder(null);
+                      setOrderToReorderItems(null);
                       setSelectedOrderDetail(null);
                     }}
-                    className="w-full py-4 bg-yellow-400 text-gray-900 rounded-[2rem] font-black uppercase tracking-widest shadow-xl shadow-yellow-100 active:scale-95 transition-all text-[10px]"
+                    className="w-full py-4 bg-yellow-400 hover:bg-yellow-350 text-gray-900 rounded-[2rem] font-black uppercase tracking-widest shadow-xl shadow-yellow-400/20 active:scale-95 transition-all text-[10px] flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    Confirm Reorder
+                    <RotateCcw className="w-4 h-4 text-gray-900" />
+                    <span>Confirm Reorder &amp; Add to Cart</span>
                   </button>
                   <button 
                     onClick={() => setOrderToReorder(null)}
@@ -952,6 +1281,22 @@ export default function Orders({ onBack, onReorder, onTrackOrder, onEditOrder, l
           </motion.div>
         )}
       </AnimatePresence>
+      <RealtimeOrderBillModal
+        isOpen={showBillModal}
+        onClose={() => {
+          setShowBillModal(false);
+          setSelectedBillOrder(null);
+        }}
+        order={selectedBillOrder}
+      />
+      <ShippingLabelModal
+        isOpen={showShippingModal}
+        onClose={() => {
+          setShowShippingModal(false);
+          setSelectedShippingOrder(null);
+        }}
+        order={selectedShippingOrder}
+      />
     </div>
   );
 }

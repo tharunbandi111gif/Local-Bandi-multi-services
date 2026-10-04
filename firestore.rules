@@ -215,7 +215,7 @@ service cloud.firestore {
             isValidVendor(incoming()) &&
             incoming().userId == existing().userId &&
             incoming().status == existing().status &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['businessName', 'ownerName', 'phone', 'service', 'isOnline', 'photo'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['businessName', 'ownerName', 'phone', 'service', 'isOnline', 'isOpen', 'storeHours', 'photo', 'updatedAt', 'address', 'gstNumber', 'accessCode', 'bankName', 'accountHolder', 'accountNumber', 'ifscCode', 'upiId', 'documentPhoto'])
           )
         )
       );

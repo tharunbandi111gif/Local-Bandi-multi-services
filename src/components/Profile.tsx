@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, User, Phone, MapPin, Bell, Shield, ShieldCheck, LogOut, ChevronRight, Settings as SettingsIcon, Plus, Trash2, Edit2, X, Check, Gift, Share2, Copy, Wallet, Receipt, TrendingUp, TrendingDown, Package, Camera, Bike, Briefcase, Navigation, Loader2, Search, ListTodo, Store, Moon, Sun, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, User, Phone, MapPin, Bell, Shield, ShieldCheck, LogOut, ChevronRight, Settings as SettingsIcon, Plus, Trash2, Edit2, X, Check, Gift, Share2, Copy, Wallet, Receipt, TrendingUp, TrendingDown, Package, Camera, Bike, Briefcase, Navigation, Loader2, Search, ListTodo, Store, Moon, Sun, AlertTriangle, Smartphone } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, updateDoc, serverTimestamp, collection, query, where, onSnapshot, limit, orderBy, getDocs } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
@@ -12,6 +12,7 @@ import { compressImage } from '../lib/imageUtils';
 import { DEFAULT_AVATAR } from '../utils/imagePlaceholders';
 import PartnerOnboarding from './PartnerOnboarding';
 import MyDashboardsSection from './MyDashboardsSection';
+import AppDownloadModal from './AppDownloadModal';
 
 interface ProfileProps {
   onBack: () => void;
@@ -37,6 +38,7 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
   
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [showAppDownloadModal, setShowAppDownloadModal] = useState(false);
   
   const isDeliveryPartnerOriginal = contextProfile?.role === 'delivery' || localStorage.getItem('isDeliveryPartner') === 'true';
   const isVendorOriginal = contextProfile?.role === 'vendor' || localStorage.getItem('isVendor') === 'true';
@@ -681,6 +683,12 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
         setEditForm(userProfile);
         setView('editProfile');
       }
+    },
+    { 
+      icon: Smartphone, 
+      label: 'Download Mobile Apps (APKs)', 
+      sub: 'Customer, Delivery, Vendor & Branch APK links', 
+      onClick: () => setShowAppDownloadModal(true) 
     },
     { icon: Package, label: t.myOrders, sub: 'View order history', onClick: () => onNavigate('orders') },
     { icon: ListTodo, label: 'Task List', sub: 'Create and manage local work tasks', onClick: () => onNavigate('tasks') },
@@ -1919,6 +1927,12 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AppDownloadModal
+        isOpen={showAppDownloadModal}
+        onClose={() => setShowAppDownloadModal(false)}
+        defaultAppId="customer"
+      />
     </div>
   );
 }

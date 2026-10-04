@@ -23,6 +23,7 @@ interface CategoryListingProps {
   hospitalPrices?: Record<string, { price: number; isActive: boolean }>;
   onBookHospitalOP?: (data: any) => void;
   currentBranchId?: string;
+  categories?: Category[];
 }
 
 type SortOption = 'relevance' | 'price-low' | 'price-high' | 'rating';
@@ -36,7 +37,8 @@ export default function CategoryListing({
   localInventory,
   hospitalPrices,
   onBookHospitalOP,
-  currentBranchId = 'khammam_main'
+  currentBranchId = 'khammam_main',
+  categories
 }: CategoryListingProps) {
   const t = translations[language].common || translations['en-IN'].common;
   const [selectedSubCat, setSelectedSubCat] = useState<string | null>(null);
@@ -1002,7 +1004,7 @@ export default function CategoryListing({
                     onChange={(e) => setEditingItem({ ...editingItem, category: e.target.value })}
                     className="w-full bg-gray-50 border border-gray-200 p-3.5 rounded-xl text-xs font-bold text-gray-900 outline-none focus:border-indigo-500 transition-all appearance-none cursor-pointer"
                   >
-                    {CATEGORIES.map((cat) => (
+                    {(categories && categories.length > 0 ? categories : CATEGORIES).map((cat) => (
                       <option key={cat.id} value={cat.id}>{cat.name}</option>
                     ))}
                   </select>

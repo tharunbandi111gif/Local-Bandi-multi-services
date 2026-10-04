@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, Truck, Bike, ShieldAlert, Layers, ChevronUp, X, ExternalLink, Building2, Lock } from 'lucide-react';
+import { Users, Truck, Bike, ShieldAlert, Layers, ChevronUp, X, ExternalLink, Building2, Store, Lock, Smartphone, Download } from 'lucide-react';
+import AppDownloadModal from '../AppDownloadModal';
 
 interface AppInfo {
-  id: 'customer' | 'partner' | 'admin' | 'franchise';
+  id: 'customer' | 'vendor' | 'partner' | 'admin' | 'franchise';
   name: string;
   description: string;
   url: string;
@@ -11,8 +12,9 @@ interface AppInfo {
   color: string;
 }
 
-export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'customer' | 'partner' | 'admin' | 'franchise' }) {
+export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'customer' | 'vendor' | 'partner' | 'admin' | 'franchise' }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(() => {
     return localStorage.getItem('admin_session_active') === 'true' || currentApp !== 'customer';
   });
@@ -37,33 +39,41 @@ export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'custo
   const apps: AppInfo[] = [
     {
       id: 'customer',
-      name: 'Customer Console',
+      name: 'Customer App',
       description: 'Order food, groceries, browse real estate, and book local services.',
       url: '/',
       icon: <Users className="w-5 h-5" />,
       color: 'bg-indigo-500 text-indigo-400 border-indigo-500/20 hover:border-indigo-500/40 text-indigo-400 shadow-indigo-500/5',
     },
     {
-      id: 'partner',
-      name: 'Partner & Rider Hub',
-      description: 'Unified workspace for delivery riders, merchant shops, groceries, and real estate sellers.',
-      url: '/partner',
-      icon: <Truck className="w-5 h-5" />,
+      id: 'vendor',
+      name: 'Vendor Merchant App',
+      description: 'Manage store catalog, accept incoming orders, and track sales revenue.',
+      url: '/vendor.html',
+      icon: <Store className="w-5 h-5" />,
       color: 'bg-emerald-500 text-emerald-400 border-emerald-500/20 hover:border-emerald-500/40 text-emerald-400 shadow-emerald-500/5',
     },
     {
+      id: 'partner',
+      name: 'Delivery Partner App',
+      description: 'Rider console with live GPS route navigation, trip pool & earnings ledger.',
+      url: '/delivery.html',
+      icon: <Bike className="w-5 h-5" />,
+      color: 'bg-blue-500 text-blue-400 border-blue-500/20 hover:border-blue-500/40 text-blue-400 shadow-blue-500/5',
+    },
+    {
       id: 'franchise',
-      name: 'Franchise App',
-      description: 'Authorized local branch workspace to edit categories and manage regional team members.',
-      url: '/franchise',
+      name: 'Branch Admin App',
+      description: 'Branch operations, delivery radius geo-mapping & regional team oversight.',
+      url: '/branch-admin.html',
       icon: <Building2 className="w-5 h-5" />,
-      color: 'bg-indigo-500 text-indigo-400 border-indigo-500/20 hover:border-indigo-500/40 text-indigo-400 shadow-indigo-500/5',
+      color: 'bg-amber-500 text-amber-400 border-amber-500/20 hover:border-amber-500/40 text-amber-400 shadow-amber-500/5',
     },
     {
       id: 'admin',
       name: 'Master Admin Console',
-      description: 'Master platform parameters, global edit/delete controls, and supreme founder panel.',
-      url: '/admin',
+      description: 'Master platform parameters, commissions, backups, AI diagnostics & founder panel.',
+      url: '/admin.html',
       icon: <ShieldAlert className="w-5 h-5" />,
       color: 'bg-red-500 text-red-500 border-red-500/20 hover:border-red-500/40 text-red-500 shadow-red-500/5',
     },
@@ -172,9 +182,20 @@ export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'custo
                 })}
               </div>
 
-              <div className="mt-4 pt-3 border-t border-white/5 text-center">
-                <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest">
-                  Connects to the same backend databases &bull; shared sesh
+              <div className="mt-3 pt-3 border-t border-white/10 space-y-2 relative z-10">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    setShowDownloadModal(true);
+                  }}
+                  className="w-full py-2.5 px-3 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition-all active:scale-95"
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-slate-950" />
+                  <span>Download Standalone APKs</span>
+                </button>
+                <p className="text-[8px] font-black text-slate-500 uppercase tracking-widest text-center">
+                  Live Firestore Sync &bull; Phone OTP Sign-Up
                 </p>
               </div>
             </motion.div>
@@ -198,6 +219,12 @@ export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'custo
         <span className="text-white font-black italic">{currentAppDetails.name.replace(' Console', '').replace(' Portal', '').replace(' App', '')}</span>
         <ChevronUp className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`} />
       </motion.button>
+
+      <AppDownloadModal
+        isOpen={showDownloadModal}
+        onClose={() => setShowDownloadModal(false)}
+        defaultAppId={currentApp === 'partner' ? 'delivery' : currentApp === 'franchise' ? 'branch' : currentApp}
+      />
     </div>
   );
 }

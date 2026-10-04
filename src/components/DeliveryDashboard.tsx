@@ -33,6 +33,7 @@ import { LANGUAGES } from '../constants';
 import JoiningLetter from './JoiningLetter';
 import LiveMap from './LiveMap';
 import LanguageSelectorModal from './common/LanguageSelectorModal';
+import RiderPayoutEarningsView from './RiderPayoutEarningsView';
 import { getLocalizedDeliveryContent } from '../utils/localizedContent';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { useTranslation } from '../i18n';
@@ -1084,11 +1085,20 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
   if (activeTab === 'history') {
     return (
       <div className="h-full bg-slate-50 flex flex-col">
-        <header className="px-6 pt-12 pb-6 flex items-center gap-4 bg-white sticky top-0 z-20">
-          <button onClick={() => setActiveTab('home')} className="p-2 bg-slate-100 rounded-xl">
-            <ArrowLeft className="w-5 h-5 text-slate-600" />
+        <header className="px-6 pt-12 pb-6 flex items-center justify-between bg-white sticky top-0 z-20">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setActiveTab('home')} className="p-2 bg-slate-100 rounded-xl">
+              <ArrowLeft className="w-5 h-5 text-slate-600" />
+            </button>
+            <h2 className="text-xl font-black text-slate-900">Trip History</h2>
+          </div>
+          <button 
+            onClick={() => setActiveTab('earnings')}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-black rounded-xl border border-indigo-200 transition-all cursor-pointer"
+          >
+            <Wallet className="w-3.5 h-3.5" />
+            <span>Payouts &amp; Breakdowns</span>
           </button>
-          <h2 className="text-xl font-black text-slate-900">Trip History</h2>
         </header>
 
         <div className="flex-1 overflow-y-auto px-6 py-6 pb-24 space-y-4">
@@ -1099,9 +1109,12 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
                   <p className="text-xs font-black text-indigo-600 uppercase tracking-widest leading-none mb-1">{trip.id}</p>
                   <p className="text-[10px] font-bold text-slate-400 uppercase">{trip.date}</p>
                 </div>
-                <div className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-[8px] font-black uppercase border border-emerald-100">
-                  ₹45 Payout
-                </div>
+                <button 
+                  onClick={() => setActiveTab('earnings')}
+                  className="bg-emerald-50 text-emerald-600 hover:bg-emerald-100 px-3 py-1 rounded-full text-[8px] font-black uppercase border border-emerald-100 cursor-pointer flex items-center gap-1"
+                >
+                  ₹45 Payout • View Breakdown
+                </button>
               </div>
               <div className="space-y-2">
                 <div className="flex items-center gap-3">
@@ -1135,57 +1148,14 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
   if (activeTab === 'earnings') {
     return (
       <div className="h-full bg-slate-50 flex flex-col">
-        <header className="px-6 pt-12 pb-6 flex items-center gap-4 bg-white sticky top-0 z-20">
-          <button onClick={() => setActiveTab('home')} className="p-2 bg-slate-100 rounded-xl">
-            <ArrowLeft className="w-5 h-5 text-slate-600" />
-          </button>
-          <h2 className="text-xl font-black text-slate-900">Earnings</h2>
-        </header>
-
-        <div className="flex-1 overflow-y-auto px-6 py-6 pb-24">
-          <div className="bg-gray-900 rounded-[2.5rem] p-8 text-white mb-8 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-400 rounded-full -mr-16 -mt-16 blur-3xl opacity-20"></div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Total Balance</p>
-            <h3 className="text-4xl font-black mb-6">₹{profile?.earnings || 0}</h3>
-            <div className="flex gap-4">
-              <button 
-                onClick={() => {
-                  if (!profile || profile.pendingPayout === 0) {
-                    alert("No pending payout to withdraw.");
-                    return;
-                  }
-                  alert("Withdrawal request sent to Founder Panel for ₹" + profile.pendingPayout);
-                }}
-                className="flex-1 py-3 bg-yellow-400 text-gray-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-yellow-400/20 active:scale-95 transition-all"
-              >
-                Withdrawal Request
-              </button>
-              <button onClick={() => setActiveTab('history')} className="flex-1 py-3 bg-white/10 text-white rounded-2xl font-black text-xs uppercase tracking-widest backdrop-blur-sm active:bg-white/20 transition-all">History</button>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Recent Transactions</h4>
-            {tripHistory.slice(0, 5).map((trip, i) => (
-              <div key={trip.id} className="bg-white p-5 rounded-[2rem] border border-slate-100 flex items-center justify-between shadow-sm">
-                <div>
-                  <p className="text-xs font-black text-slate-900 mb-0.5">Trip Payout #{trip.id.slice(-6).toUpperCase()}</p>
-                  <p className="text-[10px] font-bold text-slate-400">{trip.date}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-black text-emerald-500">+₹45</p>
-                  <p className="text-[9px] font-bold text-slate-400 font-mono">Credited</p>
-                </div>
-              </div>
-            ))}
-            {tripHistory.length === 0 && (
-              <div className="p-8 text-center bg-white rounded-3xl border border-dashed border-slate-200">
-                <p className="text-[10px] font-black text-slate-300 uppercase">No recent payouts</p>
-              </div>
-            )}
-          </div>
+        <div className="flex-1 overflow-y-auto">
+          <RiderPayoutEarningsView
+            profile={profile}
+            tripHistory={tripHistory}
+            onBack={() => setActiveTab('home')}
+            isAdmin={isAdmin}
+          />
         </div>
-        
         <QuickNav activeTab={activeTab} setActiveTab={setActiveTab} />
       </div>
     );
@@ -1378,7 +1348,32 @@ export default function DeliveryDashboard({ onBack, profileId, isAdmin: propIsAd
               <div className="bg-white rounded-[2.5rem] border-2 border-indigo-100 p-8 shadow-xl shadow-indigo-100 relative overflow-hidden">
                 <div className="flex justify-between items-start mb-6">
                   <div>
-                    <h4 className="text-2xl font-black text-slate-900">New Order</h4>
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <h4 className="text-2xl font-black text-slate-900">Active Order</h4>
+                      <AnimatePresence mode="wait">
+                        <motion.span
+                          key={activeOrder?.status}
+                          initial={{ opacity: 0, x: -8, scale: 0.95 }}
+                          animate={{ opacity: 1, x: 0, scale: 1 }}
+                          exit={{ opacity: 0, x: 8, scale: 0.95 }}
+                          transition={{ duration: 0.22, ease: "easeOut" }}
+                          className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border shadow-xs flex items-center gap-1 ${
+                            activeOrder?.status === 'Delivered'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : ['PickedUp', 'OutForDelivery'].includes(activeOrder?.status || '')
+                                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                : activeOrder?.status === 'ReadyForPickup'
+                                  ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                  : activeOrder?.status === 'Preparing'
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                          }`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping" />
+                          {activeOrder?.status === 'ReadyForPickup' ? 'Ready for Pickup' : activeOrder?.status === 'PickedUp' ? 'In Transit' : activeOrder?.status}
+                        </motion.span>
+                      </AnimatePresence>
+                    </div>
                     <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">{activeOrder?.id}</span>
                   </div>
                   <div className="flex flex-col items-end gap-1.5">

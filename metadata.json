@@ -1,6 +1,6 @@
 {
   "name": "Local Bandi multi services",
-  "description": "Logistics hub and administrative console for Local Bandi multi services, featuring branch operations, vendor approvals, interactive delivery boy routing portals, and live logistics dispatch systems.",
+  "description": "Enterprise ecosystem for Local Bandi Multi Services: 5 standalone apps (Customer, Vendor, Delivery Partner, Branch Admin, Master Admin) with unified secure backend, real-time logistics, fleet tracking, and Master Admin command.",
   "requestFramePermissions": [
     "geolocation",
     "microphone",

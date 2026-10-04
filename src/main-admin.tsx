@@ -5,6 +5,7 @@ import ErrorBoundary from './components/ErrorBoundary.tsx';
 import { FirebaseProvider } from './contexts/FirebaseContext.tsx';
 import { ThemeProvider } from './contexts/ThemeContext.tsx';
 import FloatingAppSwitcher from './components/common/FloatingAppSwitcher.tsx';
+import StandaloneAppGate from './components/auth/StandaloneAppGate.tsx';
 import './index.css';
 
 // Silence Firebase quota-exhausted and assertion failures to prevent app crash
@@ -46,7 +47,14 @@ createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <FirebaseProvider>
         <ThemeProvider>
-          <AdminPortal />
+          <StandaloneAppGate 
+            targetApp="master_admin"
+            appName="Local Bandi Master Admin App"
+            appDescription="Centralized Platform Oversight, Real-Time Monitoring & Security Command"
+            themeColor="red"
+          >
+            <AdminPortal />
+          </StandaloneAppGate>
           <FloatingAppSwitcher currentApp="admin" />
         </ThemeProvider>
       </FirebaseProvider>

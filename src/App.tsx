@@ -34,7 +34,7 @@ import AdminPortal from './components/AdminPortal';
 import DeliveryPartnerApp from './components/DeliveryPartnerApp';
 
 import { referralService } from './lib/referral';
-import { PRODUCTS, SERVICES, REWARDS } from './constants';
+import { PRODUCTS, SERVICES, REWARDS, CATEGORIES } from './constants';
 import { VendorProfile } from './types';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
 import { useTranslation } from './i18n';
@@ -43,6 +43,11 @@ import { resetSandbox } from './lib/firestore-wrapper';
 
 import { useFirebase } from './contexts/FirebaseContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { 
+  calculateDeliveryCharge, 
+  resolveOrderDistanceKm, 
+  getDeliveryBreakdown 
+} from './utils/deliveryCalculator';
 import { AlertCircle, Power, RefreshCw, Users, Truck, ArrowRight, ShieldCheck, ShieldAlert, Bike, Store, CheckCircle2, X } from 'lucide-react';
 import BranchManager from './components/BranchManager';
 import { Branch } from './types';
@@ -53,6 +58,8 @@ import { RealTimeSyncService } from './services/realTimeSyncService';
 import { SafeZone } from './components/common/SafeZone';
 import FloatingAppSwitcher from './components/common/FloatingAppSwitcher';
 import AccessDenied from './components/AccessDenied';
+import LocalBandiAISuiteModal from './components/LocalBandiAISuiteModal';
+import { Sparkles as SparklesIcon } from 'lucide-react';
 
 function AppModeSelector({ onSelect }: { onSelect: (mode: 'customer' | 'partner' | 'rider' | 'admin') => void }) {
   return (
@@ -227,6 +234,14 @@ function AppContent() {
   const { user, userProfile, isAdmin: isFirebaseAdmin, isSuperAdmin: isFirebaseSuperAdmin, isBranchAdmin: isFirebaseBranchAdmin, branchId: userBranchId, loading, login, logout, isLoggingOut } = useFirebase();
   const [passcodeAuthenticated, setPasscodeAuthenticated] = useState(() => {
     return localStorage.getItem('admin_session_active') === 'true';
+  });
+  const [showAISuiteModal, setShowAISuiteModal] = useState(false);
+  const [qrQuickOrderStore, setQrQuickOrderStore] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('store') || (params.get('ref') === 'qr_quick_order' ? 'Featured Local Bandi Store' : null);
+    }
+    return null;
   });
 
   useEffect(() => {
@@ -891,6 +906,61 @@ function AppContent() {
     return [...PRODUCTS, ...SERVICES];
   });
 
+  // Authoritative dynamic categories fetched in real-time from Firestore
+  const [categories, setCategories] = useState<Category[]>(() => {
+    try {
+      const cached = localStorage.getItem('cached_categories');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return CATEGORIES;
+  });
+
+  // Real-time Firestore listener for categories - ensures any updates made by Master Admin reflect immediately
+  useEffect(() => {
+    if (!db) return;
+    const categoriesCol = collection(db, 'categories');
+    const unsub = onSnapshot(categoriesCol, { includeMetadataChanges: true }, (snapshot) => {
+      if (snapshot.empty) {
+        setCategories(CATEGORIES);
+        return;
+      }
+
+      const catMap = new Map<string, Category>();
+      CATEGORIES.forEach(c => { if (c && c.id) catMap.set(c.id, c); });
+
+      snapshot.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data.deleted === true || data.status === 'inactive' || data.status === 'deleted') {
+          catMap.delete(docSnap.id);
+          return;
+        }
+
+        catMap.set(docSnap.id, {
+          id: docSnap.id,
+          name: data.name || docSnap.id,
+          icon: data.icon || 'ShoppingBag',
+          color: data.color || 'bg-emerald-50',
+          image: data.image || data.img || '',
+          description: data.description || '',
+          ...data
+        } as Category);
+      });
+
+      const updatedList = Array.from(catMap.values());
+      setCategories(updatedList);
+      try {
+        localStorage.setItem('cached_categories', JSON.stringify(updatedList));
+      } catch {}
+    }, (err) => {
+      console.warn("Categories real-time sync warning:", err);
+    });
+
+    return () => unsub();
+  }, []);
+
   const [approvedVendorIds, setApprovedVendorIds] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('cached_approved_vendors');
@@ -990,9 +1060,9 @@ function AppContent() {
 
     let throttleTimer: any = null;
 
-    // Fetch cloud inventory for BOTH products and services across categories
+    // Fetch cloud inventory for BOTH products and services across categories with instant metadata changes
     const productsQ = query(collection(db, 'products'), limit(500));
-    const unsub = onSnapshot(productsQ, (snap) => {
+    const unsub = onSnapshot(productsQ, { includeMetadataChanges: true }, (snap) => {
       if (throttleTimer) clearTimeout(throttleTimer);
 
       throttleTimer = setTimeout(() => {
@@ -1010,23 +1080,23 @@ function AppContent() {
               itemVendorId === 'central' ||
               itemVendorId === 'Central' ||
               itemVendorId === 'Local Bandi' ||
-              itemVendorId === 'default_admin';
+              itemVendorId === 'default_admin' ||
+              (item as any).updatedBy === 'admin' ||
+              (item as any).updatedBy === 'master_admin';
 
             if (isAdminItem) {
               // Master Admin / Central products are always visible unless explicitly marked unapproved or pending
-              return (item as any).isApproved !== false && (item as any).status !== 'pending_approval' && (item as any).status !== 'rejected';
+              return (item as any).isApproved !== false && (item as any).status !== 'rejected';
             }
 
             // Vendor product must have explicit approval or belong to an approved vendor
             const isVendorApproved = approvedVendorIds.has(itemVendorId) || 
               (item as any).isApproved === true || 
               (item as any).status === 'Approved' || 
-              (item as any).status === 'approved';
+              (item as any).status === 'approved' ||
+              (item as any).status === 'active';
 
             const isItemDisapproved = (item as any).isApproved === false || 
-              (item as any).status === 'Pending' || 
-              (item as any).status === 'pending' || 
-              (item as any).status === 'pending_approval' ||
               (item as any).status === 'rejected' ||
               (item as any).status === 'banned';
 
@@ -1056,16 +1126,16 @@ function AppContent() {
             }
           });
         } else {
-          // 2. Real database items saved in products collection (Authoritative)
+          // 2. Real database items saved in products collection (Authoritative from Firestore)
           cloudItems.forEach(item => {
             if (matchesBranch(item)) {
               merged.set(item.id, item);
             }
           });
 
-          // 3. Keep essential non-conflicting default services available
-          [...PRODUCTS, ...SERVICES].forEach(item => {
-            if (!merged.has(item.id) && matchesBranch(item)) {
+          // 3. Keep essential non-conflicting default services (plumber, electrician) available
+          SERVICES.forEach(item => {
+            if (!merged.has(item.id) && matchesBranch(item) && (item as any).deleted !== true) {
               merged.set(item.id, item);
             }
           });
@@ -1097,9 +1167,19 @@ function AppContent() {
       handleFirestoreError(err, OperationType.LIST, 'products');
     });
 
+    const handleAdminCatalogUpdate = () => {
+      try {
+        localStorage.removeItem('cached_local_inventory');
+      } catch {}
+    };
+    window.addEventListener('catalog_admin_updated', handleAdminCatalogUpdate);
+    window.addEventListener('category_updated', handleAdminCatalogUpdate);
+
     return () => {
       if (throttleTimer) clearTimeout(throttleTimer);
       unsub();
+      window.removeEventListener('catalog_admin_updated', handleAdminCatalogUpdate);
+      window.removeEventListener('category_updated', handleAdminCatalogUpdate);
     };
   }, [currentBranchId, approvedVendorIds]);
 
@@ -1194,27 +1274,50 @@ function AppContent() {
   };
 
 
-  const handleReorder = async (orderId: string) => {
+  const handleReorder = async (orderId: string, directItems?: any[]) => {
     setEditingOrderId(null);
-    // Try to find the order in firestore logic (fetching one-off is fine for reorder trigger)
     try {
-      const { doc, getDoc } = await import('firebase/firestore');
-      const orderDoc = await getDoc(doc(db, 'orders', orderId));
-      if (orderDoc.exists()) {
-        const orderData = orderDoc.data();
-        if (orderData.orderItems) {
-          orderData.orderItems.forEach((item: CartItem) => {
-            const currentItem = localInventory.find(i => i.id === item.id);
-            if (currentItem) {
-              addToCart(currentItem as Product, item.quantity);
-            } else {
-              addToCart(item as Product, item.quantity);
-            }
-          });
+      let itemsToAdd: any[] = Array.isArray(directItems) && directItems.length > 0 ? directItems : [];
+
+      if (itemsToAdd.length === 0) {
+        // Try to find the order in firestore logic (fetching one-off is fine for reorder trigger)
+        const { doc, getDoc } = await import('firebase/firestore');
+        const orderDoc = await getDoc(doc(db, 'orders', orderId));
+        if (orderDoc.exists()) {
+          const orderData = orderDoc.data();
+          if (orderData.orderItems && Array.isArray(orderData.orderItems)) {
+            itemsToAdd = orderData.orderItems;
+          } else if (orderData.items && Array.isArray(orderData.items)) {
+            itemsToAdd = orderData.items;
+          }
         }
       }
+
+      // Offline / cached fallback
+      if (itemsToAdd.length === 0) {
+        try {
+          const cached = JSON.parse(localStorage.getItem('cached_user_orders') || '[]');
+          const found = cached.find((o: any) => o.id === orderId);
+          if (found && found.orderItems && Array.isArray(found.orderItems)) {
+            itemsToAdd = found.orderItems;
+          } else if (found && found.items && Array.isArray(found.items)) {
+            itemsToAdd = found.items;
+          }
+        } catch {}
+      }
+
+      if (itemsToAdd.length > 0) {
+        itemsToAdd.forEach((item: any) => {
+          const currentItem = localInventory.find(i => i.id === item.id);
+          if (currentItem) {
+            addToCart(currentItem as Product, item.quantity || 1);
+          } else if (item && typeof item === 'object' && item.name && item.price) {
+            addToCart(item as Product, item.quantity || 1);
+          }
+        });
+      }
     } catch (e) {
-      console.error("Failed to reorder from Firestore", e);
+      console.error("Failed to reorder items into cart:", e);
     }
     navigateTo('cart');
   };
@@ -1287,52 +1390,11 @@ function AppContent() {
     const rewardCost = selectedReward ? selectedReward.rewardPrice : 0;
     const tax = 0;
     
-    const getAppDeliveryFee = (itemsList: any[], subtotalVal: number) => {
-      if (itemsList.length === 0) return 0;
-      const isMilkOrWaterItem = (item: any) => {
-        const name = (item.name || '').toLowerCase();
-        const category = (item.category || '').toLowerCase();
-        return name.includes('milk') || name.includes('water') || category === 'water' || category === 'dairy' || category === 'milk';
-      };
-      const milkWaterItems = itemsList.filter(isMilkOrWaterItem);
-      const otherItems = itemsList.filter(item => !isMilkOrWaterItem(item));
-      
-      let baseFee = 0;
-      if (otherItems.length > 0) {
-        if (subtotalVal >= 469) {
-          baseFee = 0;
-        } else {
-          let maxFee = 0;
-          otherItems.forEach(item => {
-            let itemFee = 15;
-            const category = (item.category || '').toLowerCase();
-            const name = (item.name || '').toLowerCase();
-            if (category === 'groceries' || category === 'veg') {
-              itemFee = 10;
-            } else if (category === 'meat') {
-              itemFee = 15;
-            } else if (category === 'food') {
-              const isTiffin = name.includes('idly') || name.includes('dosa') || name.includes('wada') || name.includes('chapati') || name.includes('tiffin');
-              itemFee = isTiffin ? 15 : 20;
-            } else if (['services', 'travel', 'marriage', 'events', 'construction', 'mechanics', 'maids'].includes(category)) {
-              itemFee = 0;
-            }
-            if (itemFee > maxFee) maxFee = itemFee;
-          });
-          baseFee = maxFee;
-        }
-      }
-      let milkWaterFee = 0;
-      if (milkWaterItems.length > 0) {
-        const hasSingleMilkWater = milkWaterItems.some(item => !item.isMonthlySubscription);
-        if (hasSingleMilkWater) {
-          milkWaterFee = 5;
-        }
-      }
-      return baseFee + milkWaterFee;
-    };
-
-    const deliveryFee = getAppDeliveryFee(cart, subtotal);
+    const userLocationStr = location === 'Select Location' ? 'Khammam Main Center' : location;
+    const orderDistanceKm = resolveOrderDistanceKm(userLocationStr);
+    const deliveryBreakdown = getDeliveryBreakdown(orderDistanceKm);
+    // Official delivery charge: Flat ₹25 up to 3 km, ₹25 + ₹10/km for each additional km
+    const deliveryFee = cart.length === 0 ? 0 : calculateDeliveryCharge(orderDistanceKm);
     const finalTotal = subtotal + tax + deliveryFee + rewardCost + tipAmount;
 
     const isMonthlyOrder = cart.some(i => i.isMonthlySubscription);
@@ -1395,6 +1457,11 @@ function AppContent() {
       orderItems,
       rewardItem: selectedReward || null,
       total: finalTotal,
+      subtotal: subtotal,
+      deliveryFee: deliveryFee,
+      distanceKm: orderDistanceKm,
+      deliveryDistanceKm: orderDistanceKm,
+      deliveryBreakdown: deliveryBreakdown.breakdownText,
       tipAmount: tipAmount,
       vendorId: vendorId,
       vendorName: vendorName,
@@ -1403,21 +1470,34 @@ function AppContent() {
       pickupLocation: pickupLocation,
       branchId: currentBranchId, // Essential for data isolation
       paymentMethod: paymentMethod,
-      paymentStatus: paymentMethod === 'cod' ? 'Pending (COD)' : 'Paid (UPI)',
+      paymentStatus: (paymentMethod === 'cod' || paymentMethod === 'cash') ? 'Pending (COD)' : 'Paid (UPI)',
+      deliveryOtp: (paymentMethod === 'cod' || paymentMethod === 'cash') ? Math.floor(1000 + Math.random() * 9000).toString() : null,
+      requiresDeliveryOtp: (paymentMethod === 'cod' || paymentMethod === 'cash'),
+      pickupOtp: Math.floor(1000 + Math.random() * 9000).toString(),
+      otpVerified: false,
       isMonthlySubscription: isMonthlyOrder,
       remainingDays: isMonthlyOrder ? 30 : 0,
       completedDates: [],
       updatedAt: serverTimestamp(),
-      adminAccepted: false
+      adminAccepted: false,
+      statusHistory: [
+        {
+          status: 'accepted',
+          timestamp: new Date().toISOString(),
+          updatedBy: 'Local Bandi System',
+          role: 'system',
+          notes: 'Order confirmed and ready for merchant preparation'
+        }
+      ]
     };
 
     if (!editingOrderId) {
-      orderRecord.status = 'Pending';
+      orderRecord.status = 'accepted';
       orderRecord.deliveryPartnerId = null;
       orderRecord.createdAt = serverTimestamp();
       orderRecord.timestamp = new Date().toISOString();
     } else {
-      orderRecord.status = 'Pending'; // Return to pending after editing
+      orderRecord.status = 'accepted'; // Return to accepted after editing
       orderRecord.isEdited = true;
       orderRecord.lastEditAt = serverTimestamp();
     }
@@ -1624,6 +1704,7 @@ function AppContent() {
         return <SafeZone name="Home"><Home 
           location={location}
           language={selectedLanguage}
+          categories={categories}
           onCategoryClick={viewCategory}
           onProductClick={viewItem}
           cartCount={cart.reduce((acc, i) => acc + i.quantity, 0)}
@@ -1656,6 +1737,7 @@ function AppContent() {
       case 'category':
         return <SafeZone name="Category Listing"><CategoryListing 
           category={selectedCategory!}
+          categories={categories}
           language={selectedLanguage}
           onBack={() => navigateTo('home')}
           onProductClick={viewItem}
@@ -1897,52 +1979,10 @@ function AppContent() {
         const rewardCost = selectedReward ? selectedReward.rewardPrice : 0;
         const tax = 0;
         
-        const getPaymentDeliveryFee = (itemsList: any[], subtotalVal: number) => {
-          if (itemsList.length === 0) return 0;
-          const isMilkOrWaterItem = (item: any) => {
-            const name = (item.name || '').toLowerCase();
-            const category = (item.category || '').toLowerCase();
-            return name.includes('milk') || name.includes('water') || category === 'water' || category === 'dairy' || category === 'milk';
-          };
-          const milkWaterItems = itemsList.filter(isMilkOrWaterItem);
-          const otherItems = itemsList.filter(item => !isMilkOrWaterItem(item));
-          
-          let baseFee = 0;
-          if (otherItems.length > 0) {
-            if (subtotalVal >= 469) {
-              baseFee = 0;
-            } else {
-              let maxFee = 0;
-              otherItems.forEach(item => {
-                let itemFee = 15;
-                const category = (item.category || '').toLowerCase();
-                const name = (item.name || '').toLowerCase();
-                if (category === 'groceries' || category === 'veg') {
-                  itemFee = 10;
-                } else if (category === 'meat') {
-                  itemFee = 10;
-                } else if (category === 'food') {
-                  const isTiffin = name.includes('idly') || name.includes('dosa') || name.includes('wada') || name.includes('chapati') || name.includes('tiffin');
-                  itemFee = isTiffin ? 15 : 20;
-                } else if (['services', 'travel', 'marriage', 'events', 'construction', 'mechanics', 'maids'].includes(category)) {
-                  itemFee = 0;
-                }
-                if (itemFee > maxFee) maxFee = itemFee;
-              });
-              baseFee = maxFee;
-            }
-          }
-          let milkWaterFee = 0;
-          if (milkWaterItems.length > 0) {
-            const hasSingleMilkWater = milkWaterItems.some(item => !item.isMonthlySubscription);
-            if (hasSingleMilkWater) {
-              milkWaterFee = 5;
-            }
-          }
-          return baseFee + milkWaterFee;
-        };
-
-        const deliveryFee = getPaymentDeliveryFee(cart, subtotal);
+        const userLocationStr = location === 'Select Location' ? 'Khammam Main Center' : location;
+        const paymentDistanceKm = resolveOrderDistanceKm(userLocationStr);
+        // Official delivery fee: Flat ₹25 up to 3 km, ₹25 + ₹10/km for each additional km
+        const deliveryFee = cart.length === 0 ? 0 : calculateDeliveryCharge(paymentDistanceKm);
         let displayTotal = subtotal + tax + deliveryFee + rewardCost;
         let onCompleteCallback: (method?: string, tip?: number) => void | Promise<void> = (method, tip) => completeOrder(method || 'upi', tip || 0);
         let onBackCallback: () => void | Promise<void> = () => navigateTo('cart');
@@ -1966,6 +2006,8 @@ function AppContent() {
           onBack={onBackCallback}
           onComplete={onCompleteCallback}
           amount={displayTotal}
+          deliveryFee={deliveryFee}
+          distanceKm={paymentDistanceKm}
           userProfile={userProfile}
           currentLocation={location}
         /></SafeZone>;
@@ -2199,6 +2241,59 @@ function AppContent() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Real-time QR Quick Order & Menu Banner */}
+      <AnimatePresence>
+        {qrQuickOrderStore && (
+          <motion.div
+            initial={{ opacity: 0, y: -40, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -30, scale: 0.95 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            className="fixed top-4 left-4 right-4 max-w-md mx-auto z-[10003] bg-amber-400 text-slate-950 p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border-2 border-amber-300"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-slate-950 text-amber-400 flex items-center justify-center font-black shrink-0">
+                <Store className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[9px] font-black uppercase tracking-widest bg-slate-950 text-amber-400 px-2 py-0.5 rounded">
+                  Direct Store Menu Scanned
+                </span>
+                <h4 className="text-xs font-black uppercase tracking-tight text-slate-950 mt-1">
+                  Ordering from {qrQuickOrderStore}
+                </h4>
+              </div>
+            </div>
+            <button
+              onClick={() => setQrQuickOrderStore(null)}
+              className="text-slate-950 hover:text-slate-800 p-1.5 rounded-lg hover:bg-black/10 cursor-pointer transition"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating AI Studio & Assistant Hub Launcher */}
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => setShowAISuiteModal(true)}
+        className="fixed bottom-20 right-4 z-[9999] px-3.5 py-2.5 rounded-full bg-gradient-to-r from-purple-600 via-indigo-600 to-amber-500 text-white font-black text-[10px] uppercase tracking-wider shadow-2xl shadow-purple-600/40 flex items-center gap-2 border border-white/20 cursor-pointer backdrop-blur-md"
+        title="Open Local Bandi AI Studio & Multimodal Suite"
+      >
+        <SparklesIcon className="w-4 h-4 text-amber-300 animate-pulse" />
+        <span className="hidden sm:inline">AI Studio & Assistant</span>
+        <span className="sm:hidden">AI Hub</span>
+      </motion.button>
+
+      {/* Local Bandi AI Suite Modal */}
+      <LocalBandiAISuiteModal
+        isOpen={showAISuiteModal}
+        onClose={() => setShowAISuiteModal(false)}
+      />
     </>
   );
 }

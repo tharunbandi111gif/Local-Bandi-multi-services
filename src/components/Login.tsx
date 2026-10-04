@@ -10,6 +10,7 @@ import { useFirebase, BOOTSTRAP_MASTER_ADMINS } from '../contexts/FirebaseContex
 import { auth, db } from '../lib/firebase';
 import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { integrationService } from '../services/integrationService';
+import AppDownloadModal from './AppDownloadModal';
 
 export interface SmsRuntimeValidationResult {
   isValid: boolean;
@@ -143,6 +144,7 @@ export default function Login({ onLogin }: LoginProps) {
   const [showRecovery, setShowRecovery] = useState(false);
   const [recoveryPhone, setRecoveryPhone] = useState('');
   const [recoveryStep, setRecoveryStep] = useState<'phone' | 'success'>('phone');
+  const [showAppDownload, setShowAppDownload] = useState(false);
   
   const [isSending, setIsSending] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -232,14 +234,13 @@ export default function Login({ onLogin }: LoginProps) {
       // 1. Diagnostic validation: Check runtime variables before dispatch
       const envValidation = await validateSmsEnvironmentConfig();
 
-      // 2. Log exact request body structure just before the fetch call
-      const requestBodyStructure = {
+      // 2. Log request structure securely without exposing secret OTP
+      console.log("📤 [1. Outgoing Request Body Structure to /api/send-otp]:", {
         phoneNumber: cleanPhone,
-        code: generatedCode
-      };
-      console.log("📤 [1. Outgoing Request Body Structure to /api/send-otp]:", requestBodyStructure);
+        code: "••••"
+      });
 
-      // 3. Log exact formatted 'serv_imp' route parameters prepared for MarketBuzzer SMS gateway
+      // 3. Log gateway route parameters with masked OTP
       const servImpRouteParameters = {
         route: "serv_imp",
         key: "********",
@@ -247,26 +248,23 @@ export default function Login({ onLogin }: LoginProps) {
         account_type: "serv_imp",
         sender: "LBANDI",
         mobile: cleanPhone,
-        message: `Your Local Bandi OTP verification code is ${generatedCode}. Valid for ${otpExpiry} minutes. Do not share this OTP. - LBANDI`,
+        message: `Your Local Bandi OTP verification code is ••••. Valid for ${otpExpiry} minutes. Do not share this OTP. - LBANDI`,
         entity_id: "1001457098451462862",
         dlt_entity_id: "1001457098451462862",
         dlt_pe_id: "1001457098451462862",
         entity_name: "local bandi multi services",
         match_template: envValidation.variables.SMS_MATCH_TEMPLATE.value,
         template_id: envValidation.variables.SMS_TEMPLATE_ID.value,
-        otp: generatedCode,
         timestamp
       };
       console.log("🛠️ [2. Formatted 'serv_imp' Route Parameters for MarketBuzzer Gateway]:", servImpRouteParameters);
 
-      // Write log to firebase audit_logs
+      // Write log to firebase audit_logs (without exposing plaintext OTP)
       try {
         await addDoc(collection(db, 'audit_logs'), {
           type: 'sms_otp',
           phoneNumber: cleanPhone,
-          code: generatedCode,
-          message: `[Lokal Bharath OTP] Access Code: ${generatedCode}. Verify within ${otpExpiry} minutes.`,
-          status: 'DELIVERED',
+          status: 'DISPATCHED',
           createdAt: serverTimestamp()
         });
       } catch (dbErr) {
@@ -1063,6 +1061,15 @@ export default function Login({ onLogin }: LoginProps) {
           <ShieldCheck className="w-4 h-4" />
           Apply for Franchise
         </button>
+
+        <button 
+          type="button"
+          onClick={() => setShowAppDownload(true)}
+          className="w-full mt-3 py-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-center gap-2.5 font-black text-[10px] uppercase tracking-widest text-amber-800 hover:bg-amber-100 active:scale-95 transition-all cursor-pointer shadow-xs"
+        >
+          <Smartphone className="w-4 h-4 text-amber-600" />
+          <span>📱 Download Mobile App (APK / PWA)</span>
+        </button>
       </div>
 
       <p className="text-center text-xs text-gray-400 mt-6">
@@ -1147,6 +1154,12 @@ export default function Login({ onLogin }: LoginProps) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AppDownloadModal
+        isOpen={showAppDownload}
+        onClose={() => setShowAppDownload(false)}
+        defaultAppId="customer"
+      />
     </div>
   );
 }

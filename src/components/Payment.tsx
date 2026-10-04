@@ -9,11 +9,13 @@ interface PaymentProps {
   onBack: () => void | Promise<void>;
   onComplete: (method: string, tipAmount?: number) => void | Promise<void>;
   amount: number;
+  deliveryFee?: number;
+  distanceKm?: number;
   userProfile?: any;
   currentLocation?: string;
 }
 
-export default function Payment({ onBack, onComplete, amount, userProfile, currentLocation }: PaymentProps) {
+export default function Payment({ onBack, onComplete, amount, deliveryFee, distanceKm, userProfile, currentLocation }: PaymentProps) {
   const [step, setStep] = useState<'address' | 'payment'>(() => {
     const pending = (window as any).pendingLocalPayment;
     if (pending && (pending.type === 'hospital_op' || pending.type === 'marriage_sub')) {
@@ -163,6 +165,18 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
         {
           onPaymentVerify: async (orderId, details) => {
             console.log("💳 [Cashfree Webhook Verified Callback]:", orderId, details);
+
+            // Server-side authoritative verification with duplicate payment protection
+            try {
+              const verifyRes = await cashfree.verifyPaymentOnServer(
+                orderId,
+                details?.paymentId || details?.cfPaymentId
+              );
+              console.log("💳 [Cashfree Server-Side Verification Result]:", verifyRes);
+            } catch (serverErr) {
+              console.warn("Cashfree server verification non-blocking warning:", serverErr);
+            }
+
             try {
               await handleCashfreePaymentSuccessWebhook({
                 orderId: orderId,
@@ -511,13 +525,30 @@ export default function Payment({ onBack, onComplete, amount, userProfile, curre
                       <span>Total Payable</span>
                       <span className="text-slate-905 text-sm font-black">₹{finalAmountIncludingTip}</span>
                    </div>
+                   {distanceKm !== undefined && (
+                     <div className="flex justify-between items-center text-[11px] font-bold text-slate-600">
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-amber-600" />
+                          Delivery Distance
+                        </span>
+                        <span className="text-slate-900 font-mono font-bold">{distanceKm} km (Locked)</span>
+                     </div>
+                   )}
+                   {deliveryFee !== undefined && (
+                     <div className="flex justify-between items-center text-[11px] font-bold text-slate-600">
+                        <span>Delivery Charge</span>
+                        <span className="text-amber-800 font-mono font-bold">
+                          {deliveryFee === 0 ? <span className="text-emerald-600">FREE</span> : `₹${deliveryFee}`}
+                        </span>
+                     </div>
+                   )}
                    <div className="flex justify-between items-center text-[10px] font-bold text-gray-400 italic">
                       <span>App Charges</span>
                       <span className="text-emerald-600 font-black">INCLUDED</span>
                    </div>
                    <div className="flex justify-between items-center text-[10px] font-bold text-gray-400 italic">
-                      <span>Delivery Information</span>
-                      <span className="text-gray-900 underline">Standard</span>
+                      <span>Pricing Policy</span>
+                      <span className="text-amber-700 font-semibold">₹25 up to 3km, +₹10/km above</span>
                    </div>
                 </div>
               </div>

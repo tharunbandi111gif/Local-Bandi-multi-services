@@ -109,6 +109,7 @@ import LiveMap from './LiveMap';
 import PartnerOnboarding from './PartnerOnboarding';
 import JoiningLetter from './JoiningLetter';
 import { MarketingQuizModal, MarketingQuizFloatingBanner } from './MarketingQuizModal';
+import StoreMapModal from './StoreMapModal';
 import { downloadCSV } from '../lib/exportUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Product, Screen, Service, LanguageCode, VendorProfile, DeliveryPartnerProfile, SupportChat, SupportMessage, MarriageProfile, PlatformSettings, PartnerApplicationType } from '../types';
@@ -146,6 +147,12 @@ import { ScratchCardModal } from './ScratchCardModal';
 import { FlashDropModal } from './FlashDropModal';
 import { AppSpeedSecurityBadge } from './AppSpeedSecurityBadge';
 import { CommunityPoolBanner } from './CommunityPoolBanner';
+import { SearchHistoryDropdown } from './SearchHistoryDropdown';
+import { ScrollToTopButton } from './ScrollToTopButton';
+import { PriceDropToast } from './PriceDropToast';
+import { getSearchHistory, addSearchHistory, removeSearchHistoryItem, clearSearchHistory } from '../utils/searchHistory';
+import { checkAndNotifyPriceDrops } from '../utils/priceTracker';
+import { SearchHistoryItem } from '../types';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { db, auth, handleFirestoreError, OperationType, setupRecaptcha } from '../lib/firebase';
 import { User as AuthUser } from 'firebase/auth';
@@ -175,6 +182,7 @@ interface HomeProps {
   onLocationChange?: (loc: string) => void;
   currentBranch?: any;
   branches?: any[];
+  categories?: Category[];
 }
 
 const IconMap: Record<string, any> = {
@@ -305,10 +313,12 @@ export function Home({
   setShowCustomerCare,
   currentBranchId = 'khammam_main',
   currentBranch,
-  branches = []
+  branches = [],
+  categories: propCategories
 }: HomeProps) {
   const { language: activeLang, setLanguage: setGlobalLanguage, t: translateKey } = useTranslation();
   const language = activeLang || propLanguage || 'en-IN';
+  const homeScrollRef = useRef<HTMLDivElement>(null);
   const [showLangModal, setShowLangModal] = useState(false);
   const { phoneLogin, logout } = useFirebase();
   const [activeBanner, setActiveBanner] = useState(0);
@@ -330,6 +340,8 @@ export function Home({
   const [showLocationSelector, setShowLocationSelector] = useState(false);
   const [timeLeft, setTimeLeft] = useState(3600); // 1 hour for deals
   const [deals, setDeals] = useState<any[]>([]);
+  const [selectedMapStore, setSelectedMapStore] = useState<any | null>(null);
+  const [selectedStoreCategoryFilter, setSelectedStoreCategoryFilter] = useState<string>('all');
 
   const loadFromStorage = (key: string, defaultValue: any) => {
     const saved = localStorage.getItem(key);
@@ -514,7 +526,33 @@ export function Home({
   const [isListening, setIsListening] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [hasDeliveryApp, setHasDeliveryApp] = useState(false);
-  const [recentSearches, setRecentSearches] = useState<string[]>(() => loadFromStorage('recentSearches', []));
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>(() => getSearchHistory());
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => getSearchHistory().map(i => i.query));
+
+  useEffect(() => {
+    const handleHistoryUpdate = (e: any) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setSearchHistory(e.detail);
+        setRecentSearches(e.detail.map((i: any) => i.query));
+      } else {
+        const hist = getSearchHistory();
+        setSearchHistory(hist);
+        setRecentSearches(hist.map(i => i.query));
+      }
+    };
+    window.addEventListener('search_history_updated', handleHistoryUpdate);
+    return () => window.removeEventListener('search_history_updated', handleHistoryUpdate);
+  }, []);
+
+  // Monitor inventory for price drops and trigger notifications for active subscribers
+  useEffect(() => {
+    if (localInventory && localInventory.length > 0) {
+      const validProducts = localInventory.filter(item => typeof (item as any).price === 'number') as Product[];
+      if (validProducts.length > 0) {
+        checkAndNotifyPriceDrops(validProducts);
+      }
+    }
+  }, [localInventory]);
   const [supportInfo, setSupportInfo] = useState(() => {
     const saved = localStorage.getItem('supportInfo');
     return saved ? JSON.parse(saved) : { 
@@ -556,19 +594,51 @@ export function Home({
     return unsubSelf;
   }, [user]);
 
-  const saveRecentSearch = (term: string) => {
-    if (!term.trim()) return;
-    setRecentSearches(prev => {
-      const filtered = prev.filter(s => s !== term);
-      const updated = [term, ...filtered].slice(0, 5);
-      localStorage.setItem('recentSearches', JSON.stringify(updated));
-      return updated;
+  // Real-time Active Customer Order Tracker Subscription
+  const [activeCustomerOrder, setActiveCustomerOrder] = useState<any | null>(null);
+
+  useEffect(() => {
+    const rawPhone = userProfile?.phone || user?.phoneNumber || localStorage.getItem('user_phone') || '';
+    const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+    if (!user && !cleanPhone) {
+      setActiveCustomerOrder(null);
+      return;
+    }
+
+    const ordersRef = collection(db, 'orders');
+    const qOrders = user
+      ? query(ordersRef, where('userId', '==', user.uid))
+      : query(ordersRef, where('customerPhone', '==', cleanPhone));
+
+    const unsub = onSnapshot(qOrders, (snapshot) => {
+      const activeList = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter((ord: any) => ['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery', 'In Transit', 'Editing'].includes(ord.status))
+        .sort((a: any, b: any) => {
+          const timeA = a.createdAt?.toDate?.()?.getTime() || (typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 0);
+          const timeB = b.createdAt?.toDate?.()?.getTime() || (typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 0);
+          return timeB - timeA;
+        });
+      setActiveCustomerOrder(activeList[0] || null);
+    }, (err) => {
+      console.warn("Home active order tracking listener:", err);
     });
+
+    return () => unsub();
+  }, [user, userProfile]);
+
+  const saveRecentSearch = (term: string, type: 'store' | 'product' | 'category' | 'general' = 'general', targetName?: string) => {
+    if (!term.trim()) return;
+    const updated = addSearchHistory(term, type, targetName);
+    setSearchHistory(updated);
+    setRecentSearches(updated.map(i => i.query));
   };
 
   const handleSearchSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    saveRecentSearch(searchQuery);
+    if (searchQuery.trim()) {
+      saveRecentSearch(searchQuery.trim(), 'general');
+    }
     setIsFocused(false);
   };
 
@@ -1241,7 +1311,16 @@ export function Home({
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [categories, setCategories] = useState<Category[]>(CATEGORIES);
+  const [categories, setCategories] = useState<Category[]>(() => {
+    if (propCategories && propCategories.length > 0) return propCategories;
+    return CATEGORIES;
+  });
+
+  useEffect(() => {
+    if (propCategories && propCategories.length > 0) {
+      setCategories(propCategories);
+    }
+  }, [propCategories]);
   const [activeTrip, setActiveTrip] = useState<any>(null);
   const [showTripDetails, setShowTripDetails] = useState(false);
   const [vendors, setVendors] = useState<VendorProfile[]>([]);
@@ -1286,7 +1365,7 @@ export function Home({
     let unsubCategories: (() => void) | undefined;
     try {
       const categoriesCol = collection(db, 'categories');
-      unsubCategories = onSnapshot(categoriesCol, (categoriesSnapshot) => {
+      unsubCategories = onSnapshot(categoriesCol, { includeMetadataChanges: true }, (categoriesSnapshot) => {
         const categoryMap = new Map<string, Category>();
         
         if (categoriesSnapshot.empty) {
@@ -1732,20 +1811,7 @@ export function Home({
     // Removed localStorage.setItem('lokal_users') to prevent QuotaExceededError as database grows
   }, [users]);
 
-  useEffect(() => {
-    // Removed localStorage.setItem('local_marriage_profiles') to prevent QuotaExceededError
-    window.dispatchEvent(new CustomEvent('local_marriage_profiles_updated', { detail: allMarriageProfiles }));
-  }, [allMarriageProfiles]);
 
-  useEffect(() => {
-    const handleMarriageSync = (e: any) => {
-      if (e.type === 'local_marriage_profiles_updated') {
-        setAllMarriageProfiles(e.detail);
-      }
-    };
-    window.addEventListener('local_marriage_profiles_updated' as any, handleMarriageSync);
-    return () => window.removeEventListener('local_marriage_profiles_updated' as any, handleMarriageSync);
-  }, []);
 
   useEffect(() => {
     try {
@@ -2691,15 +2757,7 @@ export function Home({
     }
   }, [adminSaveStatus]);
 
-  useEffect(() => {
-    // Removed localStorage.setItem('vendors') to prevent QuotaExceededError
-    window.dispatchEvent(new Event('storage'));
-  }, [vendors]);
 
-  useEffect(() => {
-    // Removed localStorage.setItem('deliveryPartners') to prevent QuotaExceededError
-    window.dispatchEvent(new Event('storage'));
-  }, [deliveryPartners]);
 
   useEffect(() => {
     // Removed localStorage.setItem('pendingApprovals') to prevent QuotaExceededError
@@ -7712,10 +7770,40 @@ export function Home({
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {vendors.map((vendor) => {
+                      {/* Admin Store Map & Pin Master Control Banner */}
+                      <div className="bg-gradient-to-r from-emerald-950/80 via-slate-900 to-indigo-950/80 p-4 rounded-3xl border border-emerald-500/30 flex flex-wrap items-center justify-between gap-3 text-white shadow-md">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-bold">
+                            <MapPin className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-black uppercase tracking-wider text-emerald-300 flex items-center gap-2">
+                              Store Map Pin & GPS Precision Control
+                              <span className="text-[8px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-mono">
+                                Admin Authority
+                              </span>
+                            </h4>
+                            <p className="text-[10px] text-slate-300 font-medium">
+                              All store cards now support interactive 'View on Map' pins. Click any pin to verify, adjust, or save exact store coordinates.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {vendors.map((vendor, index) => {
                         if (!vendor) return null;
                         return (
-                          <div key={vendor.id} className={`p-5 rounded-[2.5rem] border shadow-sm ${vendor.status === 'Terminated' ? 'bg-rose-50 border-rose-100 opacity-80' : 'bg-white border-gray-100'}`}>
+                          <motion.div 
+                            key={vendor.id} 
+                            initial={{ opacity: 0, y: 15 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ 
+                              duration: 0.35, 
+                              delay: Math.min(index * 0.04, 0.45), 
+                              ease: 'easeOut' 
+                            }}
+                            className={`p-5 rounded-[2.5rem] border shadow-sm ${vendor.status === 'Terminated' ? 'bg-rose-50 border-rose-100 opacity-80' : 'bg-white border-gray-100'}`}
+                          >
                             <div className="flex items-center justify-between mb-4">
                               <div className="flex items-center gap-3">
                                 <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black overflow-hidden ${vendor.status === 'Terminated' ? 'bg-rose-200 text-rose-600' : 'bg-yellow-400 text-gray-900'}`}>
@@ -7791,6 +7879,17 @@ export function Home({
                                    Settle â‚¹{vendor.pendingPayout}
                                  </button>
                                )}
+
+                               {/* 'View on Map' button for Admin fine-tuning */}
+                               <button
+                                 onClick={() => setSelectedMapStore(vendor)}
+                                 className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl hover:bg-emerald-600 hover:text-white transition-all shadow-sm flex items-center gap-1.5"
+                                 title="View on Map (Fine-tune GPS pin coordinates)"
+                               >
+                                 <MapPin className="w-4 h-4" />
+                                 <span className="text-[9px] font-black uppercase tracking-wider hidden sm:inline">View on Map</span>
+                               </button>
+
                                <div className="flex gap-1.5 shrink-0">
                                  {vendor.documentPhoto && (
                                    <button 
@@ -7846,7 +7945,7 @@ export function Home({
                                  </button>
                                </div>
                             </div>
-                          </div>
+                          </motion.div>
                         );
                       })}
                     </div>
@@ -9541,22 +9640,937 @@ export function Home({
                   <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
                     <TrendingUp className="w-6 h-6" />
                   </div>
-    xœÔ]ïvÛ6–ÿŞ§ÀhÛ¹cÊ²ü'¶Çvc§mN›Æ³ÓİÍÉii’8!	IÅvTï‡y›}„ùº2O2÷	€ I9Nw–l‰ñ÷âşı]ˆõ:Â÷§ŸËu¼Ø%ÓÈÏóı˜
-z[xyLf,)¼ëÈŸ¾#aáGátpzá‡ÑyLiR„ï)yígsZo-v5§ŠßlÓÛ·„¾Y„İz2MÅ4—ñàôœÅiDJ¶'„eÍrR0²L"=ùÇßş>Ù“k–,óã­ÔÖìñ–u¤®ÛpWíä7[F¹—½›ŒÉÂ›ŒöHÆ–I@ñ˜½§Ù,b7Ş"šøÚ›¬1ª‡zïh„oî±f^›Zõ€äÅ]DOV+rÅâˆö÷¾û{²õàAÍ"zKş²Ì‹pvç]Óâ†BŸÅrâj(K½LSšMıœªKt0¶.Oıäô€láR]ĞH"£Áñ¿í,¿+W5¢³ÂUØ:0ËÍÆ­ã­˜!KFÚıûÏäã³$Œı‚^f4§@È§Ÿ•OV[_‘áÕY8õ±‚œ\dşÍÈW[ÕËweı«|Ánô·¿ü’Õ~™KŞÒ€„INoL>xHÔs±[ûğşKáÎ2óns¢-!McAëQ“&aúÔ-ÓöxÌ©É(å‹‘•¥ÆÍô6,:êhî¢Ø¿õn¼8¨¶“¤ø|á°&·‘şñ¦,hU6ÖA} µ¡ÔÛf€ôä]ËóÌ¿ó ¢jh5Î=äXğ¦±,Tíb“Ç‹Iƒ—aïëÃoñ¶¡mÁ2I‘Á£0™{E8_`"~OXB§É X›vrQÑ:‹¥qä+Ê&–í3¡yAâÂÛœş{Àb’³$æ3¥1Ì¡ºXÌõ²(XB,ıeÉ9ıİÉj¸ANN	Pø•¹;†3?Êé†IA¥ŞRNµ’O"ÙÔŞCFŠùH–Àx’‡ØÒËòA£-ë\ÿ‡NÆ{@±{;ë3ĞdR‚J+ÆR=°0eo»%w¿A—z»xâ”Â®u"GMæÅ‚œÂıZc8òÒ‹Ç~:äwpelÅË~ZŸòŞˆŒÂÀ¶zxë¿r#H:U¤}¯àÑUü–@[äää„È†a¤«Ñh”l’¦úÖzIïÉI66şäh¬Á¬äU/Èê×Ô«Åü›IFã·%K©ùWÉ¸@=RÌGN#ŸëD¦j0‡Sòy9kØaèş dU¼’ÔÏ`÷‹w[‹,&A8gHşƒû_íƒ°ë^@)PÚ4Ä‘~™¤é_ç,ZÂp@°ïwÁÿÔ¡ä8ëÚN_9=e«’ &´ü¤Ø¶íª¦ìlI\VÆbë —sö\ËÀŒ—V¿ŞxÛ8.ø£r¤|‘…É;¯Mì”_¼©IsÉÛtÎ.(C™Mñ¸üº/ˆ¤m‰Ÿ‚öÙ—Åõškck¥İäXıê´9P³ŞnLO='ûåœhÂ—OBùJ½w›(el"v»±Â4ÑeÎ@¶Ó<÷çØ†Õ©š@E·ÙÊa›GiM®ÑğÖJ¾íç ¬İmÀÀbJ~ûå8¡…§0?	½! àÍGğûMıˆ¾†[WĞë|øæí&Y ]f0),›$` Ê-r¿ıŠ"6îİj~¢iyè|´±Ñ¸‰=²q5“"ù¬–›/]ÂÅÆ,»Cîôzavpan…°êÜqnQU$ŞXkÔuYMîĞ´^ÇÄm°=«Ád³E{L¯³0Ë¯ğÃ('/XàGıÍ%|W¾ú)Œ%ÁÁT"y|ÔÆ›Ü¿—5u'-¡M)º­†“bYa¥ğ¶ÛÊêYw‹KŠ(à5“ÑWj`>j5§¼‡†”b•It·Ã"³ÉÓG³¸vûçmš¦Ğ¹ÿéÙTx§8Ÿ'3–Å|GØùÄöÕàô%×ÿíûW/¼ƒƒÉáCL*»ı¤li=é¶ÒÄj+™¦’İ‘cX=»Àóv×´zlşƒ:ÚÌ³,šAŠ¤)Ze5ı<n
-I‚Ì
-®îÙzÀ_¾*XF-“aÌRás€6	h!ºV] ¢¹Áé%PÇ2mÑ7,•#W´ÔÌ÷ËU’+?$ßflJ³æ›ä…&ä©ÿÁ÷3g;NIí~`¬NliçDH¿âcàç`÷ª7-úŠ8¦úãÖü…Ÿ^†‰sÑ3–Sn·üß.ú86›=Şª7ct›MXxtŸƒ˜Ù$ß/ü8öãG[õu\Ô¸L]ív7)‡…ŸıÑÎAä¾fç |XL3»9ØôÅ€n¸#4‹%EÓBñkÈôú•âÂívë4	ÅÈ-İt,B9Fj:İîŒĞœƒ¿HŸDÎ„uµìŒ¼ÿdét¶'»±”&C ¹èè‡Û‡Oö÷vw&ÛãÃW=Îyz+Ø=…Åò£ 2låw\éŠlA>1ı‚KÓk)¶aû/Æå‚%´mÎÑC$‰q­ÅèyLµş…Ÿ½£Ğ/ùi~ ßDÌçßúI3ôeSÕ¯ŞÀdù²8K^uàC¥Ñ^âUÑ•·¡„º¸¥Ğ,§ÇÍÊ„96â¨I¥O$m`öİ½4½×Uwá2Wi˜ü¼ 42§‹÷ÅxªHè^¨{$zùŞ£˜f~1]œûY`‡ùÜ‰ñØ5£XÑoôÏ7°O(M­£1êcÑ:F¢ê‡^¾ï(¾cyŠÖÏËËoÀ¾1GQ?5F ¿¦ô-ÍÂ)ÍA„–.ùwt0­Èœ&Èlà#/¦ë²a.-á€'÷› ™Ó)XÇa^(ewÆÖ²ÈÀ¡âéRtÏVT7{Yò”±JÔãçzHİs]—í;Ï?øÉ|éÏ)¹¢‚uĞà}|Â±˜bäëòí6Â©êèGU´ï0¸>/%OLÉŸCzCÎA\Â#=Ì­€Xòš-§‹+Ô£å´×wîÍr/Ø{ªÃRÏ’@+ßë2=bd×Şd·
-¹HI­ø—Ğ5ÅRòˆ?õÕáYãÈ Lßİ•ñŞÎ¸F€î¦8úŠĞÁgM‹]ÛM"á^Ô=§I&\„5Mª£k.aMIŠâÆ©"ÉÖß†ƒ4c³0¢éjnñ:5ÂY2]f9Ë¼”…ü¦/6t®gæS	€ğè¢YÏÑtã€~u Ç’4p"w¸XŞÚoˆ¯6¿„Ó:´X€½¼ :àÁÒ¢=Pğ ”‰7(A:¨ËÌ‰½é¤V®"»!An3Ô” &ŸL‘
-…ëòÍö.tpºŠ$•ƒ”Vé %ìp|¾ ï3–\°Ó(BUÜpƒõFS¹AG}Y²›W.%(Ä óO¹bŸÛwh÷NjL²Ó6³{kA!4ëÆk=öTåS¬gğIÍô0P×ÎA8€Ğ•âÓ,gY»o#vmóÜY·©4·>nruğÂï?ÁæàcfZDyn†ÈÜŞb«’ƒÚ! Hx,wÃKh°‘°pLIÀO
-È rÕéˆJKÏ,¡²¤	U‚Ş„ùµ`§ı×'‹Ÿåº)Ø^Vô&	97ç0Ú‚ã–Ö¦ñJ@m	ô±ñH§‹ÿÏ®ûêğë=¶ù³\2éÓÙfıìp¬ëI»#±R´÷gğØûnÚ6›¦ ®œ¯Cb83ÿÈ«êí#‘–~×îTîpìàé‚ÛI7a± f`Ë»`¥‘«çÿ›0*„ò¨k3Ç¨¿ë´Ë’«åuŒÁì!µ¢ éA~@Mtæ/£bØ€î	óPtBTUé…îïõV•Õ4C¼Œ¹é§9¨ÒÄä İ7-Ù-bflºÌ=œÕ09*Ÿ«;M{,cö¶°BÆ%å¸\¦Î˜eKäê8LÒeÑä>Å]ZªğÍ}üŞ–`éç¼õŸ–4»kÒ/p/®ÇUT€ŠSıÂ
-A2â•Y˜X
-‡.ÀÜ¡ÙÉ èŒ±`a•2V™Óì=:«6IÀĞÎG£Q³¿ÖÙ0SûRO*[Q˜Pa^m6¦Y,;[’r@L¼ø2°iŸÊ$:@_uÁ uÀ\€À°XJö€E“-¹›6B·ØL€ó#1æ6A‡Şm%U±úNú|æ?€(§	r1´´qó´ã¥Ë(§tYîMu*›*–¥[Ê<•­ö}/Âiÿ5iåÿKUğórC]-çsšËœ–h@›öªJ»£"ãá†Š=jÎ±NQå+šK·ŞÍ¸¡ÁeÆ‚å´Èû•2Ú2wN+€™ovL6R Ìq!8{3¶«€ ,\… ÇŸ¡·bá=™Xğû¶vGäß–zUmaÃ£rg‡£§ÊÊYãõ«›ÃF£Ãñ&Ùßàû!ŠÀ#®TºrÜ<? +p¦ôL`IÙA^š÷É‰íoòC{IGÀZ~Ù”‹{}×ïih+ÃõÙC#vÆ•{)(.XK·Ï4škº™¸ĞÏŞ‚ô.i!Æ Š==¥êlÏIMO”Wî‰å†poâeB»ş0Å0ˆV,»2\õã6v·KŸjoÅ™€ĞŠŠn‡Ù¯ïQ¦­™Ş‘£[q¡©Ï#gá*ëF¯íœŞ×†Iz Ğ{/²‚œşãoãÑÄ6O±>İ?­•9ŞBËÇeN	s)'¯Øi0‰²€BH–ì1Ì†(0~$`³eN#aµ]dşÜ{Í¼‹0Ã<ç†Û+êG¢ı	Ü-üô-æ„hcúP˜C»¢©²NÊ‰
-y7×¿µ
-éLu Š ¯Áa„¢v*£’&³`ˆ'ƒ[Ûís‚Àlëæˆ FyÏáÖ\â[ÑÓøÖ3 ±"®3í›ÏY‚3ÊC•CŠIl6Y³IŞÓˆ!&S"¬2lŠ}!ùM˜RrB^øÅbÉP¼?ºİ _UuŒn›Â*œ‘¡xù˜pÖüÛoD¾ËoMÆVÉ	%[ÖL¸¦mB1b%HçY2¦‡Y Ãz=ßˆ¸]U!ù¢¹Øo7É ıÂûüÎ¼Mß
-Ê´2¸SbîüKÓ’ulÆ­)y5 qş°À­Iuº /Ş’š­V¼ %Ùo‚¦šÍÃä)ë æ7x>÷š•Õú
-V,3î»ÇÒKéNmNì±»a+¬¹ Í‰¶­ª¨kŠ}i.O[ÚDÈ/õ6w×2^­ÜºF{1çáv‹­ß0ô‡¿×|d´XfIŸ$(L[ÔN›(3\1éU±|Kóç¶%£õó•èÿˆ+´<<+ôÈ „åğ
-æedÂÊóãk`æÜ´fËĞÔ£ˆ¢î)÷9ï#ù6óÓÁtjÁ88ÆéJ^%Õ_øS!;¶\Tî@ÃÏ‹3Ìùòñ=!¥*ïqwe.–ß¥üµ‹¯ª”Í",ìSWİvvçj}ÑQÓ ªCê¸pÓÏZ_kóXqµîIÉ@Å€~qlQyõHÓÖ×w·\ß]Xß'°¼OA‘%6¡Š­]Íáó€œİŞdl3æğ*>rµÅlØ;5çµrüWt©|lì“j@¤¡Rf¯<¶£%ÇŞH	ê8ñ¶†õ L¸SÕ<ÁXÌ-·ÃyHf¯±äÕÉ=Ä@aŞ¸/º«Åy¬OÕñÿòSc™j¬IéæÇ|ÑYEÊ÷VÛ±4N¯˜Rèı•m»^.vbI…âßÀò+Y•VmÍ¨+u&U+Gj§?‰Ùf,çu“ùòeMù- ù´‡áéxŠ¹2ˆ^_ˆü;n/)yÌXÔ„î(8¡]7 ºº~ [Š:ï©$ı¶9V` Ü¶+4Ûî5Ll5w¿{c¼0´%æ¹ŸRø"Xû†±Áé*Öfî›>û¤)×¾¿k:l?×¢šà#òß«¦g½št JĞ¨§K`§ÕÍïãa©„?ø`/ŠOÉ|”LÀå·«/É|ã¼‹ÛFÚoû·’K M«îà4­!ŒZ§õ‰[òÒõø!Jš5ƒ5‡zNìz\™T‹£¹ES;¥R0ÆoÄŸ ¬K}À« İ	`µü‘Yl»HÊ›
-\°
-)ŞEwíyd²D÷A-lºòq=OD’%pÁŠ6ú]Ù<RÛë€Ó7KxûQ'jox|å—M:C+Jzìpiß&ëØòZËnØgº;;_sªüòRMØ…ßX3ÂÛÙÍ&5ìap7Oi^_~†d9m[Z^GøŠÊ§ÀézÏuø“¼Z·xÓ³]_9Hiİà¦KfchTíJ`TŠ¹s§øi	4ü‚G%Bš7ó>r:59f…âùÈ„Kª†MénCÂ»„ÏàôÙmá¹W%Ò¥©w¯“4PŸÕ’±¬‡1ˆ(g¼†#š4À“Î¢ÈXsSº4ñjÆBÌ³0 øÍÔÊ‹ê¯ûÖˆèêüìõ³o_¾zşìªv”Ñnè¼•%
-Gİsø‡çÑ’ş”×7ğÂ(„ÏoQï“ğÄ§şÜ$q§gÎÁ‹3tŞ†5€ì"¢¯ı³µwbç¢5+÷ÆªãĞ;N`Ô½V­ÇˆwóãîzµØˆOocœş¨x%ÊîÀctûn4üt}âï«gªmìTŸ˜é*ª¸q)QÑ6¼}İ¾ë'K]7è‰„2•£ç®x?FP«s`.têœüÈ°ğ$ù`?†‚F7IT¦hl;¨!gë]GıÚ9?^&ŞÓˆ¾jo@ı‚½bá’¥`šeäL8•ÿ“-É¹ #.~*ä*$V©(/ŠCéçHY-¡Í6©Ò8Xê1äÊÇØg®MZŠ3p6,à£‰9Ñ¬'ÈfD%ÃKc†5	¢b7ÈùÁvœô|¤Ö2y— î>Š÷9Pd
-Pì}-üb<$Ò$;Ûa6š=íøæä_QÚØö]l3â:÷DÜ;$T±nG69ö&äiÆ‡YåÂ«qY‹ï9„mC~j˜4Ş`‡ü´"Ó*m¸!ÊjÙ$Xtù=L3Çº­Şû‡JcÎ|Ìé/¼ü¯K?£ªE‘Ë¶Óğëìl‡`óŞ«QauñÆo<*¬æ˜”²ú5]§„åÍXAg­×â¼i±ÜvÛŠmu„h&NuiqŒ´ÆV'eìm¢eÈìøÂÊÍßvJ£"µ°†j´Í?`ˆ2îG~ä]#şÒ…İspZ3hT¯í‡ÛÙ¦¶ãÔu°õ\5‡&jùm>ÙØ0 Mô	ÆÇ¿’aš_½üs 
-àY¦„œ4è!o¨zø M«hñh?‘ÈûÛ…HäM´Çü×óâ­é¿³‰6wù—®—1Úmıd‡WØE'.^wÊ›–Û^¿Wq¹ÀY87l›³ûQNÆ3]u–¾ÊÌ©Ş¹7Ğ¢M0€Zù‹t§(Ë§eà(zÀ–„ß!nÑùXöÏ§39lÇkcÂz-¯õ38Ú+0Æª7í‹ßĞrºE—æîĞÍídÅusÌĞkÑÍ]ª9¾ö Õœ·×W5ç "Õáô¨ªùÃ”oGªG ÅâMÃ˜ÚJ»ó§ºÕÙ*ƒÔ)Â~0sQÛ_ -ÀÄ…‰wÓÖúãè:%ır]§¤@C×áw;t§ÙvŞ«ĞxõBc Â¾ñ³ oÓpo©i4›:~^Ñ½å	ÍÕh4İ_|7Eµ}€xÈ›djÖa®uxæcX¦–˜Î+´ ËØk^BÉ’Ğn<PØ6L¿FK2…'ú`r¤u1ÜÚHJØòSåùÂ:Xx¹<ÃŒ[4²‚»İ>—ıxcüT mĞ–×h«–‰íÀo>ÙkÁoö4˜|@El¢Ñ`ƒuòŸ…Œ—	fİpß}‡-õ`¼£ø´ş0Ç^?qyĞ 9Âø4dc‹!û)bíë³¼zú/‹ê“€ÏÒÃ(Ë=õƒ¹‘`fë«ş¼™%ğ^µƒÍh+ç½vk"Ìk†^¥å»è­è¬–{§»±ùa±Œ|œ—~V`_Î¦ ÚêÕñL²pìı¶S?ÔI*VÕ¯mt‚:Ğ¥-‰Áÿ‚ıh³r¸/“k³Š¿d=ŞÌ¤ø8íağf»¥oîŒWt?dh:•£36…õ …u&í, õ6“ÌÖáØLQhx1¿Éú†·Ô#*i¾s¶šlåÁ?wĞü]­õò4HrfÀ·Èw`²gx\d$…öüïÿÉx²¯u/U÷ºØ´òÒ÷ê#pR`‚ô6eYAqL?:÷OŸı  ÿÿ  VLÀ
+                  <div>
+                    <h4 className="text-sm font-black italic">Daily Incentive Target</h4>
+                    <p className="text-[10px] text-white/70 font-medium">Complete 12 orders to unlock â‚¹250 bonus</p>
+                  </div>
+                </div>
+                <div className="w-full bg-white/20 h-2.5 rounded-full overflow-hidden mb-2">
+                  <div className="bg-yellow-400 h-full rounded-full" style={{ width: "65%" }} />
+                </div>
+                <div className="flex justify-between text-[9px] font-black uppercase text-white/80">
+                  <span>8 / 12 Delivered</span>
+                  <span>4 orders left</span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Notifications Drawer */}
+      <AnimatePresence>
+        {showNotifications && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex justify-end">
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              className="w-full max-w-md bg-white h-full shadow-2xl flex flex-col"
+            >
+              <header className="p-6 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-black text-gray-900 italic tracking-tighter leading-none">Notifications</h2>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Updates & Announcements</p>
+                </div>
+                <button 
+                  onClick={() => setShowNotifications(false)}
+                  className="p-3 bg-gray-100 rounded-2xl text-gray-500 hover:bg-gray-200 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </header>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {notifications.length > 0 ? (
+                  notifications.map(notif => (
+                    <div 
+                      key={notif.id}
+                      onClick={() => {
+                        setNotifications(prev => prev.map(n => n.id === notif.id ? {...n, read: true} : n));
+                      }}
+                      className={`p-5 rounded-[2rem] border bg-white shadow-sm transition-all relative overflow-hidden group ${notif.read ? "border-transparent opacity-80" : "border-indigo-100"}`}
+                    >
+                      {!notif.read && (
+                        <div className="absolute top-0 right-0 p-2">
+                           <div className="w-2 h-2 bg-indigo-500 rounded-full shadow-sm shadow-indigo-100" />
+                        </div>
+                      )}
+                      <div className="flex gap-4">
+                        <div className={`w-12 h-12 rounded-2xl shrink-0 flex items-center justify-center transition-colors ${notif.read ? "bg-gray-50 text-gray-400" : "bg-indigo-50 text-indigo-600"}`}>
+                          <Bell className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1">
+                          <h4 className={`text-sm font-black italic mb-1 ${notif.read ? "text-gray-600" : "text-gray-900"}`}>{notif.title}</h4>
+                          <p className="text-[11px] font-medium text-gray-500">{notif.message}</p>
+                          <span className="text-[9px] font-bold text-gray-400 mt-1 block">{(notif as any).time || (notif.timestamp ? new Date(notif.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Recent")}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-12">
+                    <Bell className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm font-bold text-gray-400">No notifications yet</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Trip Details Modal */}
+      <AnimatePresence>
+        {showTripDetails && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4">
+            <motion.div
+              initial={{ y: "100%", opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: "100%", opacity: 0 }}
+              className="w-full max-w-md bg-white rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 shadow-2xl space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-black italic text-gray-900">Active Trip Information</h3>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Order #KRM-8829</p>
+                </div>
+                <button onClick={() => setShowTripDetails(false)} className="p-2 bg-gray-100 rounded-xl text-gray-500">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-3">
+                <div className="p-4 bg-gray-50 rounded-2xl space-y-2">
+                  <div className="flex items-start gap-3">
+                    <Store className="w-4 h-4 text-gray-400 mt-1 shrink-0" />
+                    <div>
+                      <p className="text-[9px] font-bold text-gray-400 uppercase">Pickup</p>
+                      <p className="text-xs font-bold text-gray-900">Sri Sai Groceries, Main Bazaar</p>
+                    </div>
+                  </div>
+                  <div className="h-4 border-l-2 border-dashed border-gray-200 ml-2" />
+                  <div className="flex items-start gap-3">
+                    <MapPin className="w-4 h-4 text-rose-500 mt-1 shrink-0" />
+                    <div>
+                      <p className="text-[9px] font-bold text-gray-400 uppercase">Dropoff</p>
+                      <p className="text-xs font-bold text-gray-900">H.No 4-12, Green City, Khammam</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={handleNavigateToCustomer}
+                    className="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2"
+                  >
+                    <Navigation className="w-3.5 h-3.5" /> Navigate
+                  </button>
+                  <button 
+                    onClick={() => window.open("tel:+919876543210")}
+                    className="py-3 px-4 bg-emerald-50 text-emerald-600 border border-emerald-100 rounded-2xl font-black text-[10px] uppercase flex items-center justify-center gap-1.5"
+                  >
+                    <Phone className="w-3.5 h-3.5" /> Call Customer
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Marketing Quiz Floating Banner & Modal */}
+      <MarketingQuizFloatingBanner onOpenQuiz={() => setShowMarketingQuizModal(true)} />
+      {showMarketingQuizModal && (
+        <MarketingQuizModal
+          isOpen={showMarketingQuizModal}
+          onClose={() => setShowMarketingQuizModal(false)}
+        />
+      )}
+
+      {/* SpinWheelModal */}
+      {showSpinWheelModal && (
+        <SpinWheelModal
+          isOpen={showSpinWheelModal}
+          onClose={() => setShowSpinWheelModal(false)}
+        />
+      )}
+
+      {/* ScratchCardModal */}
+      {showScratchCardModal && (
+        <ScratchCardModal
+          isOpen={showScratchCardModal}
+          onClose={() => setShowScratchCardModal(false)}
+        />
+      )}
+
+      {/* FlashDropModal */}
+      {showFlashDropModal && (
+        <FlashDropModal
+          isOpen={showFlashDropModal}
+          onClose={() => setShowFlashDropModal(false)}
+        />
+      )}
+
+      {/* HospitalOPForm */}
+      {showHospitalOP && (
+        <HospitalOPForm
+          prices={hospitalPrices || { general: { price: 150, isActive: true }, specialist: { price: 300, isActive: true }, emergency: { price: 500, isActive: true } }}
+          onBook={handleBookHospitalOP}
+          onClose={() => setShowHospitalOP(false)}
+        />
+      )}
+
+      {/* Language Selector Modal */}
+      {showLangModal && (
+        <LanguageSelectorModal
+          isOpen={showLangModal}
+          onClose={() => setShowLangModal(false)}
+        />
+      )}
+
+      {/* Main Customer Home View Container */}
+      <div 
+        ref={homeScrollRef}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        className="flex-1 overflow-y-auto pb-24 relative"
+      >
+        {/* Top Header Bar */}
+        <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md px-4 py-3 border-b border-gray-100">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            {/* Location Selector */}
+            <div 
+              onClick={() => onNavigate && onNavigate("profile" as any)}
+              className="flex items-center gap-2 cursor-pointer active:scale-95 transition-transform"
+            >
+              <div className="w-8 h-8 rounded-full bg-yellow-400/20 text-yellow-600 flex items-center justify-center">
+                <MapPin className="w-4 h-4" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider leading-none">Delivering to</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-black text-gray-900 truncate max-w-[140px]">{location || "Khammam"}</span>
+                  <ChevronDown className="w-3 h-3 text-gray-500" />
+                </div>
+              </div>
+            </div>
+
+            {/* Header Right Action Buttons */}
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => setShowLangModal(true)}
+                className="w-8 h-8 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center hover:bg-gray-200 transition-colors"
+                title="Change Language"
+              >
+                <Globe className="w-4 h-4" />
+              </button>
+
+              <button 
+                onClick={() => setShowNotifications(true)}
+                className="w-8 h-8 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center relative hover:bg-gray-200 transition-colors"
+                title="Notifications"
+              >
+                <Bell className="w-4 h-4" />
+                {notifications.some(n => !n.read) && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full" />
+                )}
+              </button>
+
+              <button 
+                onClick={() => onNavigate("wishlist" as any)}
+                className="w-8 h-8 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center relative hover:bg-gray-200 transition-colors"
+                title="Wishlist"
+              >
+                <Heart className="w-4 h-4" />
+                {wishlistCount > 0 && (
+                  <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[9px] font-black">
+                    {wishlistCount}
+                  </span>
+                )}
+              </button>
+
+              {/* OTP Login Shortcut for Customer and Website */}
+              {!user && (
+                <button 
+                  onClick={() => onNavigate("login" as any)}
+                  className="px-3 py-1.5 rounded-full bg-yellow-400 hover:bg-yellow-300 text-slate-950 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm active:scale-95 transition-all cursor-pointer shrink-0"
+                  title="Sign In with Secure OTP"
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-slate-900" />
+                  <span>Login</span>
+                </button>
+              )}
+
+              <button 
+                onClick={() => onNavigate("cart" as any)}
+                className="w-8 h-8 rounded-full bg-gray-900 text-yellow-400 flex items-center justify-center relative hover:bg-black transition-colors"
+                title="Cart"
+              >
+                <ShoppingCart className="w-4 h-4" />
+                {cartCount > 0 && (
+                  <span className="absolute -top-1 -right-1 px-1.5 py-0.2 bg-rose-500 text-white rounded-full text-[9px] font-black">
+                    {cartCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Search Bar with Voice Search and Smart Filtering */}
+          <form 
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSearchSubmit(e);
+            }} 
+            className="relative"
+          >
+            <div className="flex items-center gap-2 bg-gray-100 rounded-2xl px-4 py-2.5 border border-gray-200/60 focus-within:border-yellow-400 focus-within:bg-white transition-all shadow-inner">
+              <Search className="w-4 h-4 text-gray-400 shrink-0" />
+              <input 
+                type="text"
+                value={searchQuery}
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => {
+                  setTimeout(() => setIsFocused(false), 250);
+                }}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (!isFocused) setIsFocused(true);
+                }}
+                placeholder="Search food, groceries, services, doctors..."
+                className="w-full bg-transparent text-xs font-bold text-gray-900 placeholder-gray-400 outline-none"
+              />
+              {searchQuery && (
+                <button type="button" onClick={() => setSearchQuery("")} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button 
+                type="button"
+                onClick={handleVoiceSearch}
+                className={`p-1.5 rounded-xl transition-all ${isListening ? "bg-rose-500 text-white animate-pulse" : "bg-white text-gray-600 hover:bg-gray-200"}`}
+                title="Voice Search"
+              >
+                <Mic className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Search History Dropdown (Shows last 5 store or product searches when focused) */}
+            {isFocused && !searchQuery.trim() && searchHistory.length > 0 && (
+              <SearchHistoryDropdown
+                history={searchHistory}
+                onSelectSearch={(term) => {
+                  setSearchQuery(term);
+                  saveRecentSearch(term, 'general');
+                  setIsFocused(false);
+                }}
+                onRemoveItem={(id, e) => {
+                  e.stopPropagation();
+                  removeSearchHistoryItem(id);
+                }}
+                onClearAll={() => {
+                  clearSearchHistory();
+                }}
+              />
+            )}
+
+            {/* Smart Search Suggestions Dropdown */}
+            {searchQuery.trim().length > 0 && smartSearchResult && smartSearchResult.filteredProducts && smartSearchResult.filteredProducts.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 z-50 max-h-72 overflow-y-auto p-2">
+                <div className="flex items-center justify-between px-3 py-1 text-gray-400">
+                  <p className="text-[9px] font-black uppercase tracking-wider">Suggestions</p>
+                  <span className="text-[9px] font-bold">Matching Products & Stores</span>
+                </div>
+                {smartSearchResult.filteredProducts.slice(0, 6).map((item: any) => (
+                  <div 
+                    key={item.id}
+                    onClick={() => {
+                      saveRecentSearch(item.name, 'product', item.hotelName || item.category);
+                      onProductClick(item);
+                      setSearchQuery("");
+                      setIsFocused(false);
+                    }}
+                    className="flex items-center justify-between p-2.5 hover:bg-gray-50 rounded-xl cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-gray-100 overflow-hidden shrink-0 flex items-center justify-center">
+                        {item.image ? (
+                          <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <Package className="w-4 h-4 text-gray-400" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-gray-900">{item.name}</p>
+                        <p className="text-[10px] text-gray-400 capitalize">{item.category}</p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-black text-emerald-600">â‚¹{item.price}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </form>
+
+          {/* Search Filters Row */}
+          <SearchFilters />
+        </header>
+
+        {/* Real-time Active Order Tracking Timeline Card for Customer App & Website */}
+        {activeCustomerOrder && (
+          <section className="px-4 pt-3 pb-1">
+            <div 
+              onClick={() => onNavigate("tracking" as any, activeCustomerOrder.id)}
+              className="w-full bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white rounded-3xl p-4 sm:p-5 shadow-xl border border-slate-700/70 relative overflow-hidden cursor-pointer hover:border-yellow-400 transition-all group"
+            >
+              <div className="absolute top-0 right-0 w-48 h-48 bg-yellow-400/10 rounded-full blur-2xl pointer-events-none" />
+
+              <div className="relative z-10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-2.5 w-2.5 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">
+                      Live Order Tracking
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-white/10 text-[9px] font-mono text-slate-300">
+                      #{activeCustomerOrder.id?.slice(-8) || activeCustomerOrder.id}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-1.5 text-[10px] font-black text-yellow-400 group-hover:translate-x-0.5 transition-transform">
+                    <span>Track Live</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-baseline justify-between overflow-hidden">
+                    <AnimatePresence mode="wait">
+                      <motion.h4 
+                        key={activeCustomerOrder.status}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 10 }}
+                        transition={{ duration: 0.25, ease: "easeOut" }}
+                        className="text-base sm:text-lg font-black tracking-tight text-white capitalize"
+                      >
+                        {activeCustomerOrder.status === 'Pending' && 'Order Placed & Awaiting Confirmation'}
+                        {activeCustomerOrder.status === 'Accepted' && 'Store Accepted Your Order'}
+                        {activeCustomerOrder.status === 'Preparing' && 'Kitchen / Store is Preparing'}
+                        {activeCustomerOrder.status === 'ReadyForPickup' && 'Order Ready for Pickup'}
+                        {(activeCustomerOrder.status === 'OutForDelivery' || activeCustomerOrder.status === 'In Transit') && 'Rider Out for Delivery!'}
+                        {activeCustomerOrder.status === 'Delivered' && 'Order Delivered Successfully'}
+                        {!['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery', 'In Transit', 'Delivered'].includes(activeCustomerOrder.status) && activeCustomerOrder.status}
+                      </motion.h4>
+                    </AnimatePresence>
+                    <span className="text-xs font-black text-yellow-400 shrink-0 ml-2">
+                      â‚¹{activeCustomerOrder.total}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-medium text-slate-400 mt-0.5">
+                    {activeCustomerOrder.deliveryPartnerName ? `Delivery Partner: ${activeCustomerOrder.deliveryPartnerName}` : (activeCustomerOrder.vendorName || 'Local Bandi Express')}
+                    {' â€¢ '}
+                    {activeCustomerOrder.items || (Array.isArray(activeCustomerOrder.orderItems) ? activeCustomerOrder.orderItems.length : 1)} items
+                  </p>
+                </div>
+
+                {/* 6-Stage Progress Bar Timeline */}
+                <div className="pt-1">
+                  <div className="grid grid-cols-6 gap-1.5">
+                    {[
+                      { key: 'Pending', label: 'Placed' },
+                      { key: 'Accepted', label: 'Accepted' },
+                      { key: 'Preparing', label: 'Preparing' },
+                      { key: 'ReadyForPickup', label: 'Ready' },
+                      { key: 'OutForDelivery', label: 'In Transit' },
+                      { key: 'Delivered', label: 'Delivered' }
+                    ].map((step, idx) => {
+                      const stages = ['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery', 'Delivered'];
+                      const currentIdx = activeCustomerOrder.status === 'In Transit' ? 4 : Math.max(0, stages.indexOf(activeCustomerOrder.status));
+                      const isCompleted = idx <= currentIdx;
+                      const isCurrent = idx === currentIdx;
+
+                      return (
+                        <div key={step.key} className="flex flex-col items-center w-full">
+                          <div 
+                            className={`w-full h-1.5 rounded-full transition-all duration-500 ${
+                              isCurrent 
+                                ? 'bg-yellow-400 animate-pulse ring-2 ring-yellow-400/40' 
+                                : isCompleted 
+                                  ? 'bg-emerald-400' 
+                                  : 'bg-slate-700'
+                            }`}
+                          />
+                          <AnimatePresence mode="wait">
+                            <motion.span 
+                              key={`${step.key}-${isCurrent ? 'curr' : isCompleted ? 'done' : 'idle'}`}
+                              initial={{ opacity: 0, y: 3 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -3 }}
+                              transition={{ duration: 0.2 }}
+                              className={`text-[7px] sm:text-[8px] font-bold uppercase mt-1 tracking-tighter truncate max-w-full ${
+                                isCurrent ? 'text-yellow-400 font-black' : isCompleted ? 'text-emerald-300' : 'text-slate-500'
+                              }`}
+                            >
+                              {step.label}
+                            </motion.span>
+                          </AnimatePresence>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[9px] text-slate-400 pt-1 border-t border-slate-700/50">
+                  <span className="flex items-center gap-1 text-emerald-400">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                    <span>Real-time instant sync active</span>
+                  </span>
+                  <span>Tap to view live map & rider contact â†’</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Top Promotional Banner Carousel with Drag-To-Dismiss and Real-Time Distance */}
+        <AnimatePresence>
+          {!isTopBannerDismissed && topBanners && topBanners.length > 0 && (
+            <motion.div
+              id="banner-slider-container"
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.6}
+              onDragEnd={(e, { offset, velocity }) => {
+                const swipe = Math.abs(offset.x) * velocity.x;
+                if (swipe < -100 || offset.x < -120) {
+                  setIsTopBannerDismissed(true);
+                  logBannerEngagement(topBanners[activeTopBanner % topBanners.length], "dismiss_swipe_left");
+                } else if (swipe > 100 || offset.x > 120) {
+                  setIsTopBannerDismissed(true);
+                  logBannerEngagement(topBanners[activeTopBanner % topBanners.length], "dismiss_swipe_right");
+                }
+              }}
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, height: 0, marginBottom: 0, scale: 0.95 }}
+              transition={{ duration: 0.25 }}
+              onClick={() => {
+                const banner = topBanners[activeTopBanner % topBanners.length];
+                logBannerEngagement(banner, "click");
+              }}
+              className="px-4 py-3 cursor-grab active:cursor-grabbing select-none"
+            >
+              {(() => {
+                const banner = topBanners[activeTopBanner % topBanners.length];
+                return (
+                  <div className={`w-full rounded-[2rem] p-5 text-white shadow-xl relative overflow-hidden ${banner.color || "bg-gradient-to-r from-amber-500 to-orange-600"}`}>
+                    {/* Background Graphic Decor */}
+                    <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full blur-2xl -mr-12 -mt-12 pointer-events-none" />
+                    
+                    {/* Banner Dismiss Button */}
+                    <button 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsTopBannerDismissed(true);
+                        logBannerEngagement(banner, "dismiss_button_click");
+                      }}
+                      className="absolute top-4 right-4 w-7 h-7 rounded-full bg-black/20 hover:bg-black/40 text-white flex items-center justify-center transition-colors z-20"
+                      title="Dismiss banner"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+
+                    <div className="relative z-10 flex flex-col justify-between h-full space-y-3">
+                      <div className="max-w-[80%]">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 backdrop-blur-xs text-[8px] font-black uppercase tracking-wider mb-2">
+                          <Zap className="w-3 h-3 text-yellow-300 fill-yellow-300" />
+                          <span>Special Promo</span>
+                        </div>
+                        <h3 className="text-base font-black italic tracking-tight leading-tight">{banner.title}</h3>
+                        <p className="text-[11px] text-white/90 font-medium mt-1 leading-snug">{banner.sub || banner.desc}</p>
+                      </div>
+
+                      {/* Distance Overlay and Navigation Controls */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/20">
+                        {/* Real-time Distance Text Overlay */}
+                        <div className="flex items-center gap-1.5 bg-black/30 backdrop-blur-md px-3 py-1 rounded-xl">
+                          <MapPin className="w-3.5 h-3.5 text-yellow-300" />
+                          <span className="text-[10px] font-black uppercase tracking-wider text-white">
+                            Distance: ~{realtimeDistance || calculateDistanceKm(storeLat, storeLng, customerLat, customerLng)} km
+                          </span>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleNavigateToCustomer}
+                            className="px-3.5 py-1.5 bg-white text-gray-900 rounded-xl font-black text-[10px] uppercase tracking-wider shadow-lg flex items-center gap-1.5 hover:bg-yellow-300 transition-all active:scale-95"
+                          >
+                            <Navigation className="w-3 h-3 text-blue-600" />
+                            <span>Navigate to Customer</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Carousel Indicator Dots */}
+                      {topBanners.length > 1 && (
+                        <div className="flex items-center justify-center gap-1.5 pt-1">
+                          {topBanners.map((_, i) => (
+                            <button
+                              key={i}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTopBanner(i);
+                              }}
+                              className={`h-1.5 rounded-full transition-all ${
+                                i === (activeTopBanner % topBanners.length)
+                                  ? "w-5 bg-white"
+                                  : "w-1.5 bg-white/40"
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Quick Categories Bar - All Services Clearly Visible */}
+        <section className="px-4 py-2">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Explore Services & Categories</h3>
+            <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest cursor-pointer" onClick={() => onNavigate("categories" as any)}>
+              All {CATEGORIES.length} Services
+            </span>
+          </div>
+          <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
+            {CATEGORIES.map((cat) => {
+              const IconComp = IconMap[cat.icon] || ShoppingBag;
+              return (
+                <motion.div
+                  key={cat.id}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={() => onCategoryClick(cat)}
+                  className="flex flex-col items-center gap-1.5 cursor-pointer group"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-700 shadow-sm group-hover:bg-yellow-400 group-hover:text-gray-900 transition-all">
+                    <IconComp className="w-6 h-6" />
+                  </div>
+                  <span className="text-[10px] font-bold text-gray-700 text-center line-clamp-1 group-hover:text-gray-900">
+                    {getLocalizedCategoryName(cat.id, language) || cat.name}
+                  </span>
+                </motion.div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Partner Stores & Verified Local Merchants */}
+        {vendors && vendors.length > 0 && (
+          <section className="px-4 py-3">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                  Partner Stores & Kirana Hubs
+                </h3>
+                <span className="text-[9px] font-black bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
+                  {vendors.filter(v => v && v.status !== 'Terminated').length} Live
+                </span>
+              </div>
+              <span 
+                className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest cursor-pointer hover:underline"
+                onClick={() => onNavigate("vendors" as any)}
+              >
+                Explore Hubs
+              </span>
+            </div>
+
+            {/* Store Filter Tabs */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-2 mb-1">
+              {[
+                { id: 'all', label: 'All Stores' },
+                { id: 'groceries', label: 'Kirana & Grocery' },
+                { id: 'food', label: 'Restaurants' },
+                { id: 'dairy', label: 'Dairy & Sweets' },
+                { id: 'pharmacy', label: 'Pharmacy' }
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setSelectedStoreCategoryFilter(f.id)}
+                  className={`px-3 py-1 rounded-xl text-[10px] font-bold whitespace-nowrap transition-all cursor-pointer ${
+                    selectedStoreCategoryFilter === f.id
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Staggered Store List Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {vendors
+                .filter(v => {
+                  if (!v || v.status === 'Terminated') return false;
+                  if (selectedStoreCategoryFilter === 'all') return true;
+                  const s = (v.service || '').toLowerCase();
+                  return s.includes(selectedStoreCategoryFilter);
+                })
+                .slice(0, 6)
+                .map((store, index) => (
+                  <motion.div
+                    key={store.id}
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ 
+                      duration: 0.35, 
+                      delay: Math.min(index * 0.05, 0.4), 
+                      ease: 'easeOut' 
+                    }}
+                    className="bg-white rounded-2xl p-3.5 border border-gray-100 shadow-sm hover:shadow-md transition-all flex flex-col justify-between gap-3 group"
+                  >
+                    <div className="flex items-start justify-between gap-2.5">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-12 h-12 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center overflow-hidden shrink-0">
+                          {store.photo ? (
+                            <img src={store.photo} alt={store.businessName} className="w-full h-full object-cover" />
+                          ) : (
+                            <Store className="w-6 h-6 text-gray-400 group-hover:text-emerald-600 transition-colors" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <h4 className="text-xs font-black text-gray-900 truncate">
+                            {store.businessName}
+                          </h4>
+                          <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                            {store.ownerName} â€¢ {store.service || 'Kirana & Essentials'}
+                          </p>
+                          <div className="flex items-center gap-1.5 mt-1 text-[9px] font-bold text-gray-500">
+                            <MapPin className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                            <span className="truncate">{store.address || 'Khammam Central'}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-wider shrink-0 ${
+                        store.isOnline !== false ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {store.isOnline !== false ? 'Open' : 'Closed'}
+                      </span>
+                    </div>
+
+                    <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
+                      {/* 'View on Map' Button */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedMapStore(store);
+                        }}
+                        className="px-2.5 py-1 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:scale-95"
+                        title="View exact store pin on map"
+                      >
+                        <MapPin className="w-3 h-3 text-emerald-600" />
+                        <span>View on Map</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (store.service) {
+                            const matchedCat = CATEGORIES.find(c => c.id === store.service || c.name.toLowerCase().includes(store.service.toLowerCase()));
+                            if (matchedCat) onCategoryClick(matchedCat);
+                          }
+                        }}
+                        className="text-[9px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 uppercase tracking-wider cursor-pointer"
+                      >
+                        <span>Visit Store</span>
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+            </div>
+          </section>
+        )}
+
+        {/* Popular Around You / Deals Section */}
+        {popularAroundYouItems.length > 0 && (
+          <section className="px-4 py-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                  {typeof getLocalizedPopularAroundYou(language) === "string" ? (getLocalizedPopularAroundYou(language) as unknown as string) : ((getLocalizedPopularAroundYou(language) as any)?.title || "Popular Around You")}
+                </h3>
+              </div>
+              <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest cursor-pointer">
+                See All
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {popularAroundYouItems.map((prod) => (
+                <div 
+                  key={prod.id}
+                  onClick={() => onProductClick(prod)}
+                  className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+                >
+                  <div className="w-full aspect-square rounded-xl bg-gray-50 overflow-hidden mb-2 relative">
+                    {prod.image ? (
+                      <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-gray-400">
+                        <Package className="w-8 h-8" />
+                      </div>
+                    )}
+                    {(prod as any).rating && (
+                      <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-lg bg-white/90 backdrop-blur-xs flex items-center gap-0.5 shadow-sm">
+                        <Star className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400" />
+                        <span className="text-[8px] font-black text-gray-800">{(prod as any).rating}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-gray-900 truncate">{getLocalizedProductName(prod.id, language) || prod.name}</h4>
+                    <p className="text-[10px] text-gray-400 truncate mt-0.5 capitalize">{prod.category}</p>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-xs font-black text-emerald-600">â‚¹{prod.price}</span>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onProductClick(prod);
+                        }}
+                        className="px-2.5 py-1 bg-yellow-400 text-gray-900 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-yellow-500 transition-colors"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Trending Services */}
+        {trendingServicesItems.length > 0 && (
+          <section className="px-4 py-4 bg-gray-50/50 rounded-3xl my-2">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                {typeof getLocalizedTrendingServices(language) === "string" ? (getLocalizedTrendingServices(language) as unknown as string) : ((getLocalizedTrendingServices(language) as any)?.title || "Trending Services")}
+              </h3>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {trendingServicesItems.map((serv) => (
+                <div
+                  key={serv.id}
+                  onClick={() => onProductClick(serv)}
+                  className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer"
+                >
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                      <Wrench className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-black text-gray-900 truncate">{getLocalizedServiceName(serv.id, language) || serv.name}</h4>
+                      <span className="text-[9px] font-bold text-gray-400">â‚¹{serv.price} onwards</span>
+                    </div>
+                  </div>
+                  <button className="w-full py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors">
+                    Book Service
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Bottom Banner Slider */}
+        {bottomBanners && bottomBanners.length > 0 && (
+          <section className="px-4 py-3">
+            <div 
+              id="banner-slider-container-bottom"
+              onClick={() => {
+                const banner = bottomBanners[activeBottomBanner % bottomBanners.length];
+                handleBannerClick(banner);
+              }}
+              className="cursor-pointer"
+            >
+              {(() => {
+                const banner = bottomBanners[activeBottomBanner % bottomBanners.length];
+                return (
+                  <div className={`w-full rounded-[2rem] p-5 text-white shadow-lg relative overflow-hidden ${banner.color || "bg-emerald-600"}`}>
+                    <div className="max-w-[75%]">
+                      <span className="text-[8px] font-black uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded-full">Community Deals</span>
+                      <h3 className="text-base font-black italic tracking-tight mt-1">{banner.title}</h3>
+                      <p className="text-[10px] text-white/80 font-medium mt-0.5">{banner.sub}</p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </section>
+        )}
+
+        {/* Community Pool Banner & App Security Badge */}
+        <div className="px-4 space-y-3 py-2">
+          <CommunityPoolBanner onOpenScratchCard={() => setShowScratchCardModal(true)} />
+          <AppSpeedSecurityBadge />
+        </div>
+
+        {/* Footer & Partner Access */}
+        <footer className="px-4 py-6 border-t border-gray-100 text-center space-y-4">
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button 
+              onClick={() => setShowPartnerOnboarding(true)}
+              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors"
+            >
+              Register as Partner
+            </button>
+            <button 
+              onClick={() => setShowAdminLogin(true)}
+              className="px-4 py-2 bg-gray-900 hover:bg-black text-yellow-400 rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors"
+            >
+              Founder Admin Access
+            </button>
+          </div>
+          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+            Khammam Direct Hyperlocal Delivery Â© 2026
+          </p>
+        </footer>
+      </div>
+
+      {/* Store Location Map Modal */}
+      {selectedMapStore && (
+        <StoreMapModal
+          isOpen={!!selectedMapStore}
+          onClose={() => setSelectedMapStore(null)}
+          store={selectedMapStore}
+          isAdmin={isAdmin || isSuperAdmin || isBranchAdmin || userProfile?.role === 'admin' || userProfile?.role === 'masterAdmin' || (userProfile as any)?.isAdmin}
+          onCoordinatesUpdated={(storeId, lat, lng) => {
+            setVendors(prev => prev.map(v => v.id === storeId ? { ...v, lat, lng, coordinates: { lat, lng } } : v));
+          }}
+        />
+      )}
+
+      {/* Floating Scroll-to-Top Button */}
+      <ScrollToTopButton targetRef={homeScrollRef} threshold={250} bottomOffset="bottom-24" />
+
+      {/* Real-time Price Drop In-App Toast Notification */}
+      <PriceDropToast onOpenProduct={(prod) => onProductClick(prod)} />
+    </div>
+  );
+}
+
+export default Home;

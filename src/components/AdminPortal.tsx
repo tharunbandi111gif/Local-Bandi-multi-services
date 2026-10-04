@@ -13,7 +13,7 @@ import {
   Lock, Unlock, PhoneCall, Upload, Camera, Image as ImageIcon, Link as LinkIcon,
   CheckSquare, Square, Filter, SlidersHorizontal, Layers,
   Printer, Receipt, Copy, ExternalLink, Clock, CreditCard, PackageCheck, Truck, Phone, MessageSquare, Navigation, Eye, Share2,
-  Play, Pause, Wrench, Download
+  Play, Pause, Wrench, Download, Tag
 } from 'lucide-react';
 import { compressImage, validateImageFile, processImageUpload, MAX_IMAGE_FILE_SIZE_BYTES } from '../lib/imageUtils';
 import { useFirebase } from '../contexts/FirebaseContext';
@@ -34,8 +34,14 @@ import SOSAlertIndicator from './common/SOSAlertIndicator';
 import { AttractionCampaignsManager } from './AttractionCampaignsManager';
 import { RealTimeSyncService } from '../services/realTimeSyncService';
 import { DeploymentReadinessWidget, ApkGenerationHub } from './AdminApkHub';
+import { printInvoiceRealtime, generateInvoiceHtml, getOrGenerateInvoiceNo, ensureOrderInvoicePersisted } from '../lib/invoicePrintService';
+import RealtimeOrderBillModal from './RealtimeOrderBillModal';
+import ShippingLabelModal from './ShippingLabelModal';
+import GlobalMonitoringView from './admin/GlobalMonitoringView';
+import StoreMapModal from './StoreMapModal';
 
 export default function AdminPortal() {
+  const [selectedMapStore, setSelectedMapStore] = useState<any | null>(null);
   const { 
     user, 
     login, 
@@ -85,7 +91,7 @@ export default function AdminPortal() {
 
   const [adminPasscode, setAdminPasscode] = useState('');
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'apk_hub' | 'sos' | 'ai_desk' | 'attractions' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'monitoring' | 'apk_hub' | 'sos' | 'ai_desk' | 'attractions' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz'>('dashboard');
 
   // --- EMERGENCY SOS DISTRESS ALERTS STATES ---
   const [sosAlerts, setSosAlerts] = useState<SOSAlert[]>([]);
@@ -110,7 +116,7 @@ export default function AdminPortal() {
 
   // --- LOGISTICS HUB STATES ---
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
-  const [logisticsFilter, setLogisticsFilter] = useState<'All' | 'Pending' | 'Accepted' | 'Preparing' | 'OutForDelivery' | 'Delivered' | 'Cancelled'>('All');
+  const [logisticsFilter, setLogisticsFilter] = useState<'All' | 'Pending' | 'Accepted' | 'Preparing' | 'ReadyForPickup' | 'OutForDelivery' | 'Delivered' | 'Cancelled'>('All');
   const [logisticsSearchQuery, setLogisticsSearchQuery] = useState('');
   const [bulkSelectedOrderIds, setBulkSelectedOrderIds] = useState<string[]>([]);
   const [editingOrder, setEditingOrder] = useState<any | null>(null);
@@ -2331,102 +2337,25 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     }
   };
 
-  const handlePrintOrderInvoice = (ord: any) => {
-    if (!ord) return;
-    const printWindow = window.open('', '_blank', 'width=800,height=900');
-    if (!printWindow) {
-      alert('Please allow popups to print order invoice');
-      return;
-    }
-    const isCOD = (ord.paymentMethod || ord.paymentType || '').toUpperCase().includes('COD') || (ord.paymentMethod || '').toLowerCase() === 'cash_on_delivery' || !ord.paymentMethod;
-    const items = ord.orderItems || ord.items || [];
-    const createdDate = ord.createdAt 
-      ? (typeof ord.createdAt === 'string' ? new Date(ord.createdAt).toLocaleString() : (ord.createdAt.seconds ? new Date(ord.createdAt.seconds * 1000).toLocaleString() : 'Recent')) 
-      : 'Recent';
+  const [adminBillModalOrder, setAdminBillModalOrder] = useState<any | null>(null);
+  const [isAdminBillModalOpen, setIsAdminBillModalOpen] = useState(false);
+  const [adminShippingModalOrder, setAdminShippingModalOrder] = useState<any | null>(null);
+  const [isAdminShippingModalOpen, setIsAdminShippingModalOpen] = useState(false);
 
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Order Invoice #${ord.id?.slice(0, 8).toUpperCase()}</title>
-          <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #0f172a; max-width: 700px; margin: auto; }
-            .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 20px; }
-            .title { font-size: 22px; font-weight: 900; text-transform: uppercase; color: #0f172a; margin: 0; }
-            .subtitle { font-size: 11px; color: #64748b; font-weight: 700; margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
-            .box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
-            .box h4 { margin: 0 0 6px; font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; }
-            .box p { margin: 2px 0; font-size: 12px; font-weight: 600; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
-            th { background: #0f172a; color: white; text-align: left; padding: 8px 12px; font-size: 10px; text-transform: uppercase; }
-            td { border-bottom: 1px solid #e2e8f0; padding: 8px 12px; }
-            .totals { margin-left: auto; width: 280px; font-size: 12px; }
-            .totals-row { display: flex; justify-content: space-between; padding: 4px 0; }
-            .totals-row.grand { font-size: 15px; font-weight: 900; border-top: 2px solid #0f172a; padding-top: 8px; margin-top: 6px; color: #059669; }
-            .footer { text-align: center; margin-top: 30px; font-size: 10px; color: #94a3b8; font-weight: bold; border-top: 1px dashed #cbd5e1; padding-top: 12px; }
-            @media print {
-              body { padding: 0; }
-              .no-print { display: none; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1 class="title">Local Bandi Multi Services</h1>
-            <div class="subtitle">Official Tax Invoice & Delivery Manifest &bull; Order #${ord.id?.toUpperCase()}</div>
-          </div>
-          <div class="grid">
-            <div class="box">
-              <h4>Customer Details</h4>
-              <p><strong>${ord.customerName || ord.userName || 'Customer'}</strong></p>
-              <p>Phone: ${ord.phone || ord.userPhone || 'N/A'}</p>
-              <p>Address: ${ord.address || 'Khammam Delivery'}</p>
-            </div>
-            <div class="box">
-              <h4>Order & Payment Details</h4>
-              <p>Date: ${createdDate}</p>
-              <p>Payment: <strong>${isCOD ? 'Cash on Delivery (COD)' : 'Paid Online (UPI/Card)'}</strong></p>
-              <p>Status: <strong>${ord.status?.toUpperCase()}</strong></p>
-              <p>Merchant: ${ord.vendorName || 'Local Bandi Central Hub'}</p>
-            </div>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th style="text-align: center;">Qty</th>
-                <th style="text-align: right;">Unit Price</th>
-                <th style="text-align: right;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${items.map((it: any) => `
-                <tr>
-                  <td><strong>${it.name || 'Item'}</strong> ${it.unit ? `<span style="color:#64748b;font-size:10px;">(${it.unit})</span>` : ''}</td>
-                  <td style="text-align: center; font-weight: bold;">${it.quantity || 1}</td>
-                  <td style="text-align: right;">₹${it.price || 0}</td>
-                  <td style="text-align: right; font-weight: bold;">₹${(it.price || 0) * (it.quantity || 1)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          <div class="totals">
-            <div class="totals-row"><span>Items Subtotal:</span> <span>₹${ord.subtotal || ord.total || 0}</span></div>
-            ${ord.deliveryFee ? `<div class="totals-row"><span>Delivery Fee:</span> <span>₹${ord.deliveryFee}</span></div>` : ''}
-            ${ord.discount ? `<div class="totals-row" style="color:#dc2626;"><span>Discount:</span> <span>-₹${ord.discount}</span></div>` : ''}
-            <div class="totals-row grand"><span>Total Payable:</span> <span>₹${ord.total || ord.totalPrice || 0}</span></div>
-          </div>
-          <div class="footer">
-            Thank you for ordering with Local Bandi &bull; Support: support@localbandi.com
-          </div>
-          <script>
-            window.onload = function() { window.print(); }
-          </script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
+  const handlePrintOrderInvoice = async (ord: any, format: 'a4' | 'thermal' = 'a4') => {
+    if (!ord) return;
+    try {
+      // Ensure official invoice number exists and is persisted
+      await ensureOrderInvoicePersisted(ord);
+      // Execute real-time printing via hidden iframe
+      await printInvoiceRealtime(ord, format);
+      triggerToast(`🖨️ Real-time ${format.toUpperCase()} invoice sent to printer!`);
+    } catch (e: any) {
+      console.warn("Realtime invoice print fallback:", e);
+      // Fallback modal open
+      setAdminBillModalOrder(ord);
+      setIsAdminBillModalOpen(true);
+    }
   };
 
   const handleCopyOrderSummary = (ord: any) => {
@@ -2782,6 +2711,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
 
       await setDoc(doc(db, 'categories', catId), data);
       triggerToast(editingCategory ? '✓ Category details updated' : '🎉 New Category added successfully');
+      window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'category', action: 'save', id: catId } }));
 
       setShowCategoryModal(false);
       setEditingCategory(null);
@@ -2797,6 +2727,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
     try {
       await deleteDoc(doc(db, 'categories', id));
       triggerToast('🗑️ Category deleted from database');
+      window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'category', action: 'delete', id } }));
     } catch (err) {
       console.error(err);
     }
@@ -2858,12 +2789,14 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
       if (editingItem) {
         await updateDoc(doc(db, 'products', editingItem.id), data);
         triggerToast('✓ Item updated in catalog');
+        window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'product', action: 'update', id: editingItem.id } }));
       } else {
-        await addDoc(collection(db, 'products'), {
+        const newRef = await addDoc(collection(db, 'products'), {
           ...data,
           createdAt: serverTimestamp()
         });
         triggerToast('🎉 New listing added to catalog');
+        window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'product', action: 'create', id: newRef.id } }));
       }
 
       setShowItemModal(false);
@@ -2886,6 +2819,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
       await deleteDoc(doc(db, 'products', id));
       setSelectedProductIds(prev => prev.filter(item => item !== id));
       triggerToast('🗑️ Listing deleted from database');
+      window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'product', action: 'delete', id } }));
     } catch (err) {
       console.error(err);
       triggerToast('❌ Failed to delete product');
@@ -2923,6 +2857,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
       setSelectedProductIds([]);
       setShowBulkDeleteModal(false);
       triggerToast(`🗑️ Successfully deleted ${count} products from catalog`);
+      window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'product', action: 'bulk_delete' } }));
     } catch (err) {
       console.error("Bulk delete error:", err);
       alert("Error deleting some products. Please check Firestore permissions.");
@@ -3049,7 +2984,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {['dashboard', 'apk_hub', 'sos', 'ai_desk', 'attractions', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz'].map((tab) => {
+          {['dashboard', 'monitoring', 'apk_hub', 'sos', 'ai_desk', 'attractions', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz'].map((tab) => {
             const isPendingSupport = tab === 'support' && complaints.some(c => c.status === 'Pending');
             const activeSosCount = sosAlerts.filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED').length;
             const isSosTab = tab === 'sos';
@@ -3062,38 +2997,44 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
                   activeTab === tab 
                     ? isSosTab 
                       ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50 font-extrabold border border-rose-400'
-                      : tab === 'apk_hub'
-                        ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-black border border-indigo-300 ring-2 ring-indigo-400/40'
-                        : tab === 'attractions'
-                          ? 'bg-gradient-to-r from-amber-400 to-yellow-400 text-slate-950 shadow-md shadow-amber-950/30 font-black border border-amber-300'
-                          : 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20 font-extrabold border border-yellow-300' 
+                      : tab === 'monitoring'
+                        ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-950/50 font-black border border-emerald-300 ring-2 ring-emerald-400/40'
+                        : tab === 'apk_hub'
+                          ? 'bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-600 text-white shadow-lg shadow-indigo-950/50 font-black border border-indigo-300 ring-2 ring-indigo-400/40'
+                          : tab === 'attractions'
+                            ? 'bg-gradient-to-r from-amber-400 to-yellow-400 text-slate-950 shadow-md shadow-amber-950/30 font-black border border-amber-300'
+                            : 'bg-yellow-400 text-slate-900 shadow-md shadow-yellow-950/20 font-extrabold border border-yellow-300' 
                     : isSosTab
                       ? activeSosCount > 0
                         ? 'bg-rose-950/60 text-rose-300 border border-rose-500/60 font-bold hover:bg-rose-900/60 animate-pulse'
                         : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
-                      : tab === 'apk_hub'
-                        ? 'bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-500/40 font-bold hover:border-indigo-400/70 shadow-sm'
-                        : tab === 'attractions'
-                          ? 'bg-gradient-to-r from-amber-950/40 to-indigo-950/40 text-amber-300 border border-amber-500/40 font-black hover:border-amber-400/70 shadow-sm'
-                          : tab === 'quiz'
-                            ? 'bg-amber-950/40 text-amber-400 border border-amber-500/30 font-bold hover:bg-amber-950/60'
-                            : tab === 'ai_desk'
-                              ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
-                              : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
+                      : tab === 'monitoring'
+                        ? 'bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 border border-emerald-500/40 font-bold shadow-sm'
+                        : tab === 'apk_hub'
+                          ? 'bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-500/40 font-bold hover:border-indigo-400/70 shadow-sm'
+                          : tab === 'attractions'
+                            ? 'bg-gradient-to-r from-amber-950/40 to-indigo-950/40 text-amber-300 border border-amber-500/40 font-black hover:border-amber-400/70 shadow-sm'
+                            : tab === 'quiz'
+                              ? 'bg-amber-950/40 text-amber-400 border border-amber-500/30 font-bold hover:bg-amber-950/60'
+                              : tab === 'ai_desk'
+                                ? 'bg-purple-950/40 text-purple-400 border border-purple-500/30 font-bold hover:bg-purple-950/60'
+                                : 'bg-slate-950/45 hover:bg-slate-850 text-slate-400 border border-white/5'
                 }`}
               >
                 <span>
-                  {tab === 'apk_hub'
-                    ? '📦 APK Hub & CLI'
-                    : tab === 'sos' 
-                      ? `🚨 SOS (${activeSosCount})` 
-                      : tab === 'attractions'
-                        ? '🎁 Attraction Campaigns'
-                        : tab === 'quiz' 
-                          ? '⚡ 40s Quiz' 
-                          : tab === 'ai_desk' 
-                            ? '🧠 AI Developer Desk' 
-                            : tab}
+                  {tab === 'monitoring'
+                    ? '🌐 Global Monitoring'
+                    : tab === 'apk_hub'
+                      ? '📦 APK Hub & CLI'
+                      : tab === 'sos' 
+                        ? `🚨 SOS (${activeSosCount})` 
+                        : tab === 'attractions'
+                          ? '🎁 Attraction Campaigns'
+                          : tab === 'quiz' 
+                            ? '⚡ 40s Quiz' 
+                            : tab === 'ai_desk' 
+                              ? '🧠 AI Developer Desk' 
+                              : tab}
                 </span>
                 {isSosTab && activeSosCount > 0 && (
                   <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping absolute -top-0.5 -right-0.5" />
@@ -3107,6 +3048,57 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
               </button>
             );
           })}
+
+          {/* 5 STANDALONE APPS QUICK-LAUNCH SELECTOR */}
+          <div className="relative group">
+            <button 
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-slate-200 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 transition"
+              title="Switch to any of the 5 Standalone Apps"
+            >
+              <Layers className="w-3.5 h-3.5 text-yellow-400" />
+              <span>Launch 5 Apps</span>
+            </button>
+            <div className="absolute right-0 top-full mt-1.5 w-60 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-2 hidden group-hover:block z-50">
+              <div className="px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-800/80 mb-1">
+                5 Standalone Applications
+              </div>
+              <a href="/" className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white transition">
+                <span className="w-2.5 h-2.5 rounded-full bg-yellow-400"></span>
+                <div className="text-left">
+                  <p className="font-bold text-xs">Customer App</p>
+                  <p className="text-[9px] text-slate-400 font-mono">com.localbandi.customer</p>
+                </div>
+              </a>
+              <a href="/vendor.html" className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white transition">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                <div className="text-left">
+                  <p className="font-bold text-xs">Vendor App</p>
+                  <p className="text-[9px] text-slate-400 font-mono">com.localbandi.vendor</p>
+                </div>
+              </a>
+              <a href="/delivery.html" className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white transition">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-400"></span>
+                <div className="text-left">
+                  <p className="font-bold text-xs">Delivery Partner App</p>
+                  <p className="text-[9px] text-slate-400 font-mono">com.localbandi.delivery</p>
+                </div>
+              </a>
+              <a href="/branch-admin.html" className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-slate-800 text-xs text-white transition">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                <div className="text-left">
+                  <p className="font-bold text-xs">Branch Admin App</p>
+                  <p className="text-[9px] text-slate-400 font-mono">com.localbandi.branchadmin</p>
+                </div>
+              </a>
+              <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-rose-950/40 border border-rose-800/40 text-xs text-rose-200">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+                <div className="text-left">
+                  <p className="font-bold text-xs">Master Admin App</p>
+                  <p className="text-[9px] text-rose-400 font-mono">com.localbandi.masteradmin (Current)</p>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <button 
             onClick={() => window.location.href = '/'}
@@ -3187,7 +3179,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
             </div>
 
             {/* 30-Day performance dynamic trends chart */}
-            <OrderTrendsChart orders={orders} branches={branches} />
+            <OrderTrendsChart orders={orders} branches={branches} vendors={vendors} />
 
             {/* REAL-TIME BRANCH FINANCIALS & COD MONITOR */}
             <div className="bg-slate-900 border border-white/5 rounded-[2.5rem] p-6 space-y-6 text-left">
@@ -4231,6 +4223,16 @@ const reconcileDocSync = async (branchId, docBody) => {
           </div>
         )}
 
+        {/* TAB: REAL-TIME GLOBAL MONITORING HUB */}
+        {activeTab === 'monitoring' && (
+          <GlobalMonitoringView 
+            currentAdminUid={user?.uid || 'master_admin'}
+            currentAdminName={user?.displayName || 'Master Platform Admin'}
+            branches={branches}
+            orders={orders}
+          />
+        )}
+
         {/* TAB: APK GENERATION HUB & CLI BUILD CONSOLE */}
         {activeTab === 'apk_hub' && (
           <ApkGenerationHub />
@@ -4306,10 +4308,11 @@ const reconcileDocSync = async (branchId, docBody) => {
 
                 {/* Filters */}
                 <div className="flex flex-wrap gap-1.5 border-b border-white/5 pb-3">
-                  {(['All', 'Pending', 'Accepted', 'Preparing', 'OutForDelivery', 'Delivered', 'Cancelled'] as const).map(f => {
+                  {(['All', 'Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery', 'Delivered', 'Cancelled'] as const).map(f => {
                     const count = f === 'All' ? orders.length : orders.filter(o => {
                       if (f === 'Accepted') return o.status === 'Accepted';
                       if (f === 'Preparing') return o.status === 'Preparing';
+                      if (f === 'ReadyForPickup') return o.status === 'ReadyForPickup';
                       if (f === 'OutForDelivery') return o.status === 'OutForDelivery' || o.status === 'PickedUp';
                       return o.status === f;
                     }).length;
@@ -4323,7 +4326,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                         }}
                         className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer ${logisticsFilter === f ? 'bg-yellow-400 text-slate-950 font-black shadow-md shadow-yellow-950/20' : 'bg-slate-950/60 hover:bg-slate-950 text-slate-400 border border-white/5'}`}
                       >
-                        {f === 'OutForDelivery' ? 'In Transit' : f} ({count})
+                        {f === 'ReadyForPickup' ? 'Ready' : f === 'OutForDelivery' ? 'In Transit' : f} ({count})
                       </button>
                     );
                   })}
@@ -4401,8 +4404,9 @@ const reconcileDocSync = async (branchId, docBody) => {
                       if (logisticsFilter !== 'All') {
                         if (logisticsFilter === 'Accepted' && o.status !== 'Accepted') return false;
                         if (logisticsFilter === 'Preparing' && o.status !== 'Preparing') return false;
+                        if (logisticsFilter === 'ReadyForPickup' && o.status !== 'ReadyForPickup') return false;
                         if (logisticsFilter === 'OutForDelivery' && !(o.status === 'OutForDelivery' || o.status === 'PickedUp')) return false;
-                        if (!['Accepted', 'Preparing', 'OutForDelivery'].includes(logisticsFilter) && o.status !== logisticsFilter) return false;
+                        if (!['Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery'].includes(logisticsFilter) && o.status !== logisticsFilter) return false;
                       }
                       // Query filter
                       if (logisticsSearchQuery.trim()) {
@@ -4666,12 +4670,27 @@ const reconcileDocSync = async (branchId, docBody) => {
                             <div className="flex items-center gap-1.5 pt-1">
                               <button
                                 type="button"
-                                onClick={() => handlePrintOrderInvoice(activeOrd)}
-                                className="px-2.5 py-1.5 bg-slate-950 hover:bg-slate-800 border border-white/10 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow"
-                                title="Print Tax Invoice / Bill"
+                                onClick={() => {
+                                  setAdminBillModalOrder(activeOrd);
+                                  setIsAdminBillModalOpen(true);
+                                }}
+                                className="px-2.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black rounded-xl text-[9px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow"
+                                title="Print Tax Invoice / Bill (A4 & Thermal 80mm)"
                               >
-                                <Printer className="w-3.5 h-3.5 text-amber-400" />
+                                <Printer className="w-3.5 h-3.5 text-slate-950" />
                                 <span>Print Bill</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAdminShippingModalOrder(activeOrd);
+                                  setIsAdminShippingModalOpen(true);
+                                }}
+                                className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-black rounded-xl text-[9px] uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer shadow"
+                                title="Print Shipping Label (Order ID & Address)"
+                              >
+                                <Tag className="w-3.5 h-3.5 text-amber-400" />
+                                <span>Shipping Label</span>
                               </button>
                               <button
                                 type="button"
@@ -4875,12 +4894,14 @@ const reconcileDocSync = async (branchId, docBody) => {
                                 <span>Items Subtotal:</span>
                                 <span className="font-mono text-white">₹{activeOrd.subtotal || activeOrd.total || 0}</span>
                               </div>
-                              {Number(activeOrd.deliveryFee || 0) > 0 && (
-                                <div className="flex justify-between text-slate-400">
-                                  <span>Delivery Fee:</span>
-                                  <span className="font-mono text-white">₹{activeOrd.deliveryFee}</span>
-                                </div>
-                              )}
+                              <div className="flex justify-between text-slate-400">
+                                <span>Delivery Distance:</span>
+                                <span className="font-mono text-amber-400 font-bold">{activeOrd.distanceKm || activeOrd.deliveryDistanceKm || (Number(activeOrd.deliveryFee || 0) > 25 ? (3 + (Number(activeOrd.deliveryFee) - 25) / 10).toFixed(1) : 2.5)} km</span>
+                              </div>
+                              <div className="flex justify-between text-slate-400">
+                                <span>Delivery Fee:</span>
+                                <span className="font-mono text-white font-bold">₹{activeOrd.deliveryFee ?? (Number(activeOrd.distanceKm || 2.5) <= 3 ? 25 : 25 + Math.ceil(Number(activeOrd.distanceKm || 2.5) - 3) * 10)}</span>
+                              </div>
                               {Number(activeOrd.packagingFee || 0) > 0 && (
                                 <div className="flex justify-between text-slate-400">
                                   <span>Packaging & Handling:</span>
@@ -4943,6 +4964,50 @@ const reconcileDocSync = async (branchId, docBody) => {
                             </button>
                           )}
 
+                          {activeOrd.status === 'Accepted' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderStatusEx(activeOrd.id, 'Preparing')}
+                              className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[11px] uppercase tracking-widest rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-indigo-950/20"
+                            >
+                              <Clock className="w-4.5 h-4.5" />
+                              <span>Start Preparing (In Kitchen/Store)</span>
+                            </button>
+                          )}
+
+                          {activeOrd.status === 'Preparing' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderStatusEx(activeOrd.id, 'ReadyForPickup')}
+                              className="flex-1 py-4 bg-purple-600 hover:bg-purple-500 text-white font-black text-[11px] uppercase tracking-widest rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-purple-950/20"
+                            >
+                              <PackageCheck className="w-4.5 h-4.5" />
+                              <span>Mark Ready for Pickup</span>
+                            </button>
+                          )}
+
+                          {activeOrd.status === 'ReadyForPickup' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderStatusEx(activeOrd.id, 'OutForDelivery')}
+                              className="flex-1 py-4 bg-blue-600 hover:bg-blue-500 text-white font-black text-[11px] uppercase tracking-widest rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-blue-950/20"
+                            >
+                              <Bike className="w-4.5 h-4.5" />
+                              <span>Dispatch: Out for Delivery</span>
+                            </button>
+                          )}
+
+                          {(activeOrd.status === 'OutForDelivery' || activeOrd.status === 'PickedUp') && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderStatusEx(activeOrd.id, 'Delivered')}
+                              className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[11px] uppercase tracking-widest rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-950/20"
+                            >
+                              <CheckCircle className="w-4.5 h-4.5" />
+                              <span>Confirm Handover & Delivered</span>
+                            </button>
+                          )}
+
                           {activeOrd.status !== 'Cancelled' && activeOrd.status !== 'Delivered' && (
                             <button
                               type="button"
@@ -4958,14 +5023,14 @@ const reconcileDocSync = async (branchId, docBody) => {
                           <div className="w-full flex items-center gap-2 mt-2 bg-slate-950 p-3.5 rounded-2xl border border-white/5">
                             <span className="text-[9px] font-black uppercase text-slate-400 whitespace-nowrap">Status Override:</span>
                             <div className="flex gap-1.5 flex-wrap">
-                              {['Pending', 'Accepted', 'Preparing', 'OutForDelivery', 'Delivered'].map(st => (
+                              {['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery', 'Delivered'].map(st => (
                                 <button
                                   key={st}
                                   type="button"
                                   onClick={() => handleUpdateOrderStatusEx(activeOrd.id, st)}
                                   className={`px-3 py-1.5 rounded-lg text-[8px] font-black uppercase transition-all cursor-pointer ${activeOrd.status === st ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-900 hover:bg-slate-850 text-slate-400'}`}
                                 >
-                                  {st === 'OutForDelivery' ? 'In Transit' : st}
+                                  {st === 'ReadyForPickup' ? 'Ready' : st === 'OutForDelivery' ? 'In Transit' : st}
                                 </button>
                               ))}
                             </div>
@@ -6226,10 +6291,42 @@ const reconcileDocSync = async (branchId, docBody) => {
         {/* TAB 4: MERCHANT list */}
         {activeTab === 'vendors' && (
           <div className="space-y-6">
-            <header>
-              <h2 className="text-lg font-black uppercase tracking-tight">Integrated Store Directory</h2>
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Review and manage verified business profiles</p>
+            <header className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-black uppercase tracking-tight">Integrated Store Directory</h2>
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Review, verify, and pin exact GPS coordinates for all partner merchants</p>
+              </div>
             </header>
+
+            {/* Admin GPS & Map Pin Command Banner */}
+            <div className="bg-gradient-to-r from-emerald-950/60 via-slate-900 to-indigo-950/60 p-5 rounded-[2rem] border border-emerald-500/30 flex flex-wrap items-center justify-between gap-4 shadow-lg">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center font-bold">
+                  <MapPin className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-emerald-300">
+                      Store GPS Pinning & Location Authority
+                    </h3>
+                    <span className="text-[9px] font-mono bg-emerald-500/20 text-emerald-300 px-2.5 py-0.5 rounded-full border border-emerald-500/40 font-bold">
+                      Admin Mode
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300 font-medium mt-0.5">
+                    Click 'View on Map' on any merchant store to inspect, drag, and fine-tune its exact geographic pin coordinates for customer searches and rider navigation.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="bg-slate-800/80 px-4 py-2 rounded-xl border border-white/5 text-right">
+                  <p className="text-[8px] font-black text-slate-400 uppercase">Stores With Custom GPS</p>
+                  <p className="text-sm font-black text-emerald-400">
+                    {vendors.filter(v => v.coordinates || (v.lat && v.lng)).length} / {vendors.length}
+                  </p>
+                </div>
+              </div>
+            </div>
 
             <div className="bg-slate-900 border border-white/5 rounded-[2.5rem] overflow-hidden">
               <div className="overflow-x-auto">
@@ -6250,33 +6347,66 @@ const reconcileDocSync = async (branchId, docBody) => {
                         <td colSpan={6} className="text-center py-8 text-slate-500 font-bold uppercase tracking-widest text-[10px]">No store merchants registered</td>
                       </tr>
                     ) : (
-                      vendors.map((v) => (
-                        <tr key={v.id} className="hover:bg-white/[0.01] transition-colors">
-                          <td className="py-4 px-6 font-black text-white uppercase tracking-tight">{v.businessName || v.name}</td>
+                      vendors.map((v, idx) => (
+                        <motion.tr 
+                          key={v.id} 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ 
+                            duration: 0.25, 
+                            delay: Math.min(idx * 0.03, 0.4), 
+                            ease: 'easeOut' 
+                          }}
+                          className="hover:bg-white/[0.02] transition-colors"
+                        >
+                          <td className="py-4 px-6 font-black text-white uppercase tracking-tight">
+                            <div className="flex items-center gap-2">
+                              <span>{v.businessName || v.name}</span>
+                              {(v.coordinates || (v.lat && v.lng)) && (
+                                <span className="text-[8px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-mono">
+                                  GPS Pinned
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="py-4 px-6">{v.ownerName || 'Unknown Owner'}</td>
                           <td className="py-4 px-6 font-mono text-[11px]">{v.phone}</td>
-                          <td className="py-4 px-6 font-medium text-slate-400 line-clamp-1">{v.address || 'Khammam'}</td>
+                          <td className="py-4 px-6 font-medium text-slate-400 max-w-[200px] truncate">
+                            {v.address || 'Khammam Central'}
+                          </td>
                           <td className="py-4 px-6 text-center">
                             <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest ${v.status === 'Approved' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-500'}`}>{v.status || 'Reviewing'}</span>
                           </td>
                           <td className="py-4 px-6 text-right">
-                            {v.status === 'Approved' ? (
-                              <button 
-                                onClick={() => handleUpdateVendorStatus(v.id, 'Banned')}
-                                className="px-3 py-1.5 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all"
+                            <div className="flex items-center justify-end gap-2">
+                              {/* 'View on Map' button for Admin fine-tuning */}
+                              <button
+                                onClick={() => setSelectedMapStore(v)}
+                                className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5"
+                                title="View & Re-pin Store Location on Map"
                               >
-                                Suspend Store
+                                <MapPin className="w-3 h-3" />
+                                <span>View on Map</span>
                               </button>
-                            ) : (
-                              <button 
-                                onClick={() => handleUpdateVendorStatus(v.id, 'Approved')}
-                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all shadow-md shadow-emerald-950/20"
-                              >
-                                Approve Store
-                              </button>
-                            )}
+
+                              {v.status === 'Approved' ? (
+                                <button 
+                                  onClick={() => handleUpdateVendorStatus(v.id, 'Banned')}
+                                  className="px-3 py-1.5 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all"
+                                >
+                                  Suspend
+                                </button>
+                              ) : (
+                                <button 
+                                  onClick={() => handleUpdateVendorStatus(v.id, 'Approved')}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all shadow-md shadow-emerald-950/20"
+                                >
+                                  Approve
+                                </button>
+                              )}
+                            </div>
                           </td>
-                        </tr>
+                        </motion.tr>
                       ))
                     )}
                   </tbody>
@@ -8620,10 +8750,10 @@ const reconcileDocSync = async (branchId, docBody) => {
                   </p>
                 </div>
                 <div className="bg-slate-950 p-4 rounded-2xl border border-white/5">
-                  <p className="text-[9px] font-black uppercase text-slate-400">Domain Master Sync Status</p>
-                  <p className="text-xs font-black text-emerald-400 uppercase tracking-wider mt-2 flex items-center gap-1.5">
+                  <p className="text-[9px] font-black uppercase text-slate-400">Production Domain & SSL Status</p>
+                  <p className="text-xs font-black text-emerald-400 uppercase tracking-wider mt-2 flex items-center gap-1.5 font-mono">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    localbandimultiservices.in
+                    https://localbundimultiservices.in (SSL Valid)
                   </p>
                 </div>
               </div>
@@ -11572,12 +11702,14 @@ const reconcileDocSync = async (branchId, docBody) => {
                       <span>Items Subtotal:</span>
                       <span className="font-mono text-white">₹{inspectingOrder.subtotal || inspectingOrder.total || 0}</span>
                     </div>
-                    {Number(inspectingOrder.deliveryFee || 0) > 0 && (
-                      <div className="flex justify-between">
-                        <span>Delivery Fee:</span>
-                        <span className="font-mono text-white">₹{inspectingOrder.deliveryFee}</span>
-                      </div>
-                    )}
+                    <div className="flex justify-between">
+                      <span>Delivery Distance:</span>
+                      <span className="font-mono text-amber-400 font-bold">{inspectingOrder.distanceKm || inspectingOrder.deliveryDistanceKm || (Number(inspectingOrder.deliveryFee || 0) > 25 ? (3 + (Number(inspectingOrder.deliveryFee) - 25) / 10).toFixed(1) : 2.5)} km</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Delivery Fee:</span>
+                      <span className="font-mono text-white font-bold">₹{inspectingOrder.deliveryFee ?? (Number(inspectingOrder.distanceKm || 2.5) <= 3 ? 25 : 25 + Math.ceil(Number(inspectingOrder.distanceKm || 2.5) - 3) * 10)}</span>
+                    </div>
                     {Number(inspectingOrder.packagingFee || 0) > 0 && (
                       <div className="flex justify-between">
                         <span>Packaging Fee:</span>
@@ -11618,11 +11750,25 @@ const reconcileDocSync = async (branchId, docBody) => {
               <div className="flex flex-wrap gap-2.5 pt-2">
                 <button
                   type="button"
-                  onClick={() => handlePrintOrderInvoice(inspectingOrder)}
-                  className="flex-1 py-3 bg-slate-950 hover:bg-slate-800 border border-white/10 text-white rounded-xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer shadow"
+                  onClick={() => {
+                    setAdminBillModalOrder(inspectingOrder);
+                    setIsAdminBillModalOpen(true);
+                  }}
+                  className="flex-1 py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer shadow"
                 >
-                  <Printer className="w-4 h-4 text-amber-400" />
+                  <Printer className="w-4 h-4 text-slate-950" />
                   <span>Print Tax Invoice</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminShippingModalOrder(inspectingOrder);
+                    setIsAdminShippingModalOpen(true);
+                  }}
+                  className="flex-1 py-3 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white rounded-xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-2 cursor-pointer shadow"
+                >
+                  <Tag className="w-4 h-4 text-amber-400" />
+                  <span>Shipping Label</span>
                 </button>
                 <button
                   type="button"
@@ -11648,6 +11794,37 @@ const reconcileDocSync = async (branchId, docBody) => {
           </div>
         )}
       </AnimatePresence>
+
+      <RealtimeOrderBillModal
+        isOpen={isAdminBillModalOpen}
+        onClose={() => {
+          setIsAdminBillModalOpen(false);
+          setAdminBillModalOrder(null);
+        }}
+        order={adminBillModalOrder}
+      />
+
+      <ShippingLabelModal
+        isOpen={isAdminShippingModalOpen}
+        onClose={() => {
+          setIsAdminShippingModalOpen(false);
+          setAdminShippingModalOrder(null);
+        }}
+        order={adminShippingModalOrder}
+      />
+
+      {/* Store Location Map Modal for Admin Authority */}
+      {selectedMapStore && (
+        <StoreMapModal
+          isOpen={!!selectedMapStore}
+          onClose={() => setSelectedMapStore(null)}
+          store={selectedMapStore}
+          isAdmin={true}
+          onCoordinatesUpdated={(storeId, lat, lng) => {
+            setVendors(prev => prev.map(v => v.id === storeId ? { ...v, lat, lng, coordinates: { lat, lng } } : v));
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -79,6 +79,17 @@ function getPincodeCoords(pincode: string, branchName: string): [number, number]
   return [baseCoords[0] + offsetLat, baseCoords[1] + offsetLng];
 }
 
+export const BRANCH_SERVICE_OPTIONS = [
+  { id: 'groceries', name: 'Groceries', emoji: '🛒' },
+  { id: 'dairy', name: 'Dairy & Milk', emoji: '🥛' },
+  { id: 'meat', name: 'Meat & Chicken', emoji: '🍗' },
+  { id: 'water', name: 'Water Cans', emoji: '💧' },
+  { id: 'veg', name: 'Veg & Fruits', emoji: '🥦' },
+  { id: 'tiffins', name: 'Food & Tiffins', emoji: '🍱' },
+  { id: 'services', name: 'Home Services', emoji: '🔧' },
+  { id: 'travel', name: 'Taxi & Rides', emoji: '🚕' },
+];
+
 interface BranchManagerProps {
   onBack: () => void;
   masterAdminName: string;
@@ -1323,6 +1334,28 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
     }
   };
 
+  const toggleBranchService = async (branch: Branch, serviceId: string) => {
+    try {
+      const currentDisabled = branch.disabledServices || [];
+      const isCurrentlyDisabled = currentDisabled.includes(serviceId);
+      const updatedDisabled = isCurrentlyDisabled
+        ? currentDisabled.filter(s => s !== serviceId)
+        : [...currentDisabled, serviceId];
+
+      await updateDoc(doc(db, 'branches', branch.id), {
+        disabledServices: updatedDisabled,
+        updatedAt: serverTimestamp()
+      });
+
+      await logAuditAction(
+        'Branch Service Control',
+        `${isCurrentlyDisabled ? 'Enabled' : 'Disabled'} service '${serviceId}' for branch '${branch.name}'`
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `branches/${branch.id}`);
+    }
+  };
+
   const deleteBranch = async (branch: Branch) => {
     if (!isSuperAdmin) {
       alert("Permission Denied: Only Master Admin (Tarun Bandi) can delete or terminate franchise branches.");
@@ -1525,7 +1558,7 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
         </div>
       </div>
 
-        <div className="flex gap-4 mt-6 overflow-x-auto scrollbar-hide pb-2">
+        <div className="flex flex-wrap gap-2.5 mt-6 pb-2">
           {(isSuperAdmin || isBranchAdmin) && (
             <>
               <button 
@@ -1805,6 +1838,44 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
                     })()}
                   </div>
 
+                  {/* Branch Services Gateway Controls */}
+                  <div className="p-4 bg-slate-50/80 rounded-3xl border border-slate-100">
+                    <div className="flex items-center justify-between mb-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <Settings className="w-3.5 h-3.5 text-indigo-600" />
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-800">
+                          Branch Service Gateways
+                        </span>
+                      </div>
+                      <span className="text-[9px] font-bold text-slate-400">
+                        {BRANCH_SERVICE_OPTIONS.length - (branch.disabledServices?.length || 0)}/{BRANCH_SERVICE_OPTIONS.length} Active
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {BRANCH_SERVICE_OPTIONS.map((srv) => {
+                        const isOff = branch.disabledServices?.includes(srv.id);
+                        return (
+                          <button
+                            key={srv.id}
+                            onClick={() => toggleBranchService(branch, srv.id)}
+                            className={`px-3 py-2 rounded-2xl text-[10px] font-black transition-all flex items-center justify-between gap-1.5 border ${
+                              isOff
+                                ? 'bg-slate-100/70 text-slate-400 border-slate-200 line-through'
+                                : 'bg-white text-indigo-900 border-indigo-100 shadow-sm hover:border-indigo-300'
+                            }`}
+                            title={isOff ? `Click to Enable ${srv.name}` : `Click to Disable ${srv.name}`}
+                          >
+                            <span className="flex items-center gap-1 truncate">
+                              <span>{srv.emoji}</span>
+                              <span className="truncate">{srv.name}</span>
+                            </span>
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${isOff ? 'bg-rose-400' : 'bg-emerald-500'}`} />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
 
                   <div className="flex items-center justify-between pt-2">
                     <div className="flex gap-4">

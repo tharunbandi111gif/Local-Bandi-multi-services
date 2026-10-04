@@ -49,14 +49,17 @@ interface DiagnosticData {
   };
 }
 
-const PUBLIC_BASE_URL = 'https://ais-pre-nrxv6weliaidu3roycbqtf-790133860415.asia-southeast1.run.app';
+export const PRODUCTION_DOMAIN = 'https://localbandimultiservices.in';
+const PUBLIC_BASE_URL = typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('localhost') && window.location.origin !== 'null'
+  ? window.location.origin
+  : PRODUCTION_DOMAIN;
 
 export const APPS_DATA = [
   {
     id: 'customer',
     name: 'Customer App',
-    shortName: 'LocalBandi',
-    packageId: 'com.localbandi.app',
+    shortName: 'Customer',
+    packageId: 'com.localbandi.customer',
     path: '/',
     publicUrl: `${PUBLIC_BASE_URL}/`,
     manifestPath: '/manifest.json',
@@ -67,32 +70,46 @@ export const APPS_DATA = [
     description: 'Hyperlocal customer ordering for groceries, food delivery, dairy, hospital OPD, and services.'
   },
   {
-    id: 'partner',
-    name: 'Partner & Rider Hub',
-    shortName: 'Partner Hub',
-    packageId: 'com.localbandi.partner',
-    path: '/partner.html',
-    publicUrl: `${PUBLIC_BASE_URL}/partner.html`,
-    manifestPath: '/manifest-partner.json',
-    manifestUrl: `${PUBLIC_BASE_URL}/manifest-partner.json`,
-    pwabuilderUrl: `https://www.pwabuilder.com?site=${encodeURIComponent(`${PUBLIC_BASE_URL}/partner.html`)}`,
+    id: 'vendor',
+    name: 'Vendor & Merchant App',
+    shortName: 'Vendor',
+    packageId: 'com.localbandi.vendor',
+    path: '/vendor.html',
+    publicUrl: `${PUBLIC_BASE_URL}/vendor.html`,
+    manifestPath: '/manifest-vendor.json',
+    manifestUrl: `${PUBLIC_BASE_URL}/manifest-vendor.json`,
+    pwabuilderUrl: `https://www.pwabuilder.com?site=${encodeURIComponent(`${PUBLIC_BASE_URL}/vendor.html`)}`,
     themeColor: '#10b981',
     roleColor: 'border-emerald-400/40 text-emerald-400 bg-emerald-400/10',
-    description: 'Dedicated fleet driver dispatch, merchant store catalog, order management, and earnings terminal.'
+    description: 'Store and restaurant management, product cataloging, instant order accept, and revenue settlements.'
   },
   {
-    id: 'franchise',
-    name: 'Franchise Hub',
-    shortName: 'Franchise Hub',
-    packageId: 'com.localbandi.franchise',
-    path: '/franchise.html',
-    publicUrl: `${PUBLIC_BASE_URL}/franchise.html`,
-    manifestPath: '/manifest-franchise.json',
-    manifestUrl: `${PUBLIC_BASE_URL}/manifest-franchise.json`,
-    pwabuilderUrl: `https://www.pwabuilder.com?site=${encodeURIComponent(`${PUBLIC_BASE_URL}/franchise.html`)}`,
-    themeColor: '#6366f1',
-    roleColor: 'border-indigo-400/40 text-indigo-400 bg-indigo-400/10',
-    description: 'Regional franchise branch portal, zone radius control, commission payouts, and sub-partner audits.'
+    id: 'delivery',
+    name: 'Delivery Partner App',
+    shortName: 'Rider',
+    packageId: 'com.localbandi.delivery',
+    path: '/delivery.html',
+    publicUrl: `${PUBLIC_BASE_URL}/delivery.html`,
+    manifestPath: '/manifest-delivery.json',
+    manifestUrl: `${PUBLIC_BASE_URL}/manifest-delivery.json`,
+    pwabuilderUrl: `https://www.pwabuilder.com?site=${encodeURIComponent(`${PUBLIC_BASE_URL}/delivery.html`)}`,
+    themeColor: '#3b82f6',
+    roleColor: 'border-blue-400/40 text-blue-400 bg-blue-400/10',
+    description: 'Rider console with GPS navigation, trip pool broadcast, pickup and delivery OTP, and tip ledger.'
+  },
+  {
+    id: 'branch',
+    name: 'Branch Admin App',
+    shortName: 'Branch',
+    packageId: 'com.localbandi.branch',
+    path: '/branch-admin.html',
+    publicUrl: `${PUBLIC_BASE_URL}/branch-admin.html`,
+    manifestPath: '/manifest-branch.json',
+    manifestUrl: `${PUBLIC_BASE_URL}/manifest-branch.json`,
+    pwabuilderUrl: `https://www.pwabuilder.com?site=${encodeURIComponent(`${PUBLIC_BASE_URL}/branch-admin.html`)}`,
+    themeColor: '#f59e0b',
+    roleColor: 'border-amber-400/40 text-amber-400 bg-amber-400/10',
+    description: 'Regional branch portal, zone radius control (5/7/10 KM), merchant approvals, and driver audits.'
   },
   {
     id: 'admin',
@@ -537,8 +554,8 @@ export function ApkGenerationHub() {
         </div>
       </div>
 
-      {/* 4-App Matrix Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 5-App Standalone Ecosystem Matrix Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         {APPS_DATA.map((app) => {
           const appCheck = diagnosticData?.apps.find(a => a.id === app.id);
           const isReady = appCheck ? appCheck.ready : true;
@@ -597,10 +614,110 @@ export function ApkGenerationHub() {
                   <ExternalLink className="w-3 h-3 text-indigo-400" />
                   <span>1-Click PWABuilder Cloud</span>
                 </a>
+
+                <div className="grid grid-cols-2 gap-1.5 pt-1">
+                  <a
+                    href={`/privacy-${app.id}.html`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="py-1.5 px-2 bg-slate-950 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white rounded-lg text-[8.5px] font-bold uppercase tracking-wider text-center truncate"
+                  >
+                    Privacy Policy
+                  </a>
+                  <a
+                    href={`/terms-${app.id}.html`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="py-1.5 px-2 bg-slate-950 hover:bg-slate-800 border border-white/10 text-slate-300 hover:text-white rounded-lg text-[8.5px] font-bold uppercase tracking-wider text-center truncate"
+                  >
+                    Terms of Use
+                  </a>
+                </div>
               </div>
             </div>
           );
         })}
+      </div>
+
+      {/* Google Play Store Privacy Policy & Legal Links Hub */}
+      <div className="bg-slate-900 border border-blue-500/30 rounded-[2.5rem] p-6 text-left space-y-5 shadow-2xl relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 mb-1">
+              <ShieldCheck className="w-3 h-3" />
+              <span>Mandatory for Google Play Console Submission</span>
+            </div>
+            <h3 className="text-base font-black uppercase text-white tracking-tight flex items-center gap-2">
+              <span>Google Play Store Privacy Policy &amp; Terms Links (5 Separate Apps)</span>
+            </h3>
+            <p className="text-[10px] text-slate-400 font-sans">
+              Google Play requires a dedicated, publicly accessible Privacy Policy URL for each app package before publishing.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href="/legal.html"
+              target="_blank"
+              rel="noreferrer"
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[9.5px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-md"
+            >
+              <ExternalLink className="w-3 h-3" />
+              <span>Open Legal Hub</span>
+            </a>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left font-mono text-[10px]">
+            <thead>
+              <tr className="border-b border-white/10 text-slate-400 uppercase text-[9px]">
+                <th className="pb-2.5 font-bold">App</th>
+                <th className="pb-2.5 font-bold">Package ID</th>
+                <th className="pb-2.5 font-bold">Play Store Privacy Policy URL</th>
+                <th className="pb-2.5 font-bold text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5 text-slate-300">
+              {APPS_DATA.map((app) => {
+                const privacyUrl = `${PUBLIC_BASE_URL}/privacy-${app.id}.html`;
+                const termsUrl = `${PUBLIC_BASE_URL}/terms-${app.id}.html`;
+                return (
+                  <tr key={app.id} className="hover:bg-white/[0.02]">
+                    <td className="py-3 font-sans font-bold text-white flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${app.id === 'customer' ? 'bg-yellow-400' : app.id === 'delivery' ? 'bg-blue-400' : app.id === 'vendor' ? 'bg-emerald-400' : app.id === 'branch' ? 'bg-amber-400' : 'bg-rose-400'}`} />
+                      <span>{app.name}</span>
+                    </td>
+                    <td className="py-3 text-yellow-400/90">{app.packageId}</td>
+                    <td className="py-3 text-blue-400 truncate max-w-[280px]">
+                      <a href={`/privacy-${app.id}.html`} target="_blank" rel="noreferrer" className="hover:underline">
+                        {privacyUrl}
+                      </a>
+                    </td>
+                    <td className="py-3 text-right">
+                      <div className="inline-flex items-center gap-1.5">
+                        <button
+                          onClick={() => copyToClipboard(privacyUrl, `priv_${app.id}`)}
+                          className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 text-white rounded-lg border border-white/10 text-[9px] font-bold uppercase transition-all flex items-center gap-1 cursor-pointer"
+                        >
+                          {copiedCmd === `priv_${app.id}` ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                          <span>{copiedCmd === `priv_${app.id}` ? 'Copied' : 'Copy Privacy URL'}</span>
+                        </button>
+                        <a
+                          href={`/terms-${app.id}.html`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-2 py-1 bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg border border-white/10 text-[9px] font-bold uppercase transition-all"
+                        >
+                          Terms
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Exact Terminal Build Instructions & CLI Section */}

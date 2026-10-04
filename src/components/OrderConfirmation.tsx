@@ -4,6 +4,7 @@ import { CheckCircle2, ChevronRight, Package, MapPin, Share2, Home, Bike, Phone,
 import { CartItem } from '../types';
 import LiveMap from './LiveMap';
 import { SpinWheelModal } from './SpinWheelModal';
+import OrderProgressBar from './OrderProgressBar';
 
 interface OrderConfirmationProps {
   items: CartItem[];
@@ -73,6 +74,9 @@ export default function OrderConfirmation({ items, orderId, onHome }: OrderConfi
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Full 6-Stage Order Flow Progress Bar */}
+        <OrderProgressBar orderId={orderId} />
+
         {/* Tracking Map Card */}
         <section id="live-map-section" className="space-y-4">
           <div className="flex items-center justify-between px-2">

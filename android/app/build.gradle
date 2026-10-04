@@ -27,6 +27,49 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    flavorDimensions "role"
+    productFlavors {
+        customer {
+            dimension "role"
+            applicationId "com.localbandi.customer"
+            versionCode 1
+            versionName "1.0.0"
+            resValue "string", "app_name", "Local Bandi Customer"
+            resValue "string", "title_activity_main", "Local Bandi Customer"
+        }
+        vendor {
+            dimension "role"
+            applicationId "com.localbandi.vendor"
+            versionCode 1
+            versionName "1.0.0"
+            resValue "string", "app_name", "Local Bandi Vendor"
+            resValue "string", "title_activity_main", "Local Bandi Vendor"
+        }
+        delivery {
+            dimension "role"
+            applicationId "com.localbandi.delivery"
+            versionCode 1
+            versionName "1.0.0"
+            resValue "string", "app_name", "Local Bandi Delivery Partner"
+            resValue "string", "title_activity_main", "Local Bandi Delivery Partner"
+        }
+        branchadmin {
+            dimension "role"
+            applicationId "com.localbandi.branchadmin"
+            versionCode 1
+            versionName "1.0.0"
+            resValue "string", "app_name", "Local Bandi Branch Admin"
+            resValue "string", "title_activity_main", "Local Bandi Branch Admin"
+        }
+        masteradmin {
+            dimension "role"
+            applicationId "com.localbandi.masteradmin"
+            versionCode 1
+            versionName "1.0.0"
+            resValue "string", "app_name", "Local Bandi Master Admin"
+            resValue "string", "title_activity_main", "Local Bandi Master Admin"
+        }
+    }
 }
 
 repositories {

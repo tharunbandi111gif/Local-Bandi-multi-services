@@ -7,10 +7,16 @@ import { getLocalizedProductName } from '../utils/localizedContent';
 import { db } from '../lib/firebase';
 import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { 
+  calculateDeliveryCharge, 
+  resolveOrderDistanceKm, 
+  getDeliveryBreakdown 
+} from '../utils/deliveryCalculator';
+import { 
   isGoldenHourActive, 
   getNextGoldenHourSlotText, 
   getLocalAttractionConfig 
 } from '../types/attractionCampaigns';
+import CartPromoSection, { AppliedPromoData } from './CartPromoSection';
 
 interface CartProps {
   items: CartItem[];
@@ -237,53 +243,18 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
     return name.includes('milk') || name.includes('water') || category === 'water' || category === 'dairy' || category === 'milk';
   };
 
-  // Dynamic delivery charge logic
+  // Resolved delivery distance based on customer's selected location or device GPS
+  const userLocationStr = localStorage.getItem('local_bandi_current_location') || 'Khammam Main';
+  const orderDistanceKm = resolveOrderDistanceKm(userLocationStr);
+  const deliveryBreakdown = getDeliveryBreakdown(orderDistanceKm);
+
+  // Official distance-based delivery charge logic:
+  // Up to 3 km = flat ₹25. Above 3 km = ₹25 + ₹10/km for each additional km.
+  // Customers cannot manually modify this calculated charge.
   const getDeliveryFee = () => {
     if (items.length === 0) return 0;
     if (appliedPromo?.id === 'FREESHIP' || appliedPromo?.type === 'shipping') return 0;
-    
-    const milkWaterItems = items.filter(isMilkOrWater);
-    const otherItems = items.filter(item => !isMilkOrWater(item));
-    
-    let baseFee = 0;
-    
-    if (otherItems.length > 0) {
-      if (subtotal >= 469) {
-        baseFee = 0;
-      } else {
-        let maxFee = 0;
-        otherItems.forEach(item => {
-          let itemFee = 15; // Default rest of items
-          
-          const category = item.category.toLowerCase();
-          const name = item.name.toLowerCase();
-          
-          if (category === 'groceries' || category === 'veg') {
-            itemFee = 10;
-          } else if (category === 'meat') {
-            itemFee = 15;
-          } else if (category === 'food') {
-            const isTiffin = name.includes('idly') || name.includes('dosa') || name.includes('wada') || name.includes('chapati') || name.includes('tiffin');
-            itemFee = isTiffin ? 15 : 20;
-          } else if (['services', 'travel', 'marriage', 'events', 'construction', 'mechanics', 'maids'].includes(category)) {
-            itemFee = 0;
-          }
-          
-          if (itemFee > maxFee) maxFee = itemFee;
-        });
-        baseFee = maxFee;
-      }
-    }
-    
-    let milkWaterFee = 0;
-    if (milkWaterItems.length > 0) {
-      const hasSingleMilkWater = milkWaterItems.some(item => !item.isMonthlySubscription);
-      if (hasSingleMilkWater) {
-        milkWaterFee = 5;
-      }
-    }
-    
-    return baseFee + milkWaterFee;
+    return calculateDeliveryCharge(orderDistanceKm);
   };
 
   const delivery = getDeliveryFee();
@@ -815,46 +786,25 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
           </section>
         )}
 
+        {/* Dedicated Promo Code Input Section with Real-Time Validation Feedback */}
         <section className="space-y-4">
-          <h3 className="text-xs font-black uppercase tracking-widest text-gray-400">{t.promoCode}</h3>
-          <div className="relative">
-            <input 
-              type="text"
-              value={promoCode}
-              onChange={(e) => setPromoCode(e.target.value)}
-              placeholder={t.promoPlaceholder}
-              disabled={!!appliedPromo}
-              className={`w-full bg-gray-50 py-4 pl-12 pr-32 rounded-2xl font-bold placeholder:text-gray-300 outline-none border-2 transition-all ${
-                promoError ? 'border-red-500 animate-shake' : 
-                appliedPromo ? 'border-green-500 bg-green-50' : 'border-transparent focus:border-yellow-400'
-              }`}
-            />
-            <div className="absolute left-4 top-1/2 -translate-y-1/2">
-              <Ticket className={`w-5 h-5 ${appliedPromo ? 'text-green-600' : 'text-gray-400'}`} />
-            </div>
-            {!appliedPromo ? (
-              <button 
-                onClick={handleApplyPromo}
-                className="absolute right-2 top-1/2 -translate-y-1/2 px-6 py-2 bg-gray-900 text-white rounded-xl text-xs font-black uppercase tracking-widest active:scale-95 transition-all"
-              >
-                {t.apply}
-              </button>
-            ) : (
-              <button 
-                onClick={() => { setAppliedPromo(null); setPromoCode(''); }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-green-100 text-green-600 rounded-xl"
-              >
-                <Check className="w-5 h-5" />
-              </button>
-            )}
-          </div>
-          {promoError && <p className="text-[10px] font-black text-red-500 uppercase tracking-widest ml-4">{promoError}</p>}
-          {appliedPromo && (
-            <div className="flex items-center gap-2 px-4 py-2 bg-green-50 rounded-xl border border-green-100">
-              <Sparkles className="w-4 h-4 text-green-600" />
-              <span className="text-[10px] font-black text-green-700 uppercase tracking-widest">{appliedPromo.label} APPLIED</span>
-            </div>
-          )}
+          <CartPromoSection
+            subtotal={subtotal}
+            items={items}
+            appliedPromo={appliedPromo}
+            onApplyPromo={(promo) => {
+              setAppliedPromo(promo);
+              setPromoCode(promo.id);
+              setPromoError(null);
+            }}
+            onRemovePromo={() => {
+              setAppliedPromo(null);
+              setPromoCode('');
+              setPromoError(null);
+            }}
+            promosList={promosToUse}
+            language={language}
+          />
 
           {/* Target Product Selection for Quiz Coupons */}
           {appliedPromo && (appliedPromo.id.startsWith('QUIZ') || ['QUIZ25OFF', 'QUIZ15OFF', 'QUIZ08OFF'].includes(appliedPromo.id)) && itemsUnder100.length > 0 && (
@@ -917,41 +867,59 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
           )}
         </section>
 
-        {/* Delivery Fee Info */}
-        <section className="bg-amber-50/50 p-6 rounded-[2rem] border border-amber-100/50">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="p-2 bg-amber-100 rounded-xl">
-              <Truck className="w-4 h-4 text-amber-600" />
-            </div>
-            <div>
-              <h3 className="text-[10px] font-black uppercase tracking-widest text-amber-800">Delivery Fee Guide</h3>
-              <p className="text-[8px] font-bold text-amber-600/60 uppercase">Local Khammam Delivery Charges</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { cat: 'Groceries', fee: '₹10', icon: '🛒' },
-              { cat: 'Meat/Fish', fee: '₹15', icon: '🥩' },
-              { cat: 'Fast Food', fee: '₹20', icon: '🍔' },
-              { cat: 'Tiffins', fee: '₹15', icon: '🍱' },
-              { cat: 'Milk/Water', fee: 'FREE', icon: '💧' },
-              { cat: 'Services', fee: 'N/A', icon: '🛠️' },
-            ].map((item, i) => (
-              <div key={i} className="flex justify-between items-center bg-white/80 p-2.5 rounded-2xl border border-amber-50 shadow-sm">
-                <span className="text-[9px] font-black text-gray-400 uppercase flex items-center gap-1.5">
-                  <span className="text-[10px] grayscale group-hover:grayscale-0 transition-all">{item.icon}</span>
-                  {item.cat}
-                </span>
-                <span className={`text-[10px] font-black ${item.fee === 'FREE' ? 'text-emerald-500' : 'text-gray-900'}`}>{item.fee}</span>
+        {/* Delivery Fee Info & System Distance Calculator */}
+        <section className="bg-amber-50/70 p-6 rounded-[2rem] border border-amber-200/80 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 bg-amber-100 rounded-xl">
+                <Truck className="w-5 h-5 text-amber-700" />
               </div>
-            ))}
-          </div>
-          <div className="mt-4 flex gap-2 items-start bg-amber-100/30 p-3 rounded-xl border border-amber-200/20">
-            <div className="mt-0.5">
-              <Check className="w-3 h-3 text-amber-600" />
+              <div>
+                <h3 className="text-xs font-black uppercase tracking-wider text-amber-900">Delivery Charge Calculator</h3>
+                <p className="text-[10px] font-bold text-amber-700">Official Distance-Based Pricing</p>
+              </div>
             </div>
-            <p className="text-[9px] font-bold text-amber-800 leading-tight italic">
-              Note: The highest applicable delivery fee among all categories in your cart is charged as a single flat fee.
+            <span className="text-[10px] font-black uppercase tracking-widest px-2.5 py-1 bg-amber-200/80 text-amber-900 rounded-lg flex items-center gap-1">
+              🔒 Non-Editable
+            </span>
+          </div>
+
+          <div className="bg-white/90 p-4 rounded-2xl border border-amber-100 space-y-2">
+            <div className="flex justify-between items-center text-xs font-bold text-slate-700">
+              <span className="flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                Delivery Distance (Auto-Calculated)
+              </span>
+              <span className="font-black text-slate-900 font-mono text-sm">{orderDistanceKm} km</span>
+            </div>
+            <div className="flex justify-between items-center text-xs font-bold text-slate-700">
+              <span>Standard Delivery Charge</span>
+              <span className="font-black text-amber-800 font-mono text-sm">
+                {delivery === 0 ? <span className="text-emerald-600">FREE</span> : `₹${delivery}`}
+              </span>
+            </div>
+            <div className="pt-2 border-t border-amber-100/60 text-[10px] text-slate-500 italic">
+              Rate Breakdown: {deliveryBreakdown.breakdownText}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-[10px] font-bold">
+            <div className="p-2.5 bg-amber-100/60 rounded-xl text-amber-900 flex items-center justify-between">
+              <span>Up to 3 km</span>
+              <span className="font-black">₹25 Flat</span>
+            </div>
+            <div className="p-2.5 bg-amber-100/60 rounded-xl text-amber-900 flex items-center justify-between">
+              <span>Above 3 km</span>
+              <span className="font-black">₹25 + ₹10/km</span>
+            </div>
+          </div>
+
+          <div className="flex gap-2 items-start bg-amber-100/40 p-3 rounded-xl border border-amber-200/30">
+            <div className="mt-0.5">
+              <Check className="w-3 h-3 text-amber-700" />
+            </div>
+            <p className="text-[9px] font-bold text-amber-900 leading-tight italic">
+              System Policy: Delivery charges are calculated transparently and locked by system geolocation. Customers cannot manually change the calculated delivery charge.
             </p>
           </div>
         </section>
@@ -1002,8 +970,13 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
             )}
 
             <div className="flex justify-between text-gray-600 font-bold text-sm">
-              <span>{t.shipping}</span>
-              <span className={delivery === 0 ? 'text-emerald-500' : ''}>{delivery === 0 ? 'FREE' : `₹${delivery}`}</span>
+              <span className="flex items-center gap-1.5">
+                <span>{t.shipping}</span>
+                <span className="text-[10px] text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded font-mono font-bold">{orderDistanceKm} km</span>
+              </span>
+              <span className={delivery === 0 ? 'text-emerald-500 font-black' : 'text-gray-900 font-black'}>
+                {delivery === 0 ? 'FREE' : `₹${delivery}`}
+              </span>
             </div>
           </div>
 

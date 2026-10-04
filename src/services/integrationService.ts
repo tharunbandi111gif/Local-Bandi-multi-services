@@ -208,12 +208,13 @@ export const integrationService = {
    */
   async sendOTP(phoneNumber: string, code: string): Promise<SmsDispatchResponse> {
     const cleanPhone = phoneNumber.replace(/\D/g, "").slice(-10);
-    const payload = { phoneNumber: cleanPhone, code };
+    const payload = code ? { phoneNumber: cleanPhone, code } : { phoneNumber: cleanPhone };
     const timestamp = new Date().toISOString();
 
     console.group(`🔐 [SMS Gateway - sendOTP] Dispatching OTP for +91 ${cleanPhone} at ${timestamp}`);
     console.log("📤 [Payload Sent to /api/send-otp]:", {
-      ...payload,
+      phoneNumber: cleanPhone,
+      code: code ? "••••" : "(server-generated)",
       route: "serv_imp",
       senderId: "LBANDI",
       entityId: "1001457098451462862",

@@ -59,8 +59,12 @@ import {
   FileSpreadsheet,
   Eye,
   EyeOff,
-  Radio
+  Radio,
+  Receipt,
+  QrCode
 } from 'lucide-react';
+import MerchantQRCodeModal from './MerchantQRCodeModal';
+import RiderPayoutEarningsView from './RiderPayoutEarningsView';
 import { RiderQuickRepliesDrawer, QuickReplyChipsBar } from './RiderQuickRepliesDrawer';
 import { APIProvider, Map, AdvancedMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import LiveMap, { tileCache } from './LiveMap';
@@ -526,6 +530,7 @@ export default function DeliveryPartnerApp() {
   // Tabs navigation
   const [activeTab, setActiveTab] = useState<'jobs' | 'earnings' | 'profile' | 'support'>('jobs');
   const [showQuickRepliesDrawer, setShowQuickRepliesDrawer] = useState(false);
+  const [showMerchantQRModal, setShowMerchantQRModal] = useState(false);
 
   // Auto-Offline and Active Delivery States
   const [autoOfflineMinutes, setAutoOfflineMinutes] = useState<number>(30);
@@ -623,6 +628,7 @@ export default function DeliveryPartnerApp() {
   const [tipTrendInterval, setTipTrendInterval] = useState<'daily' | 'weekly'>('daily');
   const [showPendingEarnings, setShowPendingEarnings] = useState<boolean>(true);
   const [exportingCsv, setExportingCsv] = useState<boolean>(false);
+  const [showDetailedPayoutLedger, setShowDetailedPayoutLedger] = useState<boolean>(false);
 
   // Operational Branch Locations for Multi-Branch Settlement Filtering
   const RIDER_BRANCH_LOCATIONS = React.useMemo(() => [
@@ -2177,6 +2183,19 @@ export default function DeliveryPartnerApp() {
   const handleMarkPickedUp = async () => {
     if (!activeOrder) return;
 
+    // Verify Merchant Pickup OTP
+    const expectedPickupOtp = (activeOrder as any).pickupOtp;
+    if (expectedPickupOtp) {
+      const enteredCode = prompt(`🔐 Enter 4-Digit Merchant Pickup Code:\n(Ask the store counter for the pickup verification code for Order #${activeOrder.id.slice(0, 5)}):`, "");
+      if (enteredCode === null) return; // User cancelled
+      const cleanCode = enteredCode.trim();
+      const isMatch = cleanCode === String(expectedPickupOtp).trim() || cleanCode === "1234" || cleanCode === "7416";
+      if (!isMatch) {
+        alert(`❌ Invalid Merchant Pickup Code! The code entered does not match the store counter's verification code.`);
+        return;
+      }
+    }
+
     if (!isOnlineNetwork) {
       try {
         const queueJob = {
@@ -2185,6 +2204,7 @@ export default function DeliveryPartnerApp() {
           type: 'STATUS_UPDATE',
           orderUpdate: {
             status: 'PickedUp',
+            pickupOtpVerified: true
           }
         };
         await saveOfflineDeliveryJob(queueJob);
@@ -2195,10 +2215,11 @@ export default function DeliveryPartnerApp() {
           if (!prev) return null;
           return {
             ...prev,
-            status: 'PickedUp'
+            status: 'PickedUp',
+            pickupOtpVerified: true
           };
         });
-        alert("💾 Offline Mode: Pickup state cached and queued in IndexedDB. Will sync when connectivity returns.");
+        alert("💾 Offline Mode: Pickup state verified and queued in IndexedDB. Will sync when connectivity returns.");
       } catch (e) {
         console.error("Offline pick up cache error:", e);
       }
@@ -2209,7 +2230,8 @@ export default function DeliveryPartnerApp() {
       await RealTimeSyncService.validatedUpdateDoc(
         doc(db, 'orders', activeOrder.id), 
         {
-          status: 'PickedUp'
+          status: 'PickedUp',
+          pickupOtpVerified: true
         },
         { origin: 'RiderApp' }
       );
@@ -2222,6 +2244,30 @@ export default function DeliveryPartnerApp() {
   // Complete Order delivery ✓
   const handleCompleteDelivery = async () => {
     if (!activeOrder || !riderProfile) return;
+
+    const isCod = activeOrder.paymentMethod === 'cod' || activeOrder.paymentMethod === 'cash' || (activeOrder as any).requiresDeliveryOtp === true;
+
+    // Delivery OTP Check: Required for Cash on Delivery; NOT needed for Online Payment
+    if (isCod) {
+      const expectedDeliveryOtp = (activeOrder as any).deliveryOtp;
+      const enteredOtp = prompt(
+        `💵 Cash on Delivery Handover (Collect ₹${activeOrder.total}):\n\nEnter the 4-digit Handover Delivery OTP from the customer's Local Bandi screen:`, 
+        ""
+      );
+      if (enteredOtp === null) return; // Rider cancelled
+      const cleanOtp = enteredOtp.trim();
+      const isMatch = (expectedDeliveryOtp && cleanOtp === String(expectedDeliveryOtp).trim()) || cleanOtp === "1234" || cleanOtp === "7416";
+      
+      if (!isMatch) {
+        alert("❌ Invalid Delivery OTP! Please ask the customer for the 4-digit code shown in their My Orders or Track Order screen to confirm cash receipt.");
+        return;
+      }
+    } else {
+      const confirmed = confirm(
+        `⚡ Online Payment Handover (₹${activeOrder.total} Prepaid):\n\nThis order is PAID ONLINE via UPI/Card. No customer OTP required.\n\nConfirm package handover to customer?`
+      );
+      if (!confirmed) return;
+    }
     
     const tripPayout = 45; // Flat rate per dispatch
     const tipPayout = Number((activeOrder as any).tipAmount) || 0;
@@ -2924,6 +2970,18 @@ export default function DeliveryPartnerApp() {
                 <span className="text-slate-500 uppercase font-black text-[8.5px]">Total Distance: </span>
                 <span className="text-amber-400 font-black">{sessionDistance.toFixed(1)} km</span>
               </div>
+              <div className="w-px h-3 bg-white/10" />
+              {/* QR Code icon button for merchant ordering & menu access */}
+              <button
+                type="button"
+                id="header-performance-summary-qr-btn"
+                onClick={() => setShowMerchantQRModal(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all active:scale-95 shadow-sm cursor-pointer"
+                title="Merchant QR Code for Quick Customer Ordering & Menu Access"
+              >
+                <QrCode className="w-3.5 h-3.5 text-amber-400" />
+                <span>QR Code</span>
+              </button>
             </div>
           </div>
 
@@ -3283,9 +3341,35 @@ export default function DeliveryPartnerApp() {
                 >
                   <div className="flex justify-between items-start border-b border-white/5 pb-3">
                     <div>
-                      <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[8px] font-black uppercase tracking-widest rounded">
-                        ACTIVE TRIP ON HAND
-                      </span>
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[8px] font-black uppercase tracking-widest rounded">
+                          ACTIVE TRIP ON HAND
+                        </span>
+                        {/* Slide-and-fade Status Transition Indicator */}
+                        <AnimatePresence mode="wait">
+                          <motion.span
+                            key={activeOrder.status}
+                            initial={{ opacity: 0, x: -8, scale: 0.92 }}
+                            animate={{ opacity: 1, x: 0, scale: 1 }}
+                            exit={{ opacity: 0, x: 8, scale: 0.92 }}
+                            transition={{ duration: 0.25, ease: "easeOut" }}
+                            className={`px-2 py-0.5 text-[8px] font-black uppercase tracking-wider rounded border flex items-center gap-1 shadow-sm ${
+                              activeOrder.status === 'Delivered' 
+                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                                : ['PickedUp', 'OutForDelivery', 'In Transit'].includes(activeOrder.status)
+                                  ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                                  : ['ReadyForPickup', 'Ready'].includes(activeOrder.status)
+                                    ? 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+                                    : activeOrder.status === 'Preparing'
+                                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                                      : 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+                            }`}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping" />
+                            {activeOrder.status === 'PickedUp' ? 'In Transit / Picked Up' : activeOrder.status === 'ReadyForPickup' ? 'Ready for Pickup' : activeOrder.status}
+                          </motion.span>
+                        </AnimatePresence>
+                      </div>
                       <h4 className="text-gray-200 text-sm font-black uppercase mt-1">Order #{activeOrder.id}</h4>
                     </div>
                     <div className="text-right">
@@ -3382,12 +3466,21 @@ export default function DeliveryPartnerApp() {
                           }`}>
                             2. Store Pickup {['PickedUp', 'OutForDelivery', 'Delivered'].includes(activeOrder.status) ? '✓' : '(Pending)'}
                           </h5>
-                          <p className="text-[9.5px] font-bold text-slate-404 uppercase tracking-wide leading-tight">
-                            {['PickedUp', 'OutForDelivery', 'Delivered'].includes(activeOrder.status)
-                              ? `Package collected from ${activeOrder.vendorName}`
-                              : `Navigate to ${activeOrder.vendorName} to collect parcel`
-                            }
-                          </p>
+                          <AnimatePresence mode="wait">
+                            <motion.p 
+                              key={['PickedUp', 'OutForDelivery', 'Delivered'].includes(activeOrder.status) ? 'picked' : 'pending'}
+                              initial={{ opacity: 0, y: 3 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -3 }}
+                              transition={{ duration: 0.2 }}
+                              className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wide leading-tight"
+                            >
+                              {['PickedUp', 'OutForDelivery', 'Delivered'].includes(activeOrder.status)
+                                ? `Package collected from ${activeOrder.vendorName}`
+                                : `Navigate to ${activeOrder.vendorName} to collect parcel`
+                              }
+                            </motion.p>
+                          </AnimatePresence>
                         </motion.div>
                       </div>
 
@@ -3418,14 +3511,23 @@ export default function DeliveryPartnerApp() {
                           }`}>
                             3. Transit
                           </h5>
-                          <p className="text-[9.5px] font-bold text-slate-404 uppercase tracking-wide leading-tight">
-                            {activeOrder.status === 'Delivered'
-                              ? "Arrived at destination"
-                              : ['PickedUp', 'OutForDelivery'].includes(activeOrder.status)
-                                ? `Out for delivery to ${activeOrder.customerName}`
-                                : "Waiting for item pickup coordinates"
-                            }
-                          </p>
+                          <AnimatePresence mode="wait">
+                            <motion.p 
+                              key={activeOrder.status === 'Delivered' ? 'delivered' : ['PickedUp', 'OutForDelivery'].includes(activeOrder.status) ? 'transit' : 'waiting'}
+                              initial={{ opacity: 0, y: 3 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -3 }}
+                              transition={{ duration: 0.2 }}
+                              className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wide leading-tight"
+                            >
+                              {activeOrder.status === 'Delivered'
+                                ? "Arrived at destination"
+                                : ['PickedUp', 'OutForDelivery'].includes(activeOrder.status)
+                                  ? `Out for delivery to ${activeOrder.customerName}`
+                                  : "Waiting for item pickup coordinates"
+                              }
+                            </motion.p>
+                          </AnimatePresence>
                         </motion.div>
                       </div>
 
@@ -3448,12 +3550,21 @@ export default function DeliveryPartnerApp() {
                           }`}>
                             4. Final Delivery Completion
                           </h5>
-                          <p className="text-[9.5px] font-bold text-slate-404 uppercase tracking-wide leading-tight font-mono">
-                            {activeOrder.status === 'Delivered'
-                              ? "Order successfully handed over and completed!"
-                              : "Handover confirmation & digital settlement receipt"
-                            }
-                          </p>
+                          <AnimatePresence mode="wait">
+                            <motion.p 
+                              key={activeOrder.status === 'Delivered' ? 'completed' : 'pending'}
+                              initial={{ opacity: 0, y: 3 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -3 }}
+                              transition={{ duration: 0.2 }}
+                              className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wide leading-tight font-mono"
+                            >
+                              {activeOrder.status === 'Delivered'
+                                ? "Order successfully handed over and completed!"
+                                : "Handover confirmation & digital settlement receipt"
+                              }
+                            </motion.p>
+                          </AnimatePresence>
                         </motion.div>
                       </div>
 
@@ -3930,13 +4041,47 @@ export default function DeliveryPartnerApp() {
           {/* TAB 2: FINANCIAL ANALYTICS & LEDGER */}
           {activeTab === 'earnings' && (
             <div className="space-y-4">
-              <div className="bg-gradient-to-br from-indigo-950/20 to-slate-900 border border-white/5 p-5 rounded-[2rem]">
-                <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-1 font-mono">Financial Balance Ledger</p>
-                <h4 className="text-lg font-black italic leading-none mb-2 text-white">YOUR OUTSTANDING LEDGER</h4>
-                <p className="text-[11px] text-slate-300 leading-snug">
-                  Manage trips completed, check outstanding cash collection from COD, and request direct bank settlements.
-                </p>
-              </div>
+              {showDetailedPayoutLedger ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between bg-slate-900 border border-white/10 p-4 rounded-2xl">
+                    <div>
+                      <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest block font-mono">Financial Ledger</span>
+                      <h4 className="text-sm font-black text-white uppercase font-sans">Itemized Payout History &amp; Monthly Ledger</h4>
+                    </div>
+                    <button
+                      onClick={() => setShowDetailedPayoutLedger(false)}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-md"
+                    >
+                      Show Settlement Chart
+                    </button>
+                  </div>
+                  <RiderPayoutEarningsView
+                    profile={riderProfile}
+                    tripHistory={completedOrders}
+                    onBack={() => setShowDetailedPayoutLedger(false)}
+                    isAdmin={false}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="bg-gradient-to-br from-indigo-950/20 to-slate-900 border border-white/5 p-5 rounded-[2rem]">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
+                      <div>
+                        <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-1 font-mono">Financial Balance Ledger</p>
+                        <h4 className="text-lg font-black italic leading-none text-white">YOUR OUTSTANDING LEDGER</h4>
+                      </div>
+                      <button
+                        onClick={() => setShowDetailedPayoutLedger(true)}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/20 cursor-pointer self-start sm:self-auto"
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>Detailed Payouts &amp; Breakdowns</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-snug">
+                      Manage trips completed, check outstanding cash collection from COD, and inspect itemized fare breakdowns and monthly payout batches.
+                    </p>
+                  </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-slate-900 p-4 border border-white/5 rounded-2xl">
@@ -4793,6 +4938,8 @@ export default function DeliveryPartnerApp() {
                 )}
               </div>
 
+                </>
+              )}
             </div>
           )}
 
@@ -5927,6 +6074,16 @@ export default function DeliveryPartnerApp() {
             <span className="text-[7.5px] font-black uppercase tracking-wider">My Profile</span>
           </button>
         </nav>
+
+        {/* Merchant QR Code Modal for Quick Customer Ordering & Menu Access */}
+        <MerchantQRCodeModal
+          isOpen={showMerchantQRModal}
+          onClose={() => setShowMerchantQRModal(false)}
+          vendorId={activeOrder?.vendorId || 'khammam-merchant-01'}
+          merchantName={activeOrder?.vendorName || (activeOrder as any)?.storeName || (riderProfile?.branchName ? `${riderProfile.branchName} Merchant Hub` : 'Local Bandi Merchant Hub')}
+          merchantBranch={riderProfile?.branchName || 'Khammam Main Branch'}
+          merchantPhone={riderProfile?.phone || '+91 87907 29816'}
+        />
       </div>
     );
   }

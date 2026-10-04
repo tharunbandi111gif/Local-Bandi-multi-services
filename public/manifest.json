@@ -2,7 +2,7 @@
   "name": "Local Bandi Multi Services",
   "short_name": "LocalBandi",
   "description": "Hyperlocal Logistics & Multi-Services Platform for Khammam",
-  "id": "com.localbandi.app",
+  "id": "com.localbandi.customer",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

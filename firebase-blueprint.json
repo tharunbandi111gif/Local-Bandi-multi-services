@@ -80,6 +80,15 @@
         "itemsCount": { "type": "number" },
         "rating": { "type": "number" },
         "photo": { "type": "string" },
+        "isOpen": { "type": "boolean" },
+        "storeHours": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "openTime": { "type": "string" },
+            "closeTime": { "type": "string" }
+          }
+        },
         "userId": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
@@ -87,23 +96,69 @@
     },
     "Order": {
       "title": "Order",
-      "description": "A customer order.",
+      "description": "Comprehensive customer order document supporting dynamic statuses, OTP verification for Cash on Delivery vs online payment, and admin tracking.",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "userId": { "type": "string" },
         "customerName": { "type": "string" },
         "customerPhone": { "type": "string" },
-        "items": { "type": "array" },
+        "deliveryAddress": { "type": "string" },
+        "deliveryLocation": {
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "items": { "type": "number" },
+        "orderItems": { "type": "array" },
+        "total": { "type": "number" },
         "totalAmount": { "type": "number" },
-        "status": { "type": "string", "enum": ["Pending", "Preparing", "Ready", "PickedUp", "Delivered", "Cancelled"] },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "paymentMethod": { "type": "string" },
-        "deliveryType": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "tipAmount": { "type": "number" },
+        "status": { 
+          "type": "string", 
+          "enum": [
+            "pending", "accepted", "assigned", "preparing", "picked-up", "delivered", "cancelled",
+            "Pending", "Accepted", "Assigned", "Preparing", "ReadyForPickup", "PickedUp", "Delivered", "Cancelled"
+          ] 
+        },
+        "paymentMethod": { "type": "string", "enum": ["cod", "cash", "upi", "card", "netbanking", "online"] },
+        "paymentStatus": { "type": "string" },
+        "deliveryOtp": { 
+          "type": "string", 
+          "description": "Unique 4-digit OTP generated for Cash on Delivery orders. Null for online payment orders." 
+        },
+        "requiresDeliveryOtp": { 
+          "type": "boolean", 
+          "description": "True if order is Cash on Delivery, requiring customer to provide OTP to delivery boy. False for online payments." 
+        },
+        "pickupOtp": { 
+          "type": "string", 
+          "description": "Merchant verification code that delivery boy must provide upon picking up from store." 
+        },
+        "otpVerified": { "type": "boolean" },
+        "otpVerifiedAt": { "type": "string", "format": "date-time" },
         "vendorId": { "type": "string" },
-        "deliveryPartnerId": { "type": "string" }
+        "vendorName": { "type": "string" },
+        "vendorPhone": { "type": "string" },
+        "pickupAddress": { "type": "string" },
+        "pickupLocation": { "type": "object" },
+        "deliveryPartnerId": { "type": "string" },
+        "deliveryPartnerName": { "type": "string" },
+        "deliveryPartnerPhone": { "type": "string" },
+        "branchId": { "type": "string" },
+        "adminAccepted": { "type": "boolean" },
+        "statusHistory": {
+          "type": "array",
+          "description": "Audit history of status changes made by master/franchisee admins, vendor, or driver."
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "userId", "totalAmount", "status", "createdAt"]
+      "required": ["id", "userId", "status", "paymentMethod", "requiresDeliveryOtp"]
     },
     "Task": {
       "title": "Task",
