@@ -4,6 +4,7 @@ export type Screen =
   | 'login' 
   | 'location' 
   | 'home' 
+  | 'categories'
   | 'category' 
   | 'product' 
   | 'service' 
@@ -24,7 +25,8 @@ export type Screen =
   | 'realEstate'
   | 'tasks'
   | 'logistics'
-  | 'branchManager';
+  | 'branchManager'
+  | 'hospitalOP';
 
 export type LanguageCode = 
   | 'en-IN' | 'hi-IN' | 'te-IN' | 'ta-IN' | 'kn-IN' | 'ml-IN' 
@@ -44,6 +46,23 @@ export interface Category {
   icon: string;
   color: string;
   image?: string;
+  description?: string;
+  order?: number;
+  status?: 'active' | 'inactive';
+  visible?: boolean;
+  defaultRadiusKm?: number;
+  deleted?: boolean;
+}
+
+export interface BranchCategoryConfig {
+  visible?: boolean;
+  online?: boolean;
+  name?: string;
+  icon?: string;
+  image?: string;
+  color?: string;
+  order?: number;
+  radiusKm?: number;
 }
 
 export interface Review {
@@ -75,8 +94,19 @@ export interface Branch {
   revenue: number;
   rating?: number;
   pincodes?: string[];
+  lat?: number;
+  lng?: number;
+  coordinates?: { lat: number; lng: number };
+  deliveryRadius?: number;
+  pendingDeliveryRadius?: number | null;
+  deliveryRadiusStatus?: 'approved' | 'pending' | 'rejected';
+  serviceRadii?: Record<string, number>;
   enabledServices?: string[];
   disabledServices?: string[];
+  serviceControls?: Record<string, boolean>;
+  hiddenCategories?: string[];
+  categoryConfigs?: Record<string, BranchCategoryConfig>;
+  orderAcceptanceMode?: 'automatic' | 'manual';
 }
 
 export interface Product {

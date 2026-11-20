@@ -92,7 +92,7 @@ const MB_PLANS = [
 
   const MB_POLICY = [
     "Marriages are made in heaven let us push for link that connectivity.",
-    "Only local bharath can introducing contacts, you can find good or not bride or groom, don't blame to us, remember that we are mediators only thanks🌹 to everyone.",
+    "Only Local Bandi Multi Services can introducing contacts, you can find good or not bride or groom, don't blame to us, remember that we are mediators only thanks🌹 to everyone.",
     "We provide the introduction, you make the evaluation"
   ];
 

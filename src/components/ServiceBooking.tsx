@@ -3,6 +3,7 @@ import { ArrowLeft, Calendar, Clock, MapPin, Star, ShieldCheck } from 'lucide-re
 import { motion } from 'motion/react';
 import { Service, Review } from '../types';
 import ReviewsSection from './ReviewsSection';
+import { validateServiceGeofence, getServiceOperationalRadiusKm } from '../lib/geofencing';
 
 interface ServiceBookingProps {
   service: Service;
@@ -11,13 +12,29 @@ interface ServiceBookingProps {
   isAdmin?: boolean;
   location: string;
   onUpdateLocation: (newLoc: string) => void;
+  currentBranch?: any;
+  coverageZones?: any[];
+  userCoords?: { lat: number; lng: number } | null;
+  onOpenLocationPicker?: () => void;
 }
 
-export default function ServiceBooking({ service, onBack, onBook, isAdmin = false, location, onUpdateLocation }: ServiceBookingProps) {
+export default function ServiceBooking({ service, onBack, onBook, isAdmin = false, location, onUpdateLocation, currentBranch, coverageZones = [], userCoords, onOpenLocationPicker }: ServiceBookingProps) {
   const [selectedDate, setSelectedDate] = useState(0);
   const [selectedTime, setSelectedTime] = useState(-1);
   const [isEditingAddress, setIsEditingAddress] = useState(false);
   const [editedAddress, setEditedAddress] = useState(location || '');
+
+  const serviceRadiusKm = getServiceOperationalRadiusKm(currentBranch, service.category || 'services');
+  const serviceGeo = userCoords
+    ? validateServiceGeofence({
+        lat: userCoords.lat,
+        lng: userCoords.lng,
+        branch: currentBranch,
+        coverageZones,
+        serviceId: service.category || 'services',
+      })
+    : null;
+  const isBookingBlocked = Boolean(serviceGeo && !serviceGeo.eligible);
 
   useEffect(() => {
     setEditedAddress(location || '');
@@ -301,12 +318,25 @@ export default function ServiceBooking({ service, onBack, onBook, isAdmin = fals
             )}
           </div>
           <div className="flex items-center gap-4 pt-4 mt-4 border-t border-gray-200/50 relative z-10">
-            <div className="bg-green-100 p-2 rounded-xl">
-              <ShieldCheck className="w-5 h-5 text-green-600" />
+            <div className={`p-2 rounded-xl ${isBookingBlocked ? 'bg-rose-100' : 'bg-green-100'}`}>
+              <ShieldCheck className={`w-5 h-5 ${isBookingBlocked ? 'text-rose-600' : 'text-green-600'}`} />
             </div>
-            <div>
-              <p className="text-[10px] font-black text-gray-900 uppercase tracking-widest">Verified Pro</p>
-              <p className="text-[10px] text-gray-500 font-bold">100% Satisfaction Guarantee</p>
+            <div className="flex-1">
+              <p className="text-[10px] font-black text-gray-900 uppercase tracking-widest">
+                {isBookingBlocked ? 'Outside Service Radius' : `Verified Pro • ${serviceRadiusKm} km Operational Radius`}
+              </p>
+              <p className={`text-[10px] font-bold ${isBookingBlocked ? 'text-rose-600' : 'text-gray-500'}`}>
+                {isBookingBlocked ? serviceGeo?.reason : '100% Satisfaction Guarantee'}
+              </p>
+              {isBookingBlocked && onOpenLocationPicker && (
+                <button
+                  type="button"
+                  onClick={onOpenLocationPicker}
+                  className="mt-2 px-3 py-1 bg-rose-600 text-white rounded-lg text-[9px] font-black uppercase tracking-wider cursor-pointer"
+                >
+                  Change Delivery Location
+                </button>
+              )}
             </div>
           </div>
           <MapPin className="absolute -right-4 -bottom-4 w-24 h-24 text-gray-100/30 rotate-12" />
@@ -333,20 +363,24 @@ export default function ServiceBooking({ service, onBack, onBook, isAdmin = fals
         </div>
         <button 
           onClick={() => {
+            if (isBookingBlocked) {
+              onOpenLocationPicker?.();
+              return;
+            }
             if (selectedTime !== -1) {
               const dObj = dates[selectedDate];
               const tObj = currentTimes[selectedTime];
               onBook(`${dObj.day}, ${dObj.date}`, tObj.time);
             }
           }}
-          disabled={selectedTime === -1}
+          disabled={selectedTime === -1 || isBookingBlocked}
           className={`w-full py-5 rounded-[2rem] font-black shadow-xl transition-all ${
-            selectedTime === -1 
+            selectedTime === -1 || isBookingBlocked
               ? 'bg-gray-100 text-gray-400 cursor-not-allowed shadow-none' 
               : 'bg-yellow-400 text-gray-900 shadow-yellow-200 active:scale-95'
           }`}
         >
-          {selectedTime === -1 ? 'Select a Time Slot' : 'Confirm Booking'}
+          {isBookingBlocked ? 'Outside Operational Boundary — Change Location' : selectedTime === -1 ? 'Select a Time Slot' : 'Confirm Booking'}
         </button>
       </div>
     </div>

@@ -49,7 +49,7 @@ createRoot(document.getElementById('root')!).render(
         <ThemeProvider>
           <StandaloneAppGate 
             targetApp="master_admin"
-            appName="Local Bandi Master Admin App"
+            appName="Local Bandi Multi Services"
             appDescription="Centralized Platform Oversight, Real-Time Monitoring & Security Command"
             themeColor="red"
           >

@@ -82,15 +82,15 @@ const JoiningLetter: React.FC<JoiningLetterProps> = ({ partner, onClose, languag
                 <span className="text-white text-3xl font-black italic">LB</span>
               </div>
               <div>
-                <h1 className="text-3xl font-black text-gray-900 tracking-tighter">LOKAL BHARATH</h1>
+                <h1 className="text-3xl font-black text-gray-900 tracking-tighter">LOCAL BANDI MULTI SERVICES</h1>
                 <p className="text-[10px] font-bold text-blue-600 uppercase tracking-widest">{content.brandSub}</p>
               </div>
             </div>
             <div className="text-right text-[10px] uppercase font-bold text-gray-400 leading-tight">
-              <p>LB Logistics Hub, Sector 4</p>
-              <p>Hyderabad, TS, India</p>
-              <p>support@lokalbharath.com</p>
-              <p>www.lokalbharath.com</p>
+              <p>Local Bandi Hub, Rotary Nagar</p>
+              <p>Khammam, TS, India</p>
+              <p>support@localbandimultiservices.in</p>
+              <p>www.localbandimultiservices.in</p>
             </div>
           </div>
 

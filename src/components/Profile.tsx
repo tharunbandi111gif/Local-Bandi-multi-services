@@ -1,18 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, User, Phone, MapPin, Bell, Shield, ShieldCheck, LogOut, ChevronRight, Settings as SettingsIcon, Plus, Trash2, Edit2, X, Check, Gift, Share2, Copy, Wallet, Receipt, TrendingUp, TrendingDown, Package, Camera, Bike, Briefcase, Navigation, Loader2, Search, ListTodo, Store, Moon, Sun, AlertTriangle, Smartphone } from 'lucide-react';
+import { ArrowLeft, User, Phone, MapPin, Bell, Shield, ShieldCheck, LogOut, ChevronRight, Settings as SettingsIcon, Plus, Trash2, Edit2, X, Check, Gift, Share2, Copy, Wallet, Receipt, TrendingUp, TrendingDown, Package, Camera, Bike, Briefcase, Navigation, Loader2, Search, ListTodo, Store, Moon, Sun, AlertTriangle, Smartphone, Globe, FileText, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { doc, updateDoc, serverTimestamp, collection, query, where, onSnapshot, limit, orderBy, getDocs } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Address, Transaction, LanguageCode, Screen } from '../types';
 import { translations } from '../translations';
+import { LANGUAGES } from '../constants';
+import { useTranslation } from '../i18n';
 import { referralService } from '../lib/referral';
-import { useFirebase, BOOTSTRAP_MASTER_ADMINS } from '../contexts/FirebaseContext';
+import { useFirebase, isStrictMasterAdminIdentity } from '../contexts/FirebaseContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { compressImage } from '../lib/imageUtils';
 import { DEFAULT_AVATAR } from '../utils/imagePlaceholders';
 import PartnerOnboarding from './PartnerOnboarding';
 import MyDashboardsSection from './MyDashboardsSection';
 import AppDownloadModal from './AppDownloadModal';
+import LanguageSelectorModal from './common/LanguageSelectorModal';
 
 interface ProfileProps {
   onBack: () => void;
@@ -23,17 +26,13 @@ interface ProfileProps {
 
 export default function Profile({ onBack, onNavigate, language, isAdmin: propIsAdmin }: ProfileProps) {
   const t = translations[language].profile;
-  const { user, userProfile: contextProfile, isAdmin: contextIsAdmin, isMasterAdmin, isSuperAdmin, isBranchAdmin, logout, deactivateAccount } = useFirebase();
+  const { user, userProfile: contextProfile, isAdmin: contextIsAdmin, isBranchAdmin, logout, deactivateAccount } = useFirebase();
+  const { language: activeLang, setLanguage: setAppLanguage } = useTranslation();
+  const [showLangModal, setShowLangModal] = useState(false);
+
+  const isMaster = isStrictMasterAdminIdentity(user?.email, user?.phoneNumber, user?.uid);
   
-  const isMaster = Boolean(
-    isMasterAdmin || 
-    isSuperAdmin || 
-    (contextProfile?.role === 'masterAdmin') ||
-    (user?.email && BOOTSTRAP_MASTER_ADMINS.emails.some(e => e.toLowerCase() === user.email?.toLowerCase())) ||
-    (user?.phoneNumber && BOOTSTRAP_MASTER_ADMINS.phones.some(p => user.phoneNumber?.replace(/\D/g, '').includes(p.replace(/\D/g, '').slice(-10))))
-  );
-  
-  const isAdmin = propIsAdmin || contextIsAdmin || isMaster;
+  const isAdmin = isMaster || contextIsAdmin || Boolean(propIsAdmin && isMaster);
   const { theme, toggleTheme } = useTheme();
   
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
@@ -675,10 +674,16 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
         }
       }
     ] : []),
+    {
+      icon: Globe,
+      label: 'Language Selector (Primary Setting)',
+      sub: `${(LANGUAGES.find(l => l.code === activeLang) || LANGUAGES[0]).native} • 24 Regional Languages`,
+      onClick: () => setShowLangModal(true),
+    },
     { 
       icon: User, 
       label: t.editProfile, 
-      sub: 'Name, Email, Phone', 
+      sub: 'Name, Profile Photo, Mobile, Full Address', 
       onClick: () => {
         setEditForm(userProfile);
         setView('editProfile');
@@ -1476,6 +1481,29 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
         </div>
 
         <div className="px-6 space-y-3 pb-12">
+          {/* Primary Option: Language Selector */}
+          <button
+            type="button"
+            onClick={() => setShowLangModal(true)}
+            className="w-full flex items-center gap-4 p-5 bg-gradient-to-r from-indigo-50 to-amber-50 dark:from-indigo-950/40 dark:to-slate-900 rounded-[2.5rem] border border-indigo-200/80 dark:border-indigo-500/30 shadow-sm hover:shadow-md transition-all text-left cursor-pointer group"
+          >
+            <div className="bg-indigo-600 text-white p-4 rounded-2xl shadow-sm">
+              <Globe className="w-5 h-5" />
+            </div>
+            <div className="flex-1">
+              <span className="inline-block text-[8px] font-black uppercase tracking-widest bg-indigo-600/10 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-md mb-1">
+                Primary Preference
+              </span>
+              <p className="font-black text-sm text-gray-900 dark:text-white">
+                App Language: {(LANGUAGES.find(l => l.code === activeLang) || LANGUAGES[0]).native}
+              </p>
+              <p className="text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-tight mt-0.5">
+                Tap to switch across 24 Indian & global languages
+              </p>
+            </div>
+            <ChevronRight className="w-4 h-4 text-indigo-600 dark:text-indigo-400 group-hover:translate-x-1 transition-all" />
+          </button>
+
           {menuItems.map((item, i) => (
             <motion.button
               key={i}
@@ -1495,6 +1523,51 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
               <ChevronRight className="w-4 h-4 text-gray-300 dark:text-gray-600 group-hover:text-gray-900 dark:group-hover:text-white group-hover:translate-x-1 transition-all" />
             </motion.button>
           ))}
+
+          {/* Separate & Distinct Google Play Store Compliance Sections */}
+          <div className="pt-4 space-y-3">
+            <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 dark:text-gray-500 px-3">
+              Legal &amp; Play Store Compliance
+            </p>
+
+            {/* Section 1: Terms and Conditions */}
+            <a
+              href="/terms-customer.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center gap-4 p-5 bg-gray-50/80 dark:bg-slate-800/70 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-[2.5rem] transition-all text-left border border-gray-100 dark:border-slate-700 group"
+            >
+              <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl shadow-sm text-amber-600">
+                <FileText className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <p className="font-extrabold text-sm text-gray-900 dark:text-white">Terms and Conditions</p>
+                <p className="text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-tight mt-0.5">
+                  Independent Customer App Terms Page &bull; /terms-customer.html
+                </p>
+              </div>
+              <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" />
+            </a>
+
+            {/* Section 2: Privacy Policy */}
+            <a
+              href="/privacy-customer.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full flex items-center gap-4 p-5 bg-gray-50/80 dark:bg-slate-800/70 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-[2.5rem] transition-all text-left border border-gray-100 dark:border-slate-700 group"
+            >
+              <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl shadow-sm text-emerald-600">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <p className="font-extrabold text-sm text-gray-900 dark:text-white">Privacy Policy</p>
+                <p className="text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-tight mt-0.5">
+                  Independent Customer App Privacy Page &bull; /privacy-customer.html
+                </p>
+              </div>
+              <ExternalLink className="w-4 h-4 text-gray-400 group-hover:text-gray-900 dark:group-hover:text-white" />
+            </a>
+          </div>
           
           <motion.button 
             initial={{ opacity: 0 }}
@@ -1932,6 +2005,17 @@ export default function Profile({ onBack, onNavigate, language, isAdmin: propIsA
         isOpen={showAppDownloadModal}
         onClose={() => setShowAppDownloadModal(false)}
         defaultAppId="customer"
+      />
+
+      <LanguageSelectorModal
+        isOpen={showLangModal}
+        onClose={() => setShowLangModal(false)}
+        selectedLanguage={activeLang}
+        onSelectLanguage={(code) => {
+          setAppLanguage(code);
+          localStorage.setItem('lokal_language', code);
+          setShowLangModal(false);
+        }}
       />
     </div>
   );

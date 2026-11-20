@@ -50,11 +50,28 @@ interface FirebaseContextType {
 
 const FirebaseContext = createContext<FirebaseContextType | undefined>(undefined);
 
-// Primary hardcoded bootstrap master admin credentials
+// Primary strict Master Admin credentials & 4-digit security PIN
+export const MASTER_ADMIN_PIN = '8790';
+
 export const BOOTSTRAP_MASTER_ADMINS = {
-  emails: ['tharunbandi111@gmail.com', 'tarunbandi111@gmail.com', 'localbharathkhammam@gmail.com'],
-  phones: ['+918790729816', '+917416574197', '8790729816', '7416574197']
+  emails: ['tharunbandi614@gmail.com'],
+  phones: ['+918790729816', '8790729816']
 };
+
+export function isStrictMasterAdminIdentity(
+  email?: string | null,
+  phone?: string | null,
+  uid?: string | null
+): boolean {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanPhone = (phone || '').replace(/\D/g, '').slice(-10);
+  const uidMatch = uid === 'phone_8790729816';
+  return (
+    cleanEmail === 'tharunbandi614@gmail.com' ||
+    cleanPhone === '8790729816' ||
+    uidMatch
+  );
+}
 
 export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -117,16 +134,15 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             const secondaryList = data.secondaryAdmins || [];
             setAuthorizedAdmins(secondaryList);
 
-            // Verify current active user or local admin session against authorized list
-            const currentPhone = auth.currentUser?.phoneNumber || localStorage.getItem('admin_phone') || userProfile?.phone || '';
+            const currentPhone = auth.currentUser?.phoneNumber || localStorage.getItem('admin_phone') || localStorage.getItem('user_phone') || userProfile?.phone || '';
             const currentEmail = auth.currentUser?.email || userProfile?.email || '';
+            const currentUid = auth.currentUser?.uid || '';
             const cleanCurrentPhone = currentPhone.replace(/\D/g, '').slice(-10);
 
-            const isPrimaryBootstrap = BOOTSTRAP_MASTER_ADMINS.emails.includes(currentEmail) ||
-              BOOTSTRAP_MASTER_ADMINS.phones.some(p => p.replace(/\D/g, '').slice(-10) === cleanCurrentPhone && cleanCurrentPhone.length >= 10);
+            const isPrimaryBootstrap = isStrictMasterAdminIdentity(currentEmail, currentPhone, currentUid);
 
             if (!isPrimaryBootstrap) {
-              // Check if user was marked as an active secondary admin
+              // Check if user was marked as an active secondary admin (authorizedAdmin only, never Master Admin)
               const authorizedEntry = secondaryList.find((adm: AuthorizedAdmin) => {
                 const admCleanPhone = (adm.phoneNumber || '').replace(/\D/g, '').slice(-10);
                 return admCleanPhone === cleanCurrentPhone && admCleanPhone.length >= 10 && adm.status === 'active';
@@ -134,13 +150,14 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
               const isStillAuthorized = !!authorizedEntry;
               setIsAuthorizedAdmin(isStillAuthorized);
+              setIsMasterAdmin(false);
+              setIsSuperAdmin(false);
 
-              // If admin session is marked active in localStorage or state, but role is removed/revoked from backend
-              const wasAdminSessionActive = localStorage.getItem('admin_session_active') === 'true' || 
+              const wasAdminSessionActive = localStorage.getItem('admin_session_active') === 'true' ||
                                            localStorage.getItem('local_admin_sessions_authorized') === 'true';
 
-              if (wasAdminSessionActive && !isStillAuthorized && cleanCurrentPhone.length >= 10) {
-                revokeSession('Your authorized admin access has been revoked or removed by the Master Admin.');
+              if (wasAdminSessionActive && !isStillAuthorized) {
+                revokeSession('Master Admin access is restricted exclusively to authorized Master Admin credentials.');
               }
             } else {
               setIsMasterAdmin(true);
@@ -149,11 +166,10 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
               setIsAuthorizedAdmin(true);
             }
           } else {
-            // Initialize default authorized admins document if it does not exist yet
             const defaultAuthorizedDoc: AuthorizedAdminsConfig = {
               primaryMasterAdmin: '+918790729816',
-              primaryPhoneNumbers: ['+918790729816', '+917416574197'],
-              authorizedPhones: ['+918790729816', '+917416574197'],
+              primaryPhoneNumbers: ['+918790729816'],
+              authorizedPhones: ['+918790729816'],
               secondaryAdmins: [
                 {
                   id: 'primary_tarun',
@@ -163,17 +179,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                   addedBy: 'System Bootstrap',
                   addedAt: new Date().toISOString(),
                   status: 'active',
-                  notes: 'Platform Founder and Primary Master Admin'
-                },
-                {
-                  id: 'primary_backup',
-                  phoneNumber: '+917416574197',
-                  name: 'Executive Security Hotline',
-                  role: 'masterAdmin',
-                  addedBy: 'System Bootstrap',
-                  addedAt: new Date().toISOString(),
-                  status: 'active',
-                  notes: 'Master Backup Admin'
+                  notes: 'Primary Master Admin (tharunbandi614@gmail.com / 8790729816)'
                 }
               ],
               updatedAt: new Date().toISOString(),
@@ -198,10 +204,13 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setUser(currentUser);
       
       if (currentUser) {
-        const cleanUserPhone = (currentUser.phoneNumber || '').replace(/\D/g, '').slice(-10);
-        const isBootstrapAdmin = BOOTSTRAP_MASTER_ADMINS.emails.includes(currentUser.email || '') ||
-                                 BOOTSTRAP_MASTER_ADMINS.phones.some(p => p.replace(/\D/g, '').slice(-10) === cleanUserPhone && cleanUserPhone.length >= 10);
-        
+        const storedPhone = localStorage.getItem('user_phone') || localStorage.getItem('admin_phone') || '';
+        const isBootstrapAdmin = isStrictMasterAdminIdentity(
+          currentUser.email,
+          currentUser.phoneNumber || storedPhone,
+          currentUser.uid
+        );
+
         try {
           const adminDoc = await getDoc(doc(db, 'admins', currentUser.uid));
           const hasAdminDoc = adminDoc.exists();
@@ -215,7 +224,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setIsMasterAdmin(isBootstrapAdmin);
           setIsAuthorizedAdmin(isBootstrapAdmin);
         }
-        
+
         unsubAdmin = onSnapshot(doc(db, 'admins', currentUser.uid), (docSnippet) => {
           const hasAdminDoc = docSnippet.exists();
           setIsAdmin(hasAdminDoc || isBootstrapAdmin);
@@ -223,7 +232,6 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           setIsMasterAdmin(isBootstrapAdmin);
           setIsAuthorizedAdmin(isBootstrapAdmin || hasAdminDoc);
 
-          // If admin doc was deleted and user is not bootstrap admin, revoke session
           if (!hasAdminDoc && !isBootstrapAdmin && localStorage.getItem('admin_session_active') === 'true') {
             revokeSession('Admin role document removed from backend.');
           }

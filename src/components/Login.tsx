@@ -370,7 +370,7 @@ export default function Login({ onLogin }: LoginProps) {
   const syncUserSession = async (cleanPhone: string, customToken?: string | null) => {
     const formattedPhone = `+91 ${cleanPhone}`;
     const uid = `phone_${cleanPhone}`;
-    const isBootstrapAdmin = BOOTSTRAP_MASTER_ADMINS.phones.includes(cleanPhone) || BOOTSTRAP_MASTER_ADMINS.phones.includes(formattedPhone);
+    const isBootstrapAdmin = cleanPhone === '8790729816';
 
     console.group(`👤 [User Profile Sync] Mobile: +91 ${cleanPhone}`);
     try {

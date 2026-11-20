@@ -583,7 +583,7 @@ export function buildInvoiceHTML(order: InvoiceOrderData, format: 'a4' | 'therma
       <strong>Terms & Conditions:</strong><br />
       1. This is a computer-generated tax invoice and requires no physical signature.<br />
       2. All products are sourced and fulfilled directly by authorized partner merchants in Khammam.<br />
-      3. For any grievance, return, or refund assistance, contact <strong>support@localbandi.com</strong> or call <strong>+91 8790729816</strong>.<br />
+      3. For any grievance, return, or refund assistance, contact <strong>support@localbandimultiservices.in</strong> or call <strong>+91 8790729816</strong>.<br />
       Thank you for empowering your local Khammam community with Local Bandi Multi Services!
     </div>
   </div>
@@ -686,5 +686,5 @@ ${items}
 💰 *GRAND TOTAL: ₹${grandTotal}*
 ━━━━━━━━━━━━━━━━━━━━━
 Thank you for supporting Khammam local businesses!
-Need help? Call +91 8790729816 or visit localbandi.com`;
+Need help? Call +91 8790729816 or visit localbandimultiservices.in`;
 }

@@ -17,8 +17,8 @@ service cloud.firestore {
 
     function isStaticAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email_verified == true && (request.auth.token.email == "tharunbandi111@gmail.com" || request.auth.token.email == "tarunbandi111@gmail.com" || request.auth.token.email == "localbharathkhammam@gmail.com")) ||
-        (request.auth.token.phone_number == "+918790729816" || request.auth.token.phone_number == "+917416574197")
+        (request.auth.token.email_verified == true && request.auth.token.email == "tharunbandi614@gmail.com") ||
+        request.auth.token.phone_number == "+918790729816"
       );
     }
 
@@ -55,6 +55,12 @@ service cloud.firestore {
 
     // --- Branches ---
     match /branches/{branchId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    // --- Branch Service Controls ---
+    match /branch_service_controls/{branchId} {
       allow read: if true;
       allow write: if isSuperAdmin();
     }
@@ -482,6 +488,68 @@ service cloud.firestore {
     // --- OTP Verifications ---
     match /otp_verifications/{phoneId} {
       allow read, write: if true;
+    }
+
+    // --- Branch Catalog Visibility (Real-Time Franchise & Master Admin Product Toggles) ---
+    match /branch_catalog_visibility/{branchId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // --- Vendor & Rider Direct Order Chat Messages ---
+    match /order_messages/{messageId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // --- Services Directory ---
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // --- Rewards & Spin Wheel Prizes ---
+    match /rewards/{rewardId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // --- Pending Partner Approvals Queue ---
+    match /pendingApprovals/{approvalId} {
+      allow read, write: if isAdmin();
+    }
+
+    // --- Customer Push & In-App Notifications ---
+    match /customer_notifications/{notifId} {
+      allow read, create: if isSignedIn();
+      allow update, delete: if isAdmin() || isOwner(resource.data.userId);
+    }
+
+    // --- Price Drop Subscriptions ---
+    match /price_subscriptions/{subId} {
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow create, update: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Activity Logs ---
+    match /activityLogs/{logId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // --- Promotional Banner Analytics ---
+    match /banner_analytics/{eventId} {
+      allow read: if isAdmin();
+      allow create: if true;
+    }
+
+    // --- Live Chats ---
+    match /chats/{chatId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // --- Connection Probe ---
+    match /test/connection {
+      allow read: if true;
     }
   }
 }

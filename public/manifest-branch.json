@@ -1,8 +1,8 @@
 {
-  "name": "Local Bandi Branch Admin",
-  "short_name": "Branch Admin",
+  "name": "Local Bandi Multi Services",
+  "short_name": "Local Bandi Multi Services",
   "description": "Local Bandi Regional Branch & Franchise Operations with Delivery Radius Management",
-  "id": "com.localbandi.branch",
+  "id": "com.localbandi.branchadmin",
   "start_url": "/branch-admin.html",
   "scope": "/",
   "display": "standalone",

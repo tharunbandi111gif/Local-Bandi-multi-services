@@ -104,12 +104,16 @@ interface MarketingQuizModalProps {
   isOpen: boolean;
   onClose: () => void;
   onApplyCoupon?: (couponCode: string) => void;
+  completedPaidOrdersCount?: number;
+  userId?: string;
 }
 
 export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
   isOpen,
   onClose,
-  onApplyCoupon
+  onApplyCoupon,
+  completedPaidOrdersCount = 0,
+  userId
 }) => {
   const TOTAL_TIME = 40; // 40-second speed quiz
   const [gameState, setGameState] = useState<'intro' | 'playing' | 'completed' | 'timeout'>('intro');
@@ -120,7 +124,12 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
   const [activeQuestionList, setActiveQuestionList] = useState<QuizQuestion[]>([]);
-  const [wasAlreadyClaimedThisWeek, setWasAlreadyClaimedThisWeek] = useState<boolean>(false);
+  const [hasClaimedLifetimeReward, setHasClaimedLifetimeReward] = useState<boolean>(false);
+  const [earnedRewardThisRun, setEarnedRewardThisRun] = useState<boolean>(false);
+
+  const lifetimeClaimKey = `quiz_lifetime_reward_claimed_${userId || 'guest'}`;
+  const isFourthOrderUnlocked = completedPaidOrdersCount >= 4;
+  const ordersRemainingForReward = Math.max(0, 4 - completedPaidOrdersCount);
 
   // Sound synthesis cue helper
   const playBeep = (freq: number = 440, type: OscillatorType = 'sine', duration: number = 0.15) => {
@@ -155,20 +164,25 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
     return () => window.removeEventListener('quiz_questions_updated', handleUpdate);
   }, []);
 
-  // Check weekly claim status on modal open
+  // Check one-time lifetime claim status on modal open
   useEffect(() => {
-    if (isOpen) {
-      const currentWeek = getCurrentWeekKey();
-      const claimedWeek = typeof window !== 'undefined' ? localStorage.getItem('quiz_reward_claimed_week') : null;
-      setWasAlreadyClaimedThisWeek(claimedWeek === currentWeek);
+    if (isOpen && typeof window !== 'undefined') {
+      const claimed =
+        localStorage.getItem(lifetimeClaimKey) === 'true' ||
+        localStorage.getItem('quiz_lifetime_reward_claimed') === 'true';
+      setHasClaimedLifetimeReward(claimed);
     }
-  }, [isOpen]);
+  }, [isOpen, lifetimeClaimKey]);
 
   // Select 3 random questions when quiz starts
   const startQuiz = () => {
-    const currentWeek = getCurrentWeekKey();
-    const claimedWeek = typeof window !== 'undefined' ? localStorage.getItem('quiz_reward_claimed_week') : null;
-    setWasAlreadyClaimedThisWeek(claimedWeek === currentWeek);
+    if (typeof window !== 'undefined') {
+      const claimed =
+        localStorage.getItem(lifetimeClaimKey) === 'true' ||
+        localStorage.getItem('quiz_lifetime_reward_claimed') === 'true';
+      setHasClaimedLifetimeReward(claimed);
+    }
+    setEarnedRewardThisRun(false);
 
     const questions = getStoredQuizQuestions();
     const shuffled = [...questions].sort(() => 0.5 - Math.random()).slice(0, Math.min(3, questions.length));
@@ -236,32 +250,46 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
 
   const finishQuiz = (finalScore: number) => {
     setGameState('completed');
-    const currentWeek = getCurrentWeekKey();
-    const claimedWeek = typeof window !== 'undefined' ? localStorage.getItem('quiz_reward_claimed_week') : null;
-    const isFirstGameInWeek = claimedWeek !== currentWeek;
+    const alreadyClaimed =
+      typeof window !== 'undefined' &&
+      (localStorage.getItem(lifetimeClaimKey) === 'true' ||
+        localStorage.getItem('quiz_lifetime_reward_claimed') === 'true');
 
-    if (isFirstGameInWeek) {
-      // First official game of the week: award offer & save weekly timestamp
+    // Strictly restrict coupon generation to the user's 4th completed & paid order (one-time lifetime event)
+    if (isFourthOrderUnlocked && !alreadyClaimed) {
       if (typeof window !== 'undefined') {
-        localStorage.setItem('quiz_reward_claimed_week', currentWeek);
+        localStorage.setItem(lifetimeClaimKey, 'true');
+        localStorage.setItem('quiz_lifetime_reward_claimed', 'true');
       }
-      setWasAlreadyClaimedThisWeek(false);
+      setHasClaimedLifetimeReward(true);
+      setEarnedRewardThisRun(true);
     } else {
-      setWasAlreadyClaimedThisWeek(true);
+      setEarnedRewardThisRun(false);
     }
     playBeep(1318.5, 'triangle', 0.4); // E6 note triumph
   };
 
-  // Determine Reward Code & Details (Updated Tiers: 3/3 => 15%, 2/3 => 10%, 1/3 => 4%)
+  // Determine Reward Code & Details (Coupon strictly restricted to 4th completed & paid order, one-time lifetime)
   const getRewardDetails = () => {
-    if (wasAlreadyClaimedThisWeek) {
+    if (!earnedRewardThisRun) {
+      if (hasClaimedLifetimeReward) {
+        return {
+          title: "🎯 TRIAL GAMEPLAY COMPLETED!",
+          subtitle: `Nice run (${score}/3 in ${TOTAL_TIME - timeLeft}s)! Your one-time lifetime 4th-order Speed Quiz reward has already been claimed. Keep playing anytime for fun!`,
+          couponCode: "",
+          discountText: "One-Time Lifetime Reward Already Claimed",
+          badgeColor: "bg-indigo-600",
+          badgeText: "Trial Mode",
+          isPractice: true
+        };
+      }
       return {
-        title: "🎯 PRACTICE SESSION COMPLETED!",
-        subtitle: `Great score (${score}/3 in ${TOTAL_TIME - timeLeft}s)! You can practice and play as many times as you like. Your next weekly official discount offer unlocks next week!`,
-        couponCode: "PRACTICEMODE",
-        discountText: "Weekly Coupon Already Claimed • Next Unlock Next Week",
+        title: "🎯 TRIAL GAMEPLAY COMPLETED!",
+        subtitle: `Great score (${score}/3 in ${TOTAL_TIME - timeLeft}s)! Complete ${ordersRemainingForReward} more paid order${ordersRemainingForReward === 1 ? '' : 's'} (4th completed & paid order) to unlock your one-time lifetime Speed Quiz discount coupon.`,
+        couponCode: "",
+        discountText: `Trial Mode • ${completedPaidOrdersCount}/4 Paid Orders Completed`,
         badgeColor: "bg-indigo-600",
-        badgeText: "Practice Mode Active",
+        badgeText: "Trial Gameplay",
         isPractice: true
       };
     }
@@ -526,66 +554,94 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
               <div className="text-xs text-emerald-400 font-bold mt-0.5">{reward.discountText}</div>
             </div>
 
-            {/* Generated Promo Coupon Box */}
-            <div className="bg-gradient-to-r from-amber-500/20 via-yellow-500/20 to-amber-500/20 border-2 border-dashed border-amber-400/60 rounded-2xl p-4 space-y-3">
-              <div>
-                <span className="text-[9px] uppercase tracking-widest font-mono font-bold text-amber-300">
-                  Your Claimable Marketing Promo Code:
-                </span>
-                <div className="text-xl font-mono font-black text-amber-400 tracking-wider mt-1 select-all">
-                  {reward.couponCode}
+            {/* Generated Promo Coupon Box (Strictly shown ONLY when earned on 4th completed & paid order) */}
+            {!(reward as any).isPractice && reward.couponCode ? (
+              <div className="bg-gradient-to-r from-amber-500/20 via-yellow-500/20 to-amber-500/20 border-2 border-dashed border-amber-400/60 rounded-2xl p-4 space-y-3">
+                <div>
+                  <span className="text-[9px] uppercase tracking-widest font-mono font-bold text-amber-300">
+                    Your One-Time 4th-Order Lifetime Promo Code:
+                  </span>
+                  <div className="text-xl font-mono font-black text-amber-400 tracking-wider mt-1 select-all">
+                    {reward.couponCode}
+                  </div>
+                  <p className="text-xs font-bold text-slate-200 mt-1">{reward.discountText}</p>
                 </div>
-                <p className="text-xs font-bold text-slate-200 mt-1">{reward.discountText}</p>
-              </div>
 
-              {/* Terms & Conditions Notice (Inside Modal) */}
-              <div className="p-3 bg-slate-950/90 rounded-xl border border-amber-500/30 text-left space-y-1.5">
-                <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-400 uppercase tracking-wider">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>Offer Terms &amp; Conditions</span>
+                {/* Terms & Conditions Notice (Inside Modal) */}
+                <div className="p-3 bg-slate-950/90 rounded-xl border border-amber-500/30 text-left space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-400 uppercase tracking-wider">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>Offer Terms &amp; Conditions</span>
+                  </div>
+                  <ul className="text-[10px] text-slate-300 space-y-1 list-disc list-inside font-medium leading-relaxed">
+                    <li>Minimum order subtotal must be <strong className="text-amber-400 font-bold">₹99 or above</strong> at checkout.</li>
+                    <li>Strictly limited to your 4th completed &amp; paid order (one-time lifetime reward).</li>
+                    <li>Instant discount applied directly on your basket total.</li>
+                  </ul>
                 </div>
-                <ul className="text-[10px] text-slate-300 space-y-1 list-disc list-inside font-medium leading-relaxed">
-                  <li>Minimum order subtotal must be <strong className="text-amber-400 font-bold">₹99 or above</strong> at checkout.</li>
-                  <li>Discount coupon unlocks once per week per customer.</li>
-                  <li>Instant discount applied directly on your basket total.</li>
-                </ul>
+
+                <div className="flex items-center justify-center gap-2 pt-1">
+                  <button
+                    onClick={handleCopyCode}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+                  >
+                    {copiedCode ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    <span>{copiedCode ? "Copied!" : "Copy Code"}</span>
+                  </button>
+
+                  <button
+                    onClick={handleShareWhatsApp}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-md shadow-emerald-600/30"
+                  >
+                    <Share2 className="w-4 h-4" />
+                    <span>Share Score</span>
+                  </button>
+                </div>
               </div>
-
-              <div className="flex items-center justify-center gap-2 pt-1">
-                <button
-                  onClick={handleCopyCode}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
-                >
-                  {copiedCode ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  <span>{copiedCode ? "Copied!" : "Copy Code"}</span>
-                </button>
-
+            ) : (
+              <div className="bg-slate-950/90 border border-indigo-500/30 rounded-2xl p-4 space-y-3 text-center">
+                <p className="text-xs font-bold text-indigo-300">
+                  {hasClaimedLifetimeReward
+                    ? 'You have already claimed your one-time lifetime Speed Quiz reward.'
+                    : `Complete ${ordersRemainingForReward} more paid order${ordersRemainingForReward === 1 ? '' : 's'} to unlock your one-time 4th-order coupon!`}
+                </p>
+                <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-amber-400 to-emerald-400 h-full transition-all"
+                    style={{ width: `${Math.min(100, (completedPaidOrdersCount / 4) * 100)}%` }}
+                  />
+                </div>
+                <p className="text-[10px] font-mono text-slate-400">
+                  Paid Orders Progress: {Math.min(completedPaidOrdersCount, 4)} / 4
+                </p>
                 <button
                   onClick={handleShareWhatsApp}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 shadow-md shadow-emerald-600/30"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer inline-flex items-center gap-1.5 active:scale-95 shadow-md shadow-emerald-600/30"
                 >
                   <Share2 className="w-4 h-4" />
-                  <span>Share Score</span>
+                  <span>Share Trial Score</span>
                 </button>
               </div>
-            </div>
+            )}
 
             {/* CTA Buttons */}
             <div className="space-y-2">
-              <button
-                onClick={handleApplyAndClose}
-                className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-emerald-500/20 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
-              >
-                <ShoppingBag className="w-4 h-4" />
-                <span>Apply Coupon to Cart & Shop Now</span>
-              </button>
+              {!(reward as any).isPractice && reward.couponCode && (
+                <button
+                  onClick={handleApplyAndClose}
+                  className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs uppercase tracking-widest rounded-2xl shadow-xl shadow-emerald-500/20 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  <span>Apply Coupon to Cart & Shop Now</span>
+                </button>
+              )}
 
               <button
                 onClick={startQuiz}
                 className="w-full py-2.5 text-xs font-bold text-slate-400 hover:text-white uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>Play Again (Retry Challenge)</span>
+                <span>Play Trial Again</span>
               </button>
             </div>
           </div>
@@ -596,12 +652,17 @@ export const MarketingQuizModal: React.FC<MarketingQuizModalProps> = ({
   );
 };
 
-// COMPACT FLOATING MARKETING BANNER FOR CUSTOMER HOME SCREEN
+// PERMANENT SPEED QUIZ BANNER FOR CUSTOMER HOME SCREEN (Always visible for trial gameplay)
 interface MarketingQuizFloatingBannerProps {
   onOpenQuiz: () => void;
+  completedPaidOrdersCount?: number;
 }
 
-export const MarketingQuizFloatingBanner: React.FC<MarketingQuizFloatingBannerProps> = ({ onOpenQuiz }) => {
+export const MarketingQuizFloatingBanner: React.FC<MarketingQuizFloatingBannerProps> = ({
+  onOpenQuiz,
+  completedPaidOrdersCount = 0
+}) => {
+  const remaining = Math.max(0, 4 - completedPaidOrdersCount);
   return (
     <motion.div 
       initial={{ opacity: 0, y: -10 }}
@@ -618,19 +679,20 @@ export const MarketingQuizFloatingBanner: React.FC<MarketingQuizFloatingBannerPr
             </div>
 
             <div>
-              <div className="flex items-center gap-2">
-                <span className="bg-amber-500/20 text-amber-400 font-mono text-[9px] font-black px-2 py-0.5 rounded-md border border-amber-500/30 uppercase tracking-wider">
-                  ⚡ Weekly Speed Quiz
+              <div className="flex items-center gap-2 text-[10px] font-bold text-amber-300">
+                <span className="uppercase tracking-wider font-black text-amber-400">
+                  40-Sec Speed Quiz
                 </span>
-                <span className="text-[10px] text-amber-300 font-bold">
-                  1 Participation / Week
+                <span aria-hidden="true">·</span>
+                <span>
+                  {remaining === 0 ? '4th Order Reward Unlocked' : `Free Trial • ${completedPaidOrdersCount}/4 Paid Orders`}
                 </span>
               </div>
               <h4 className="text-xs sm:text-sm font-black text-white uppercase tracking-tight mt-0.5">
-                Play & Unlock Weekly Discount Rewards!
+                Play Anytime — Unlock One-Time Reward on 4th Paid Order!
               </h4>
               <p className="text-[10.5px] text-slate-400 leading-tight">
-                Answer 3 quick low-price product trivia questions in 40 seconds to win exclusive discount coupons!
+                Practice free from day 1. Coupon reward unlocks once in a lifetime on your 4th completed &amp; paid order.
               </p>
             </div>
           </div>

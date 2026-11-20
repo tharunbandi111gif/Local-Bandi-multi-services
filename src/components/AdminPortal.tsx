@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  ShieldAlert, Settings, Users, Store, Bike, 
+  ShieldAlert, Settings, User, Users, Store, Bike, 
   HelpCircle, CheckCircle, AlertTriangle, XCircle, 
   Search, Plus, MapPin, Trash2, Edit2, 
   FileText, LogOut, ArrowRight, Activity, 
@@ -13,10 +13,11 @@ import {
   Lock, Unlock, PhoneCall, Upload, Camera, Image as ImageIcon, Link as LinkIcon,
   CheckSquare, Square, Filter, SlidersHorizontal, Layers,
   Printer, Receipt, Copy, ExternalLink, Clock, CreditCard, PackageCheck, Truck, Phone, MessageSquare, Navigation, Eye, Share2,
-  Play, Pause, Wrench, Download, Tag
+  Play, Pause, Wrench, Download, Tag, User as UserIcon, Building2
 } from 'lucide-react';
 import { compressImage, validateImageFile, processImageUpload, MAX_IMAGE_FILE_SIZE_BYTES } from '../lib/imageUtils';
-import { useFirebase } from '../contexts/FirebaseContext';
+import { useFirebase, isStrictMasterAdminIdentity, MASTER_ADMIN_PIN } from '../contexts/FirebaseContext';
+import UniversalProfileSection from './common/UniversalProfileSection';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { 
   collection, onSnapshot, query, where, doc, 
@@ -39,6 +40,7 @@ import RealtimeOrderBillModal from './RealtimeOrderBillModal';
 import ShippingLabelModal from './ShippingLabelModal';
 import GlobalMonitoringView from './admin/GlobalMonitoringView';
 import StoreMapModal from './StoreMapModal';
+import RegionalCategoryManager from './RegionalCategoryManager';
 
 export default function AdminPortal() {
   const [selectedMapStore, setSelectedMapStore] = useState<any | null>(null);
@@ -53,8 +55,31 @@ export default function AdminPortal() {
     revokeSession 
   } = useFirebase();
 
+  const isStrictMaster = Boolean(
+    isFbSuperAdmin ||
+    isStrictMasterAdminIdentity(
+      user?.email || userProfile?.email,
+      user?.phoneNumber || userProfile?.phone || localStorage.getItem('user_phone'),
+      user?.uid
+    )
+  );
+
+  const [pinUnlocked, setPinUnlocked] = useState<boolean>(() => {
+    return sessionStorage.getItem('local_admin_pin_verified') === 'true';
+  });
+  const [branchConfirmedOnUnlock, setBranchConfirmedOnUnlock] = useState<boolean>(() => {
+    return sessionStorage.getItem('local_admin_pin_verified') === 'true';
+  });
+  const [unlockPinInput, setUnlockPinInput] = useState('');
+  const [selectedOperationalBranch, setSelectedOperationalBranch] = useState<string>(() => {
+    return localStorage.getItem('local_admin_branch_id') || 'global';
+  });
+
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(() => {
-    return localStorage.getItem('local_admin_sessions_authorized') === 'true';
+    return (
+      localStorage.getItem('local_admin_sessions_authorized') === 'true' &&
+      sessionStorage.getItem('local_admin_pin_verified') === 'true'
+    );
   });
   const [adminRole, setAdminRole] = useState<'master' | 'franchise' | 'authorizedAdmin'>(() => {
     return (localStorage.getItem('local_admin_role') as any) || 'master';
@@ -68,7 +93,7 @@ export default function AdminPortal() {
 
   // Master Admin Access / Authorized Admins state
   const [authorizedAdminsList, setAuthorizedAdminsList] = useState<AuthorizedAdmin[]>([]);
-  const [primaryMasterPhones, setPrimaryMasterPhones] = useState<string[]>(['+918790729816', '+917416574197']);
+  const [primaryMasterPhones, setPrimaryMasterPhones] = useState<string[]>(['+918790729816']);
   const [newAdminPhone, setNewAdminPhone] = useState('');
   const [newAdminName, setNewAdminName] = useState('');
   const [newAdminRole, setNewAdminRole] = useState<'authorizedAdmin' | 'masterAdmin'>('authorizedAdmin');
@@ -76,22 +101,30 @@ export default function AdminPortal() {
   const [isAdminSaving, setIsAdminSaving] = useState(false);
   const [adminSearchTerm, setAdminSearchTerm] = useState('');
 
-  // Auto-authenticate Firebase Super Admin
+  // Require both strict Master Admin identity AND 4-digit PIN (8790) + Operational Branch selection
   useEffect(() => {
-    if (isFbSuperAdmin) {
+    if (isStrictMaster && pinUnlocked && branchConfirmedOnUnlock) {
       localStorage.setItem('local_admin_sessions_authorized', 'true');
       localStorage.setItem('admin_session_active', 'true');
       localStorage.setItem('local_admin_role', 'master');
-      localStorage.setItem('local_admin_branch_id', 'global');
+      localStorage.setItem('local_admin_branch_id', selectedOperationalBranch || 'global');
       setAdminRole('master');
-      setAdminBranchId('global');
+      setAdminBranchId(selectedOperationalBranch || 'global');
       setIsAdminAuthenticated(true);
+    } else if (!isStrictMaster && !pinUnlocked) {
+      setIsAdminAuthenticated(false);
     }
-  }, [isFbSuperAdmin]);
+  }, [isStrictMaster, pinUnlocked, branchConfirmedOnUnlock, selectedOperationalBranch]);
 
   const [adminPasscode, setAdminPasscode] = useState('');
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'monitoring' | 'apk_hub' | 'sos' | 'ai_desk' | 'attractions' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz'>('dashboard');
+  const [authMethod, setAuthMethod] = useState<'otp' | 'email' | 'passcode'>('passcode');
+  const [masterOtpPhone, setMasterOtpPhone] = useState('8790729816');
+  const [masterOtpCode, setMasterOtpCode] = useState('');
+  const [masterOtpSent, setMasterOtpSent] = useState(false);
+  const [masterOtpLoading, setMasterOtpLoading] = useState(false);
+  const [selectedBranchForServiceControl, setSelectedBranchForServiceControl] = useState<string>('khammam_main');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'monitoring' | 'apk_hub' | 'sos' | 'ai_desk' | 'attractions' | 'logistics' | 'approvals' | 'marriage' | 'real_estate' | 'catalog' | 'vendors' | 'riders' | 'chat' | 'users' | 'systems' | 'founder' | 'support' | 'deals' | 'quiz' | 'profile'>('dashboard');
 
   // --- EMERGENCY SOS DISTRESS ALERTS STATES ---
   const [sosAlerts, setSosAlerts] = useState<SOSAlert[]>([]);
@@ -652,70 +685,88 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
   const [orderSearchError, setOrderSearchError] = useState('');
   const [orderSearchLoading, setOrderSearchLoading] = useState(false);
 
-  // Authentication validation
+  const OPERATIONAL_BRANCH_PRESETS = [
+    { id: 'global', name: 'Global / All Branches (Full Platform)' },
+    { id: 'khammam_main', name: 'Khammam Main Branch' },
+    { id: 'kalluru', name: 'Kalluru Branch' },
+    { id: 'madhira', name: 'Madhira Branch' },
+  ];
+
+  const availableOperationalBranches = React.useMemo(() => {
+    const map = new Map<string, string>();
+    OPERATIONAL_BRANCH_PRESETS.forEach((b) => map.set(b.id, b.name));
+    branches.forEach((b) => {
+      if (b?.id) map.set(b.id, b.name || b.id);
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [branches]);
+
+  const matchesSelectedBranch = React.useCallback((itemBranchId?: string | null) => {
+    if (!selectedOperationalBranch || selectedOperationalBranch === 'global') return true;
+    const normSelected = selectedOperationalBranch.toLowerCase().replace(/-/g, '_');
+    const normItem = (itemBranchId || '').toLowerCase().replace(/-/g, '_');
+    if (!normItem) return normSelected === 'khammam_main';
+    return normItem === normSelected;
+  }, [selectedOperationalBranch]);
+
+  const branchScopedOrders = React.useMemo(
+    () => orders.filter((o) => matchesSelectedBranch(o.branchId)),
+    [orders, matchesSelectedBranch]
+  );
+
+  const branchScopedVendors = React.useMemo(
+    () => vendors.filter((v) => matchesSelectedBranch(v.branchId)),
+    [vendors, matchesSelectedBranch]
+  );
+
+  const branchScopedRiders = React.useMemo(
+    () => riders.filter((r) => matchesSelectedBranch(r.branchId)),
+    [riders, matchesSelectedBranch]
+  );
+
+  const handleConfirmPinAndBranchUnlock = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const enteredPin = (unlockPinInput || adminPasscode).trim();
+    if (enteredPin !== MASTER_ADMIN_PIN) {
+      setAuthError('❌ Invalid 4-digit Master Security PIN. Please enter the authorized PIN.');
+      return;
+    }
+    const targetBranch = selectedOperationalBranch || 'global';
+    sessionStorage.setItem('local_admin_pin_verified', 'true');
+    localStorage.setItem('local_admin_sessions_authorized', 'true');
+    localStorage.setItem('admin_session_active', 'true');
+    localStorage.setItem('local_admin_role', 'master');
+    localStorage.setItem('local_admin_branch_id', targetBranch);
+    localStorage.setItem('admin_phone', '8790729816');
+    setPinUnlocked(true);
+    setBranchConfirmedOnUnlock(true);
+    setAdminRole('master');
+    setAdminBranchId(targetBranch);
+    if (targetBranch !== 'global') {
+      setSelectedBranchForServiceControl(targetBranch);
+    }
+    setIsAdminAuthenticated(true);
+    setAuthError('');
+    window.dispatchEvent(new Event('admin_session_updated'));
+    triggerToast(`🔑 Master Admin Unlocked (${targetBranch === 'global' ? 'All Branches' : targetBranch.toUpperCase()})`);
+  };
+
+  // Authentication validation: enforces 4-digit PIN (8790) + Operational Branch Selection
   const handleAuthSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const entered = adminPasscode.trim();
-    const cleanEntered = entered.replace(/\D/g, '');
+    const entered = (adminPasscode || unlockPinInput).trim();
 
-    // 1. Master high-security validation passcode (Standard passcode '1122' or '7416' or Firebase Super Admin)
-    if (entered === '1122' || entered === '7416' || isFbSuperAdmin) {
-      localStorage.setItem('local_admin_sessions_authorized', 'true');
-      localStorage.setItem('admin_session_active', 'true');
-      localStorage.setItem('local_admin_role', 'master');
-      localStorage.setItem('local_admin_branch_id', 'global');
-      setAdminRole('master');
-      setAdminBranchId('global');
-      setIsAdminAuthenticated(true);
-      setAuthError('');
-      triggerToast('🔑 Secure Master Session Authorized Successfully');
+    if (entered === MASTER_ADMIN_PIN) {
+      handleConfirmPinAndBranchUnlock();
       return;
     }
 
-    // 2. Check if entered code matches an authorized secondary admin phone or secret key
-    const matchingAuthorizedAdmin = authorizedAdminsList.find(adm => {
-      const cleanAdmPhone = adm.phoneNumber.replace(/\D/g, '').slice(-10);
-      return (
-        cleanAdmPhone === cleanEntered.slice(-10) ||
-        adm.phoneNumber === entered ||
-        adm.id === entered
-      ) && adm.status === 'active';
-    });
-
-    if (matchingAuthorizedAdmin) {
-      localStorage.setItem('local_admin_sessions_authorized', 'true');
-      localStorage.setItem('admin_session_active', 'true');
-      localStorage.setItem('admin_phone', matchingAuthorizedAdmin.phoneNumber);
-      localStorage.setItem('local_admin_role', matchingAuthorizedAdmin.role === 'masterAdmin' ? 'master' : 'authorizedAdmin');
-      localStorage.setItem('local_admin_branch_id', 'global');
-      setAdminRole(matchingAuthorizedAdmin.role === 'masterAdmin' ? 'master' : 'authorizedAdmin');
-      setAdminBranchId('global');
-      setIsAdminAuthenticated(true);
-      setAuthError('');
-      triggerToast(`🔑 Authorized Admin Session Granted: ${matchingAuthorizedAdmin.name || matchingAuthorizedAdmin.phoneNumber}`);
-      return;
-    }
-
-    // 3. Check franchise branch passcodes
-    const matchingBranch = branches.find(b => b.secPasscode?.trim() === entered);
-    if (matchingBranch) {
-      localStorage.setItem('local_admin_sessions_authorized', 'true');
-      localStorage.setItem('admin_session_active', 'true');
-      localStorage.setItem('local_admin_role', 'franchise');
-      localStorage.setItem('local_admin_branch_id', matchingBranch.id);
-      localStorage.setItem('local_admin_branch_name', matchingBranch.name);
-      setAdminRole('franchise');
-      setAdminBranchId(matchingBranch.id);
-      setIsAdminAuthenticated(true);
-      setAuthError('');
-      triggerToast(`🔑 Franchise Session Authorized for: ${matchingBranch.name}`);
-    } else {
-      setAuthError('❌ Invalid high-security authorization passcode or unregistered admin phone. Master admin Tarun Bandi (+918790729816) can authorize secondary admins in Settings > Master Admin Access.');
-      setIsAdminAuthenticated(false);
-    }
+    setAuthError('❌ Access Denied. Master Admin access requires credential 8790729816 / tharunbandi614@gmail.com and the 4-digit PIN lock.');
+    setIsAdminAuthenticated(false);
   };
 
   const handleAdminLogout = async () => {
+    sessionStorage.removeItem('local_admin_pin_verified');
     localStorage.removeItem('local_admin_sessions_authorized');
     localStorage.removeItem('admin_session_active');
     localStorage.removeItem('local_admin_role');
@@ -723,16 +774,215 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     localStorage.removeItem('local_admin_branch_name');
     localStorage.removeItem('admin_role');
     localStorage.removeItem('admin_phone');
+    setPinUnlocked(false);
+    setBranchConfirmedOnUnlock(false);
     setAdminRole('master');
     setAdminBranchId('global');
     setIsAdminAuthenticated(false);
     setAdminPasscode('');
-    triggerToast('🔒 Session closed securely');
+    setUnlockPinInput('');
+    window.dispatchEvent(new Event('admin_session_updated'));
+    triggerToast('🔒 Master Admin session locked securely');
   };
 
   const triggerToast = (msg: string) => {
     setNotificationMsg(msg);
     setTimeout(() => setNotificationMsg(null), 3500);
+  };
+
+  // --- STRICT MASTER ADMIN PHONE OTP HANDLER (8790729816 ONLY) ---
+  const handleSendMasterOtp = async () => {
+    const cleanDigits = masterOtpPhone.replace(/\D/g, '').slice(-10);
+    if (cleanDigits !== '8790729816') {
+      setAuthError('❌ Access Denied: Master Admin phone login is restricted strictly to 8790729816.');
+      return;
+    }
+    setMasterOtpLoading(true);
+    setAuthError('');
+    try {
+      const res = await fetch('/api/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: cleanDigits })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setMasterOtpSent(true);
+        triggerToast(`📲 Real OTP dispatched to +91 ${cleanDigits}`);
+      } else {
+        setAuthError(data.error || 'Failed to dispatch OTP. Please check SMS gateway.');
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Network error while requesting OTP.');
+    } finally {
+      setMasterOtpLoading(false);
+    }
+  };
+
+  const handleVerifyMasterOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanDigits = masterOtpPhone.replace(/\D/g, '').slice(-10);
+    if (cleanDigits !== '8790729816') {
+      setAuthError('❌ Access Denied: Only Master Admin number 8790729816 is authorized.');
+      return;
+    }
+    if (!masterOtpCode.trim()) {
+      setAuthError('❌ Please enter the 4-digit SMS verification code.');
+      return;
+    }
+    setMasterOtpLoading(true);
+    setAuthError('');
+    try {
+      const res = await fetch('/api/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: cleanDigits, code: masterOtpCode.trim() })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        localStorage.setItem('user_phone', cleanDigits);
+        localStorage.setItem('admin_phone', cleanDigits);
+        localStorage.setItem('local_admin_branch_id', selectedOperationalBranch || 'global');
+        if (unlockPinInput.trim() === MASTER_ADMIN_PIN) {
+          handleConfirmPinAndBranchUnlock();
+        } else {
+          setPinUnlocked(false);
+          setAuthError('');
+          triggerToast('📲 Mobile verified! Now select your branch and enter 4-digit PIN to unlock.');
+        }
+      } else {
+        setAuthError(data.error || 'Invalid or expired OTP code.');
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Verification failed.');
+    } finally {
+      setMasterOtpLoading(false);
+    }
+  };
+
+  const handlePasswordlessEmailAuth = () => {
+    const userEmail = (user?.email || '').toLowerCase().trim();
+    if (userEmail === 'tharunbandi614@gmail.com' || isStrictMaster) {
+      if (unlockPinInput.trim() === MASTER_ADMIN_PIN) {
+        handleConfirmPinAndBranchUnlock();
+      } else {
+        setAuthError('Enter the 4-digit Master Security PIN and select an operational branch below to unlock.');
+      }
+    } else {
+      setAuthError(`❌ Current account (${userEmail || 'Guest'}) is not authorized. Sign in with tharunbandi614@gmail.com or 8790729816.`);
+    }
+  };
+
+  // --- BRANCH REAL-TIME MULTI-SERVICES CONTROLS ---
+  const CORE_SERVICES_LIST = [
+    { id: 'food', name: 'Family Food & Restaurant Meals', icon: '🍲', category: 'food', desc: 'Dining, fast food & tiffin delivery' },
+    { id: 'groceries', name: 'Fresh Groceries & Kirana Supermarket', icon: '🛒', category: 'groceries', desc: 'Vegetables, fruits, staples & pulses' },
+    { id: 'meat', name: 'Fresh Meat, Chicken & Seafood', icon: '🥩', category: 'meat', desc: 'Butcher orders, fresh cut mutton & fish' },
+    { id: 'dairy', name: 'Pure Milk & Farm Dairy', icon: '🥛', category: 'dairy', desc: 'Buffalo milk, paneer, curd & ghee' },
+    { id: 'pharmacy', name: 'Pharmacy & Health Care', icon: '💊', category: 'pharmacy', desc: 'Prescription medicines & wellness products' },
+    { id: 'services', name: 'Home & Technical Services', icon: '🔧', category: 'services', desc: 'Electrician, plumber, AC repair & cleaning' },
+    { id: 'courier', name: 'Local Bandi Express Courier', icon: '📦', category: 'courier', desc: 'Hyperlocal document & parcel pickup' },
+    { id: 'realestate', name: 'Real Estate & Properties', icon: '🏠', category: 'realestate', desc: 'Plots, houses & commercial leases' },
+    { id: 'marriage', name: 'Kalyanam Marriage Bureau', icon: '💍', category: 'marriage', desc: 'Community matrimonial matchmaking' }
+  ];
+
+  const handleToggleBranchService = async (branchId: string, serviceId: string, currentEnabled: boolean) => {
+    try {
+      const targetBranch = branches.find(b => b.id === branchId) || { id: branchId, name: branchId, serviceControls: {}, disabledServices: [] };
+      const newStatus = !currentEnabled;
+      const existingControls = targetBranch.serviceControls || {};
+      const updatedControls = { ...existingControls, [serviceId]: newStatus };
+
+      let existingDisabled = Array.isArray(targetBranch.disabledServices) ? [...targetBranch.disabledServices] : [];
+      if (newStatus) {
+        existingDisabled = existingDisabled.filter((s: string) => s !== serviceId);
+      } else {
+        if (!existingDisabled.includes(serviceId)) {
+          existingDisabled.push(serviceId);
+        }
+      }
+
+      // Optimistic state
+      setBranches(prev => prev.map(b => b.id === branchId ? {
+        ...b,
+        serviceControls: updatedControls,
+        disabledServices: existingDisabled
+      } : b));
+
+      // Firestore live sync
+      await updateDoc(doc(db, 'branches', branchId), {
+        serviceControls: updatedControls,
+        disabledServices: existingDisabled,
+        updatedAt: serverTimestamp()
+      }).catch(async () => {
+        await setDoc(doc(db, 'branches', branchId), {
+          id: branchId,
+          serviceControls: updatedControls,
+          disabledServices: existingDisabled,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      });
+
+      // Mirror to branch_service_controls
+      await setDoc(doc(db, 'branch_service_controls', branchId), {
+        branchId,
+        serviceControls: updatedControls,
+        disabledServices: existingDisabled,
+        updatedAt: serverTimestamp()
+      }, { merge: true }).catch(() => {});
+
+      // Backend API sync
+      fetch(`/api/admin/branches/${branchId}/service-controls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serviceId,
+          enabled: newStatus,
+          serviceControls: updatedControls,
+          disabledServices: existingDisabled,
+          adminId: user?.uid || 'master_admin'
+        })
+      }).catch(() => {});
+
+      triggerToast(`⚡ [${targetBranch.name || branchId}] ${serviceId.toUpperCase()} Service is now ${newStatus ? 'ENABLED 🟢' : 'PAUSED 🔴'}`);
+    } catch (err: any) {
+      console.error("Failed to toggle service:", err);
+      triggerToast("❌ Failed to update service control: " + err.message);
+    }
+  };
+
+  const handleBulkToggleBranchServices = async (branchId: string, enableAll: boolean) => {
+    try {
+      const targetBranch = branches.find(b => b.id === branchId) || { id: branchId, name: branchId };
+      const updatedControls: Record<string, boolean> = {};
+      CORE_SERVICES_LIST.forEach(s => {
+        updatedControls[s.id] = enableAll;
+      });
+      const updatedDisabled = enableAll ? [] : CORE_SERVICES_LIST.map(s => s.id);
+
+      setBranches(prev => prev.map(b => b.id === branchId ? {
+        ...b,
+        serviceControls: updatedControls,
+        disabledServices: updatedDisabled
+      } : b));
+
+      await setDoc(doc(db, 'branches', branchId), {
+        serviceControls: updatedControls,
+        disabledServices: updatedDisabled,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      await setDoc(doc(db, 'branch_service_controls', branchId), {
+        branchId,
+        serviceControls: updatedControls,
+        disabledServices: updatedDisabled,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      triggerToast(`⚡ [${targetBranch.name || branchId}] All 9 Services ${enableAll ? 'ENABLED' : 'PAUSED'} in real time!`);
+    } catch (err: any) {
+      console.error("Bulk toggle error:", err);
+    }
   };
 
   // --- MASTER ADMIN ACCESS HANDLERS ---
@@ -1574,19 +1824,31 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
     };
   }, [isAdminAuthenticated, user]);
 
-  // Derive counts and updates for local metrics overview
+  // Derive counts and updates for local metrics overview scoped by selected operational branch
   useEffect(() => {
-    const pendVendors = vendors.filter(v => v.status === 'Pending').length;
-    const pendRiders = riders.filter(r => r.status === 'Pending').length;
+    const pendVendors = branchScopedVendors.filter(v => v.status === 'Pending').length;
+    const pendRiders = branchScopedRiders.filter(r => r.status === 'Pending').length;
+    let totalRevenue = 0;
+    let activeOrdersCount = 0;
+    branchScopedOrders.forEach((d: any) => {
+      if (d.total) {
+        totalRevenue += Number(d.total) || 0;
+      }
+      if (['Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery', 'PickedUp', 'On Trip'].includes(d.status)) {
+        activeOrdersCount++;
+      }
+    });
     setStats(prev => ({
       ...prev,
-      totalVendors: vendors.length,
-      totalRiders: riders.length,
+      activeOrders: activeOrdersCount,
+      totalSales: totalRevenue,
+      totalVendors: branchScopedVendors.length,
+      totalRiders: branchScopedRiders.length,
       pendingVendors: pendVendors,
       pendingRiders: pendRiders,
       systemMode: isMaintenanceMode ? 'Maintenance 🛠️' : 'Live Operations ⚡'
     }));
-  }, [vendors, riders, isMaintenanceMode]);
+  }, [branchScopedOrders, branchScopedVendors, branchScopedRiders, isMaintenanceMode]);
 
   // --- AUTOMATED DISPATCH ASSIGNMENT SERVICE & TIME HANDLERS ---
   const handleAutoReassignOrder = async (orderId: string, currentRiderId: string) => {
@@ -1723,6 +1985,18 @@ ${formatReportBlock("ANNUAL STATEMENT (Year-To-Date Consolidated)", yearly)}
         updatedAt: serverTimestamp(),
         updatedBy: user?.email || 'Master Admin Node'
       }, { merge: true });
+      await setDoc(doc(db, 'settings', 'app_config'), {
+        maintenanceMode: nextMode,
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.email || 'Master Admin Node'
+      }, { merge: true });
+      if (typeof BroadcastChannel !== 'undefined') {
+        try {
+          const bc = new BroadcastChannel('localbandi_realtime_sync');
+          bc.postMessage({ type: 'CATALOG_UPDATED', maintenanceMode: nextMode });
+          bc.close();
+        } catch {}
+      }
 
       triggerToast(`🚨 System Mode Toggled to ${nextMode ? 'DOWNTIME' : 'LIVE CONSOLE'}`);
     } catch (e) {
@@ -2712,7 +2986,13 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
       await setDoc(doc(db, 'categories', catId), data);
       triggerToast(editingCategory ? '✓ Category details updated' : '🎉 New Category added successfully');
       window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'category', action: 'save', id: catId } }));
-
+      if (typeof BroadcastChannel !== 'undefined') {
+        try {
+          const bc = new BroadcastChannel('localbandi_realtime_sync');
+          bc.postMessage({ type: 'CATEGORY_UPDATED', id: catId });
+          bc.close();
+        } catch {}
+      }
       setShowCategoryModal(false);
       setEditingCategory(null);
       setCategoryForm({ id: '', name: '', icon: 'ShoppingBag', color: 'bg-emerald-50', image: '' });
@@ -2728,6 +3008,13 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
       await deleteDoc(doc(db, 'categories', id));
       triggerToast('🗑️ Category deleted from database');
       window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'category', action: 'delete', id } }));
+      if (typeof BroadcastChannel !== 'undefined') {
+        try {
+          const bc = new BroadcastChannel('localbandi_realtime_sync');
+          bc.postMessage({ type: 'CATEGORY_UPDATED', id });
+          bc.close();
+        } catch {}
+      }
     } catch (err) {
       console.error(err);
     }
@@ -2797,6 +3084,13 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
         });
         triggerToast('🎉 New listing added to catalog');
         window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: { type: 'product', action: 'create', id: newRef.id } }));
+      }
+      if (typeof BroadcastChannel !== 'undefined') {
+        try {
+          const bc = new BroadcastChannel('localbandi_realtime_sync');
+          bc.postMessage({ type: 'CATALOG_UPDATED', branchId: data.branchId });
+          bc.close();
+        } catch {}
       }
 
       setShowItemModal(false);
@@ -2892,53 +3186,242 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
     { name: 'Pending Review', Merchants: stats.pendingVendors, Riders: stats.pendingRiders },
   ];
 
-  if (!isAdminAuthenticated) {
+  if (!isAdminAuthenticated || !pinUnlocked || !branchConfirmedOnUnlock) {
     return (
-      <div className="min-h-screen w-full bg-slate-950 font-sans text-white flex flex-col justify-between p-8 relative overflow-hidden">
-        {/* Background ambient lock */}
+      <div className="min-h-screen w-full bg-slate-950 font-sans text-white flex flex-col justify-between p-6 sm:p-8 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/5 rounded-full blur-[100px] -mr-48 -mt-48 pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-[100px] -ml-48 -mb-48 pointer-events-none" />
 
-        <div className="my-auto space-y-8 max-w-sm w-full mx-auto relative z-10">
+        <div className="my-auto space-y-6 max-w-md w-full mx-auto relative z-10">
           <div className="text-center">
-            <div className="w-20 h-20 bg-yellow-400/10 border-2 border-yellow-400/20 rounded-[2.2rem] flex items-center justify-center mx-auto mb-6">
+            <div className="w-20 h-20 bg-yellow-400/10 border-2 border-yellow-400/20 rounded-[2.2rem] flex items-center justify-center mx-auto mb-5">
               <ShieldAlert className="w-10 h-10 text-yellow-500 animate-pulse" />
             </div>
             <p className="text-[10px] font-black tracking-[0.25em] uppercase text-yellow-500">Local Bandi Multi Services</p>
-            <h2 className="text-3xl font-black italic tracking-tighter leading-none mt-1 uppercase">MASTER SECURITY</h2>
-            <p className="text-slate-400 text-xs mt-2 uppercase tracking-wide font-medium leading-relaxed">
-              Standalone master administration terminal. This system demands dual-layered clearance credentials.
+            <h2 className="text-3xl font-black italic tracking-tighter leading-none mt-1 uppercase">MASTER ADMIN GATE</h2>
+            <p className="text-slate-400 text-xs mt-2 font-medium leading-relaxed">
+              Restricted exclusively to <span className="text-yellow-400 font-bold">8790729816</span> or <span className="text-yellow-400 font-bold">tharunbandi614@gmail.com</span>. Select your operational branch and enter the 4-digit PIN lock.
             </p>
           </div>
 
-          <form onSubmit={handleAuthSubmit} className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4 shadow-2xl">
-            <div className="space-y-1">
-              <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Master Admin Passcode</label>
-              <input 
-                type="password" 
-                required
-                value={adminPasscode}
-                onChange={(e) => setAdminPasscode(e.target.value)}
-                placeholder="••••••"
-                className="w-full bg-slate-950 border border-white/10 p-4 rounded-2xl text-center text-xl font-black tracking-widest text-yellow-400 focus:outline-none focus:border-yellow-400/50 transition-all"
-              />
+          {/* Operational Branch Selection Card */}
+          <div className="bg-slate-900 border border-white/10 p-5 rounded-[2rem] space-y-3 shadow-xl">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black text-yellow-400 uppercase tracking-widest flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5" />
+                <span>Step 1: Select Operational Branch</span>
+              </label>
+              <span className="text-[9px] font-mono text-slate-400 uppercase">{selectedOperationalBranch}</span>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              {availableOperationalBranches.map((br) => (
+                <button
+                  key={br.id}
+                  type="button"
+                  onClick={() => setSelectedOperationalBranch(br.id)}
+                  className={`px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-left border transition-all cursor-pointer truncate ${
+                    selectedOperationalBranch === br.id
+                      ? 'bg-yellow-400 text-slate-950 border-yellow-300 shadow-md'
+                      : 'bg-slate-950 text-slate-300 border-white/10 hover:border-yellow-400/40'
+                  }`}
+                >
+                  {br.name}
+                </button>
+              ))}
+            </div>
+          </div>
 
-            {authError && <p className="text-rose-500 text-[10px] font-black uppercase text-center leading-relaxed">{authError}</p>}
-
-            <button 
-              type="submit"
-              className="w-full py-4.5 bg-yellow-400 hover:bg-yellow-300 text-slate-900 font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-xl shadow-yellow-900/10 active:scale-95"
+          {/* Authentication Mode Switcher */}
+          <div className="flex bg-slate-900/90 p-1 rounded-2xl border border-white/5 text-[10px] font-black uppercase tracking-wider">
+            <button
+              type="button"
+              onClick={() => { setAuthMethod('passcode'); setAuthError(''); }}
+              className={`flex-1 py-2.5 rounded-xl transition-all cursor-pointer ${authMethod === 'passcode' ? 'bg-yellow-400 text-slate-950 shadow-md font-extrabold' : 'text-slate-400 hover:text-white'}`}
             >
-              Verify System Passcode
+              🔐 4-Digit PIN
             </button>
-          </form>
+            <button
+              type="button"
+              onClick={() => { setAuthMethod('otp'); setAuthError(''); }}
+              className={`flex-1 py-2.5 rounded-xl transition-all cursor-pointer ${authMethod === 'otp' ? 'bg-yellow-400 text-slate-950 shadow-md font-extrabold' : 'text-slate-400 hover:text-white'}`}
+            >
+              📱 Phone OTP
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAuthMethod('email'); setAuthError(''); }}
+              className={`flex-1 py-2.5 rounded-xl transition-all cursor-pointer ${authMethod === 'email' ? 'bg-yellow-400 text-slate-950 shadow-md font-extrabold' : 'text-slate-400 hover:text-white'}`}
+            >
+              ✉️ Google Email
+            </button>
+          </div>
+
+          {/* METHOD 1: 4-DIGIT PIN LOCK (8790) + CREDENTIAL CHECK */}
+          {authMethod === 'passcode' && (
+            <form onSubmit={handleConfirmPinAndBranchUnlock} className="bg-slate-900 border border-white/10 p-6 rounded-[2.5rem] space-y-4 shadow-2xl">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                    Step 2: 4-Digit Master Security PIN
+                  </label>
+                  <span className="text-[9px] font-bold text-emerald-400">
+                    {isStrictMaster ? '✓ Identity Verified' : 'PIN Verification'}
+                  </span>
+                </div>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  required
+                  value={unlockPinInput}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
+                    setUnlockPinInput(digits);
+                    setAdminPasscode(digits);
+                  }}
+                  placeholder="••••"
+                  className="w-full bg-slate-950 border border-white/10 p-4 rounded-2xl text-center text-2xl font-black tracking-[0.5em] text-yellow-400 focus:outline-none focus:border-yellow-400/60 transition-all font-mono"
+                />
+              </div>
+
+              {authError && <p className="text-rose-500 text-[10px] font-black uppercase text-center leading-relaxed">{authError}</p>}
+
+              <button
+                type="submit"
+                className="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-xl active:scale-95 cursor-pointer"
+              >
+                Unlock Master Admin ({selectedOperationalBranch === 'global' ? 'All Branches' : selectedOperationalBranch})
+              </button>
+            </form>
+          )}
+
+          {/* METHOD 2: STRICT PHONE OTP AUTHENTICATION (8790729816) */}
+          {authMethod === 'otp' && (
+            <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4 shadow-2xl">
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Master Admin Mobile</label>
+                  <span className="text-[8px] text-yellow-400 font-mono">8790729816 Only</span>
+                </div>
+                <div className="flex gap-2">
+                  <div className="bg-slate-950 border border-white/10 px-3 py-3 rounded-2xl text-slate-400 font-mono text-xs flex items-center font-bold">
+                    +91
+                  </div>
+                  <input
+                    type="tel"
+                    maxLength={10}
+                    value={masterOtpPhone}
+                    onChange={(e) => setMasterOtpPhone(e.target.value)}
+                    placeholder="8790729816"
+                    className="flex-1 bg-slate-950 border border-white/10 p-3 rounded-2xl text-white font-mono text-sm font-bold focus:outline-none focus:border-yellow-400/50"
+                  />
+                  <button
+                    type="button"
+                    disabled={masterOtpLoading}
+                    onClick={handleSendMasterOtp}
+                    className="px-3.5 bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black uppercase text-[9px] tracking-wider rounded-2xl transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {masterOtpLoading ? 'Sending...' : masterOtpSent ? 'Resend' : 'Send OTP'}
+                  </button>
+                </div>
+              </div>
+
+              {masterOtpSent && (
+                <form onSubmit={handleVerifyMasterOtp} className="space-y-3 pt-2 border-t border-white/5">
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">Enter SMS OTP Code</label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={6}
+                      value={masterOtpCode}
+                      onChange={(e) => setMasterOtpCode(e.target.value)}
+                      placeholder="••••"
+                      className="w-full bg-slate-950 border border-yellow-400/40 p-3.5 rounded-2xl text-center text-xl font-black tracking-widest text-yellow-400 focus:outline-none focus:border-yellow-400 font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">4-Digit Security PIN</label>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      required
+                      value={unlockPinInput}
+                      onChange={(e) => setUnlockPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                      placeholder="••••"
+                      className="w-full bg-slate-950 border border-white/10 p-3 rounded-2xl text-center text-lg font-black tracking-[0.5em] text-yellow-400 focus:outline-none font-mono"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={masterOtpLoading}
+                    className="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-slate-900 font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-xl active:scale-95 disabled:opacity-50 cursor-pointer"
+                  >
+                    {masterOtpLoading ? 'Verifying...' : 'Verify OTP & Enter Console'}
+                  </button>
+                </form>
+              )}
+
+              {authError && <p className="text-rose-500 text-[10px] font-black uppercase text-center leading-relaxed">{authError}</p>}
+            </div>
+          )}
+
+          {/* METHOD 3: VERIFIED EMAIL ACCESS (tharunbandi614@gmail.com) */}
+          {authMethod === 'email' && (
+            <div className="bg-slate-900 border border-white/5 p-6 rounded-[2.5rem] space-y-4 shadow-2xl text-center">
+              <div className="space-y-2">
+                <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                  Authenticate with <span className="text-yellow-400 font-bold">tharunbandi614@gmail.com</span> and enter the 4-digit PIN lock.
+                </p>
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-white/10 text-left font-mono text-xs space-y-1">
+                  <div className="flex justify-between text-slate-400 text-[9px]">
+                    <span>Current Auth State:</span>
+                    <span className={user?.email ? 'text-emerald-400 font-bold' : 'text-amber-400'}>{user?.email ? 'Signed In' : 'Not Signed In'}</span>
+                  </div>
+                  <p className="text-white font-bold truncate">{user?.email || 'No email session active'}</p>
+                </div>
+              </div>
+
+              {user?.email ? (
+                <div className="space-y-3">
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={unlockPinInput}
+                    onChange={(e) => setUnlockPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="Enter 4-Digit PIN"
+                    className="w-full bg-slate-950 border border-white/10 p-3.5 rounded-2xl text-center text-lg font-black tracking-[0.5em] text-yellow-400 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={handlePasswordlessEmailAuth}
+                    className="w-full py-4 bg-yellow-400 hover:bg-yellow-300 text-slate-900 font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-xl active:scale-95 cursor-pointer"
+                  >
+                    Unlock Master Command Center
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => login()}
+                  className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase text-xs tracking-widest rounded-2xl transition-all shadow-lg active:scale-95 cursor-pointer"
+                >
+                  Sign in with Google (tharunbandi614@gmail.com)
+                </button>
+              )}
+
+              {authError && <p className="text-rose-500 text-[10px] font-black uppercase text-center leading-relaxed">{authError}</p>}
+            </div>
+          )}
 
           {user && (
             <div className="flex justify-center">
-              <button 
+              <button
                 onClick={logout}
-                className="text-[10px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-widest flex items-center gap-1.5"
+                className="text-[10px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-widest flex items-center gap-1.5 cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 Change Authenticated Account
@@ -2948,7 +3431,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
         </div>
 
         <p className="text-center text-[9px] font-black text-slate-600 uppercase tracking-[0.25em]">
-          Standalone Control Node &bull; Secured with SHA-256
+          Standalone Master Node &bull; PIN &amp; Branch Protected
         </p>
       </div>
     );
@@ -2959,7 +3442,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
       {/* Dynamic Toast notifications */}
       <AnimatePresence>
         {notificationMsg && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
@@ -2979,12 +3462,34 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
           </div>
           <div>
             <h1 className="text-sm font-black tracking-tight leading-none uppercase">Master Admin Console</h1>
-            <span className="text-[9px] font-black text-yellow-400 uppercase tracking-widest">Khammam Platform Administrator</span>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <span className="text-[9px] font-black text-yellow-400 uppercase tracking-widest">
+                Branch:
+              </span>
+              <select
+                value={selectedOperationalBranch}
+                onChange={(e) => {
+                  const nextBr = e.target.value;
+                  setSelectedOperationalBranch(nextBr);
+                  setAdminBranchId(nextBr);
+                  localStorage.setItem('local_admin_branch_id', nextBr);
+                  if (nextBr !== 'global') {
+                    setSelectedBranchForServiceControl(nextBr);
+                  }
+                  triggerToast(`🏢 Operational Branch Switched: ${nextBr === 'global' ? 'All Branches' : nextBr.toUpperCase()}`);
+                }}
+                className="bg-slate-950 border border-yellow-400/30 rounded-lg px-2 py-0.5 text-[10px] font-black text-yellow-300 uppercase outline-none cursor-pointer"
+              >
+                {availableOperationalBranches.map((br) => (
+                  <option key={br.id} value={br.id}>{br.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {['dashboard', 'monitoring', 'apk_hub', 'sos', 'ai_desk', 'attractions', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz'].map((tab) => {
+          {['dashboard', 'monitoring', 'apk_hub', 'sos', 'ai_desk', 'attractions', 'logistics', 'approvals', 'marriage', 'real_estate', 'catalog', 'vendors', 'riders', 'chat', 'users', 'systems', 'founder', 'support', 'deals', 'quiz', 'profile'].map((tab) => {
             const isPendingSupport = tab === 'support' && complaints.some(c => c.status === 'Pending');
             const activeSosCount = sosAlerts.filter(a => a.status === 'ACTIVE' || a.status === 'ACKNOWLEDGED').length;
             const isSosTab = tab === 'sos';
@@ -3033,8 +3538,10 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
                           : tab === 'quiz' 
                             ? '⚡ 40s Quiz' 
                             : tab === 'ai_desk' 
-                              ? '🧠 AI Developer Desk' 
-                              : tab}
+                              ? '🧠 AI Developer Desk'
+                              : tab === 'profile'
+                                ? '👤 My Profile'
+                                : tab}
                 </span>
                 {isSosTab && activeSosCount > 0 && (
                   <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping absolute -top-0.5 -right-0.5" />
@@ -3100,6 +3607,19 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
             </div>
           </div>
 
+          <button
+            onClick={() => setActiveTab('profile')}
+            className={`px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 border ${
+              activeTab === 'profile'
+                ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-lg'
+                : 'bg-amber-500/15 border-amber-500/20 text-amber-300 hover:bg-amber-500 hover:text-slate-950'
+            }`}
+            title="My Profile, Language & Legal Policies"
+          >
+            <User className="w-3.5 h-3.5" />
+            <span>My Profile</span>
+          </button>
+
           <button 
             onClick={() => window.location.href = '/'}
             className="px-4 py-2.5 bg-emerald-500/15 border border-emerald-500/10 rounded-xl text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all active:scale-95 text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 cursor-pointer"
@@ -3146,10 +3666,12 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
               <div className="absolute top-0 right-0 p-6 opacity-5">
                 <Laptop className="w-32 h-32" />
               </div>
-              <p className="text-[10px] font-black text-yellow-500 uppercase tracking-widest mb-1 italic">Authorized session node</p>
+              <p className="text-[10px] font-black text-yellow-500 uppercase tracking-widest mb-1 italic">
+                Authorized session node &bull; {selectedOperationalBranch === 'global' ? 'Global (All Branches)' : `Branch: ${selectedOperationalBranch.toUpperCase()}`}
+              </p>
               <h2 className="text-xl font-black italic tracking-tight">Enterprise Overview Console</h2>
               <p className="text-slate-400 text-xs mt-1.5 leading-relaxed max-w-xl">
-                This panel aggregates key performance signals, merchant onboarding application arrays, and online delivery agent data across all branches.
+                This panel aggregates key performance signals, merchant onboarding application arrays, and online delivery agent data {selectedOperationalBranch === 'global' ? 'across all branches' : `for ${selectedOperationalBranch.toUpperCase()}`}.
               </p>
             </div>
 
@@ -3179,7 +3701,7 @@ Payment: ${ord.paymentMethod || ord.paymentType || 'COD'}`;
             </div>
 
             {/* 30-Day performance dynamic trends chart */}
-            <OrderTrendsChart orders={orders} branches={branches} vendors={vendors} />
+            <OrderTrendsChart orders={branchScopedOrders} branches={branches} vendors={branchScopedVendors} />
 
             {/* REAL-TIME BRANCH FINANCIALS & COD MONITOR */}
             <div className="bg-slate-900 border border-white/5 rounded-[2.5rem] p-6 space-y-6 text-left">
@@ -4255,21 +4777,21 @@ const reconcileDocSync = async (branchId, docBody) => {
               {/* General Statistics */}
               <div className="flex gap-4">
                 <div className="bg-slate-950 px-4 py-2 rounded-2xl border border-white/5 text-center min-w-[100px]">
-                  <p className="text-[8px] font-black uppercase text-slate-505 tracking-wider">Awaiting Accept</p>
+                  <p className="text-[8px] font-black uppercase text-slate-500 tracking-wider">Awaiting Accept</p>
                   <p className="text-sm font-black text-amber-500 mt-0.5">
-                    {orders.filter(o => o.status === 'Pending').length}
+                    {branchScopedOrders.filter(o => o.status === 'Pending').length}
                   </p>
                 </div>
                 <div className="bg-slate-950 px-4 py-2 rounded-2xl border border-white/5 text-center min-w-[100px]">
-                  <p className="text-[8px] font-black uppercase text-slate-505 tracking-wider">In Kitchen / Preparing</p>
+                  <p className="text-[8px] font-black uppercase text-slate-500 tracking-wider">In Kitchen / Preparing</p>
                   <p className="text-sm font-black text-indigo-400 mt-0.5">
-                    {orders.filter(o => ['Accepted', 'Preparing'].includes(o.status)).length}
+                    {branchScopedOrders.filter(o => ['Accepted', 'Preparing'].includes(o.status)).length}
                   </p>
                 </div>
                 <div className="bg-slate-950 px-4 py-2 rounded-2xl border border-white/5 text-center min-w-[100px]">
-                  <p className="text-[8px] font-black uppercase text-slate-505 tracking-wider">Out for Delivery</p>
+                  <p className="text-[8px] font-black uppercase text-slate-500 tracking-wider">Out for Delivery</p>
                   <p className="text-sm font-black text-emerald-400 mt-0.5">
-                    {orders.filter(o => o.status === 'OutForDelivery' || o.status === 'PickedUp').length}
+                    {branchScopedOrders.filter(o => o.status === 'OutForDelivery' || o.status === 'PickedUp').length}
                   </p>
                 </div>
               </div>
@@ -4281,7 +4803,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-black uppercase text-slate-400 tracking-wider">Live Orders Stream</h3>
                   <span className="px-2.5 py-0.5 bg-slate-950 text-[9px] font-mono text-amber-400 rounded-full border border-amber-500/20 uppercase font-black">
-                    {orders.length} Active in System
+                    {branchScopedOrders.length} Active in {selectedOperationalBranch === 'global' ? 'System' : selectedOperationalBranch}
                   </span>
                 </div>
 
@@ -4309,7 +4831,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                 {/* Filters */}
                 <div className="flex flex-wrap gap-1.5 border-b border-white/5 pb-3">
                   {(['All', 'Pending', 'Accepted', 'Preparing', 'ReadyForPickup', 'OutForDelivery', 'Delivered', 'Cancelled'] as const).map(f => {
-                    const count = f === 'All' ? orders.length : orders.filter(o => {
+                    const count = f === 'All' ? branchScopedOrders.length : branchScopedOrders.filter(o => {
                       if (f === 'Accepted') return o.status === 'Accepted';
                       if (f === 'Preparing') return o.status === 'Preparing';
                       if (f === 'ReadyForPickup') return o.status === 'ReadyForPickup';
@@ -4334,7 +4856,7 @@ const reconcileDocSync = async (branchId, docBody) => {
 
                 {/* Bulk Actions Command Center */}
                 {(() => {
-                  const pendingOrders = orders.filter(o => o.status === 'Pending');
+                  const pendingOrders = branchScopedOrders.filter(o => o.status === 'Pending');
                   const hasPending = pendingOrders.length > 0;
                   
                   return (
@@ -4399,7 +4921,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                 {/* Filtered Order feed list */}
                 <div className="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
                   {(() => {
-                    const filteredOrders = orders.filter(o => {
+                    const filteredOrders = branchScopedOrders.filter(o => {
                       // Status filter
                       if (logisticsFilter !== 'All') {
                         if (logisticsFilter === 'Accepted' && o.status !== 'Accepted') return false;
@@ -6322,7 +6844,7 @@ const reconcileDocSync = async (branchId, docBody) => {
                 <div className="bg-slate-800/80 px-4 py-2 rounded-xl border border-white/5 text-right">
                   <p className="text-[8px] font-black text-slate-400 uppercase">Stores With Custom GPS</p>
                   <p className="text-sm font-black text-emerald-400">
-                    {vendors.filter(v => v.coordinates || (v.lat && v.lng)).length} / {vendors.length}
+                    {branchScopedVendors.filter(v => v.coordinates || (v.lat && v.lng)).length} / {branchScopedVendors.length}
                   </p>
                 </div>
               </div>
@@ -6342,12 +6864,12 @@ const reconcileDocSync = async (branchId, docBody) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5 text-xs text-slate-300">
-                    {vendors.length === 0 ? (
+                    {branchScopedVendors.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="text-center py-8 text-slate-500 font-bold uppercase tracking-widest text-[10px]">No store merchants registered</td>
+                        <td colSpan={6} className="text-center py-8 text-slate-500 font-bold uppercase tracking-widest text-[10px]">No store merchants registered for this branch</td>
                       </tr>
                     ) : (
-                      vendors.map((v, idx) => (
+                      branchScopedVendors.map((v, idx) => (
                         <motion.tr 
                           key={v.id} 
                           initial={{ opacity: 0, y: 10 }}
@@ -6425,12 +6947,12 @@ const reconcileDocSync = async (branchId, docBody) => {
             </header>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {riders.length === 0 ? (
+              {branchScopedRiders.length === 0 ? (
                 <div className="col-span-full text-center p-12 bg-slate-900 border border-white/5 rounded-[2.5rem]">
-                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-relaxed">No registered logistic agents parsed</p>
+                  <p className="text-slate-400 text-xs font-bold uppercase tracking-widest leading-relaxed">No registered logistic agents parsed for this branch</p>
                 </div>
               ) : (
-                riders.map((r) => (
+                branchScopedRiders.map((r) => (
                   <div key={r.id} className="bg-slate-900 border border-white/5 rounded-[2.5rem] p-6 space-y-4 flex flex-col justify-between shadow-md">
                     <div>
                       <div className="flex items-center justify-between mb-2">
@@ -8753,11 +9275,152 @@ const reconcileDocSync = async (branchId, docBody) => {
                   <p className="text-[9px] font-black uppercase text-slate-400">Production Domain & SSL Status</p>
                   <p className="text-xs font-black text-emerald-400 uppercase tracking-wider mt-2 flex items-center gap-1.5 font-mono">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    https://localbundimultiservices.in (SSL Valid)
+                    https://localbandimultiservices.in (SSL Valid)
                   </p>
                 </div>
               </div>
             </div>
+
+            {/* MASTER ADMIN REAL-TIME BRANCH MULTI-SERVICES OPERATIONAL MATRIX */}
+            <div className="bg-slate-900 border border-amber-500/30 rounded-[2.5rem] p-6 space-y-5 shadow-2xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🎛️</span>
+                    <h3 className="text-sm font-black uppercase text-amber-400 tracking-tight">Master Admin: Real-Time Branch Multi-Services Operations Control</h3>
+                  </div>
+                  <p className="text-[9px] text-slate-400 uppercase tracking-widest font-mono mt-0.5">
+                    Enable or disable specific services per branch. Changes synchronize in real time across Customer, Vendor, Rider & Branch Apps!
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-black uppercase text-slate-400">Target Branch:</span>
+                  <select
+                    value={selectedBranchForServiceControl}
+                    onChange={(e) => setSelectedBranchForServiceControl(e.target.value)}
+                    className="bg-slate-950 border border-amber-500/40 text-amber-300 rounded-xl px-3 py-2 text-xs font-black uppercase tracking-wider focus:outline-none"
+                  >
+                    {branches.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.name || b.id} ({b.city || 'Khammam'})
+                      </option>
+                    ))}
+                    {branches.length === 0 && (
+                      <option value="khammam_main">Khammam Main Branch</option>
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              {/* Quick Branch Operational Actions */}
+              {(() => {
+                const targetBranch = branches.find(b => b.id === selectedBranchForServiceControl) || {
+                  id: selectedBranchForServiceControl,
+                  name: selectedBranchForServiceControl,
+                  serviceControls: {},
+                  disabledServices: []
+                };
+                const controls = targetBranch.serviceControls || {};
+                const disabledList = Array.isArray(targetBranch.disabledServices) ? targetBranch.disabledServices : [];
+
+                return (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950 p-4 rounded-2xl border border-white/5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400 font-bold text-lg">
+                          🏛️
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-white uppercase">{targetBranch.name || selectedBranchForServiceControl}</h4>
+                          <p className="text-[9px] text-slate-400 font-mono">
+                            Slug: <span className="text-indigo-400">{targetBranch.id}</span> &bull; Status: <span className="text-emerald-400 font-bold">{targetBranch.status || 'Active'}</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleBulkToggleBranchServices(targetBranch.id, true)}
+                          className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                        >
+                          ✓ Enable All (9 Services)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleBulkToggleBranchServices(targetBranch.id, false)}
+                          className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                        >
+                          ✕ Pause All Services
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 9 Multi-Services Matrix Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {CORE_SERVICES_LIST.map((svc) => {
+                        const isExplicitlyDisabled = disabledList.includes(svc.id) || controls[svc.id] === false;
+                        const isEnabled = !isExplicitlyDisabled;
+
+                        return (
+                          <div
+                            key={svc.id}
+                            className={`p-4 rounded-2xl border transition-all ${
+                              isEnabled 
+                                ? 'bg-slate-950/80 border-emerald-500/30 shadow-sm' 
+                                : 'bg-slate-950/40 border-rose-500/30 opacity-75'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2.5">
+                                <span className="text-2xl">{svc.icon}</span>
+                                <div>
+                                  <h5 className="text-xs font-black text-white uppercase leading-snug">{svc.name}</h5>
+                                  <p className="text-[8.5px] text-slate-400 leading-tight mt-0.5">{svc.desc}</p>
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleToggleBranchService(targetBranch.id, svc.id, isEnabled)}
+                                className={`px-2.5 py-1 rounded-lg text-[8px] font-black uppercase tracking-wider transition-all cursor-pointer shrink-0 ${
+                                  isEnabled
+                                    ? 'bg-emerald-500 text-slate-950 shadow-md font-extrabold'
+                                    : 'bg-rose-900/60 text-rose-300 border border-rose-500/50'
+                                }`}
+                              >
+                                {isEnabled ? '🟢 ACTIVE' : '🔴 PAUSED'}
+                              </button>
+                            </div>
+
+                            <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between text-[8px] font-mono text-slate-500">
+                              <span>Service Key: <span className="text-slate-300">{svc.id}</span></span>
+                              <span className={isEnabled ? 'text-emerald-400' : 'text-rose-400 font-bold'}>
+                                {isEnabled ? 'Live on Customer App' : 'Blocked on Customer App'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* FULL DYNAMIC CATEGORY, VISIBILITY & PER-SERVICE RADIUS MATRIX */}
+            <RegionalCategoryManager
+              branches={branches}
+              selectedBranchId={selectedBranchForServiceControl}
+              onSelectBranchId={setSelectedBranchForServiceControl}
+              allowBranchSwitch={true}
+              categories={categories}
+              isSuperAdmin={true}
+              onBranchUpdated={(bId, patch) => {
+                setBranches(prev => prev.map(b => b.id === bId ? { ...b, ...patch } : b));
+              }}
+              onToast={triggerToast}
+            />
 
             {/* ANDROID APK & PWA DISTRIBUTION CENTER */}
             <div className="bg-slate-900 border border-emerald-500/30 rounded-[2.5rem] p-6 space-y-5">
@@ -9240,9 +9903,36 @@ const reconcileDocSync = async (branchId, docBody) => {
         {/* TAB: ATTRACTION CAMPAIGNS (SCRATCH CARD, FLASH DROP, GROUP BUY POOL) */}
         {activeTab === 'attractions' && (
           <AttractionCampaignsManager 
-            adminEmail={user?.email || 'tharunbandi111@gmail.com'} 
+            adminEmail={user?.email || 'tharunbandi614@gmail.com'} 
             onToast={triggerToast} 
           />
+        )}
+
+        {/* TAB: UNIVERSAL MY PROFILE */}
+        {activeTab === 'profile' && (
+          <div className="max-w-3xl mx-auto">
+            <UniversalProfileSection
+              appKey="admin"
+              themeMode="dark"
+              roleLabel="Master Super Admin"
+              entityOverride={{
+                name: userProfile?.name || 'Tarun Bandi (Master Admin)',
+                phone: userProfile?.phone || '8790729816',
+                branchId: selectedOperationalBranch,
+                branchName:
+                  selectedOperationalBranch === 'global'
+                    ? 'Operational Scope: All Branches (Global)'
+                    : `Operational Branch: ${selectedOperationalBranch.toUpperCase()}`,
+                subtitle: 'Full 5-App Control • Settlements • Config',
+              }}
+              onLogoutSession={handleAdminLogout}
+              onSignOutComplete={async () => {
+                await handleAdminLogout();
+                await logout();
+                window.location.href = '/';
+              }}
+            />
+          </div>
         )}
 
       </div>

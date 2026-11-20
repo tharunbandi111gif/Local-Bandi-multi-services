@@ -1,6 +1,6 @@
 {
-  "name": "Local Bandi Partner & Rider Hub",
-  "short_name": "Partner Hub",
+  "name": "Local Bandi Multi Services",
+  "short_name": "Local Bandi Multi Services",
   "description": "Delivery Fleet, Store Vendor and Service Partner Management Portal",
   "id": "com.localbandi.partner",
   "start_url": "/partner.html",

@@ -421,7 +421,7 @@ export function generateShippingLabelHtml(order: ShippingLabelData, format: '4x6
     <div class="footer-row">
       <div class="instructions">
         <strong>DRIVER INSTRUCTIONS:</strong> Verify package seal upon handover. Customer must confirm receipt via OTP or signature. Return undelivered parcels to merchant within 2 hours.
-        <div style="font-size:7.5px; color:#666; margin-top:2px;">Support Helpline: +91 74165 74197 &bull; support@localbandi.com</div>
+        <div style="font-size:7.5px; color:#666; margin-top:2px;">Support Helpline: +91 74165 74197 &bull; support@localbandimultiservices.in</div>
       </div>
       <div class="qr-container">
         ${generateSvgQrCode(orderId)}

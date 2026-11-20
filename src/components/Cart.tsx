@@ -11,6 +11,7 @@ import {
   resolveOrderDistanceKm, 
   getDeliveryBreakdown 
 } from '../utils/deliveryCalculator';
+import { validateOrderGeofence, getCoordsFromAddress } from '../lib/geofencing';
 import { 
   isGoldenHourActive, 
   getNextGoldenHourSlotText, 
@@ -31,6 +32,11 @@ interface CartProps {
   isAdmin?: boolean;
   onUpdateCartItem?: (id: string, updatedFields: Partial<CartItem>) => void;
   rewardsList?: any[];
+  currentBranch?: any;
+  coverageZones?: any[];
+  userCoords?: { lat: number; lng: number } | null;
+  location?: string;
+  onChangeLocation?: () => void;
 }
 
 const DEFAULT_PROMOS = [
@@ -41,7 +47,7 @@ const DEFAULT_PROMOS = [
   { id: 'FREESHIP', type: 'shipping' as const, value: 0, label: 'FREE DELIVERY CODE', minSubtotal: 200 }
 ];
 
-export default function Cart({ items, language, onBack, onUpdateQty, onRemove, onCheckout, selectedRewardId, onSelectReward, promoCodes, isAdmin, onUpdateCartItem, rewardsList }: CartProps) {
+export default function Cart({ items, language, onBack, onUpdateQty, onRemove, onCheckout, selectedRewardId, onSelectReward, promoCodes, isAdmin, onUpdateCartItem, rewardsList, currentBranch, coverageZones = [], userCoords, location, onChangeLocation }: CartProps) {
   const t = translations[language].cart || translations['en-IN'].cart;
   const common = translations[language].common || translations['en-IN'].common;
   const [promoCode, setPromoCode] = useState('');
@@ -993,22 +999,90 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
             </motion.span>
           </div>
         </section>
+
+        {/* Active Service Boundary Check Banner */}
+        {(() => {
+          const serviceIds = Array.from(new Set(items.map(i => i.category).filter(Boolean)));
+          const geoRes = userCoords
+            ? validateOrderGeofence({
+                lat: userCoords.lat,
+                lng: userCoords.lng,
+                branch: currentBranch,
+                coverageZones,
+                serviceIds,
+              })
+            : null;
+          const isBlocked = Boolean(geoRes && !geoRes.eligible) || !location || location === 'Select Location';
+          return (
+            <div className={`p-4 rounded-2xl border text-xs space-y-2 ${
+              isBlocked ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-black uppercase text-[10px]">
+                  <MapPin className="w-4 h-4 shrink-0" />
+                  <span>
+                    {!location || location === 'Select Location'
+                      ? 'Delivery Location Required'
+                      : isBlocked
+                      ? 'Outside Active Service Boundary'
+                      : `Verified In-Bounds • ${geoRes?.distanceKm ?? orderDistanceKm} km from ${currentBranch?.name || 'Hub'}`}
+                  </span>
+                </div>
+                {onChangeLocation && (
+                  <button
+                    type="button"
+                    onClick={onChangeLocation}
+                    className="px-2.5 py-1 rounded-lg bg-white text-slate-900 border border-slate-200 text-[9px] font-black uppercase cursor-pointer hover:bg-slate-100"
+                  >
+                    Change Location
+                  </button>
+                )}
+              </div>
+              {geoRes && !geoRes.eligible && (
+                <p className="text-[11px] font-bold leading-snug">{geoRes.reason}</p>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
-      <div className="p-6 bg-white border-t border-gray-100 sticky bottom-0 z-10">
-        <motion.button 
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => {
-            const hasMonthly = items.some(item => item.isMonthlySubscription);
-            if (hasMonthly) {
-              setShowMonthlyConfirm(true);
-            } else {
-              onCheckout();
-            }
-          }}
-          className="w-full relative overflow-hidden group py-5 bg-gray-900 text-white rounded-[2.5rem] font-black shadow-2xl shadow-gray-300 flex items-center justify-between px-8 active:scale-95 transition-all cursor-pointer"
-        >
+      {(() => {
+        const serviceIds = Array.from(new Set(items.map(i => i.category).filter(Boolean)));
+        const geoRes = userCoords
+          ? validateOrderGeofence({
+              lat: userCoords.lat,
+              lng: userCoords.lng,
+              branch: currentBranch,
+              coverageZones,
+              serviceIds,
+            })
+          : null;
+        const isCheckoutBlocked = Boolean(geoRes && !geoRes.eligible) || !location || location === 'Select Location';
+
+        return (
+          <div className="p-6 bg-white border-t border-gray-100 sticky bottom-0 z-10">
+            <motion.button 
+              whileHover={{ scale: isCheckoutBlocked ? 1 : 1.02 }}
+              whileTap={{ scale: isCheckoutBlocked ? 1 : 0.98 }}
+              disabled={isCheckoutBlocked}
+              onClick={() => {
+                if (isCheckoutBlocked) {
+                  onChangeLocation?.();
+                  return;
+                }
+                const hasMonthly = items.some(item => item.isMonthlySubscription);
+                if (hasMonthly) {
+                  setShowMonthlyConfirm(true);
+                } else {
+                  onCheckout();
+                }
+              }}
+              className={`w-full relative overflow-hidden group py-5 rounded-[2.5rem] font-black shadow-2xl flex items-center justify-between px-8 transition-all ${
+                isCheckoutBlocked
+                  ? 'bg-slate-200 text-slate-500 cursor-not-allowed shadow-none'
+                  : 'bg-gray-900 text-white shadow-gray-300 active:scale-95 cursor-pointer'
+              }`}
+            >
           {/* Subtle animated gradient overlay */}
           <motion.div 
             animate={{ 
@@ -1050,6 +1124,8 @@ export default function Cart({ items, language, onBack, onUpdateQty, onRemove, o
           </div>
         </motion.button>
       </div>
+        );
+      })()}
 
       {/* Monthly Plan Confirmation Dialog Modal overlay */}
       <AnimatePresence>

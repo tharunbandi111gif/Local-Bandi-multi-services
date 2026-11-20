@@ -13,6 +13,8 @@ import { LanguageCode } from '../types';
 import { LANGUAGES } from '../constants';
 import LanguageSelectorModal from './common/LanguageSelectorModal';
 import { getLocalizedFranchiseContent } from '../utils/localizedContent';
+import RegionalCategoryManager from './RegionalCategoryManager';
+import UniversalProfileSection from './common/UniversalProfileSection';
 import { useFirebase } from '../contexts/FirebaseContext';
 import { useTranslation } from '../i18n';
 import { db, auth } from '../lib/firebase';
@@ -73,7 +75,7 @@ export default function FranchisePortal() {
 
   // Authenticated franchise session
   const [activeBranch, setActiveBranch] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'categories' | 'members' | 'applications' | 'orders' | 'marriage' | 'real_estate' | 'hospital'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'products' | 'categories' | 'members' | 'applications' | 'orders' | 'marriage' | 'real_estate' | 'hospital' | 'profile'>('overview');
 
   // Business state
   const [products, setProducts] = useState<any[]>([]);
@@ -1369,12 +1371,16 @@ export default function FranchisePortal() {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowLangModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-yellow-400/20 hover:bg-yellow-400/30 text-yellow-300 border border-yellow-400/30 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all shrink-0 active:scale-95"
-            title="Select App Language / 24 Languages"
+            onClick={() => setActiveTab('profile')}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all shrink-0 active:scale-95 border ${
+              activeTab === 'profile'
+                ? 'bg-indigo-600 text-white border-indigo-400 shadow-lg shadow-indigo-900/40'
+                : 'bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border-indigo-400/30'
+            }`}
+            title="My Profile, Language & Legal Policies"
           >
-            <Globe className="w-3.5 h-3.5 text-yellow-400" />
-            <span>{LANGUAGES.find(l => l.code === currentLanguage)?.native || 'Language'}</span>
+            <User className="w-3.5 h-3.5 text-indigo-300" />
+            <span>My Profile</span>
           </button>
           <button
             onClick={handleLogout}
@@ -1491,6 +1497,16 @@ export default function FranchisePortal() {
           {hospitalBookings.filter(b => b.status === 'pending' || b.status === 'Pending').length > 0 && (
             <span className="absolute top-1 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
           )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('profile')}
+          className={`flex-1 min-w-[95px] py-2 px-3 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 relative ${
+            activeTab === 'profile' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:bg-white/5'
+          }`}
+        >
+          <User className="w-3.5 h-3.5 text-yellow-400" />
+          <span>My Profile</span>
         </button>
       </div>
 
@@ -2017,10 +2033,25 @@ export default function FranchisePortal() {
           </div>
         )}
 
-        {/* VIEW 2: CATEGORY MANAGER (EDIT & DELETE ALL CATEGORIES) */}
+        {/* VIEW 2: CATEGORY MANAGER (REGIONAL VISIBILITY, ONLINE/OFFLINE & GLOBAL CATEGORIES) */}
         {activeTab === 'categories' && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
+          <div className="space-y-6">
+            {activeBranch && (
+              <RegionalCategoryManager
+                branches={[activeBranch]}
+                selectedBranchId={activeBranch.id}
+                allowBranchSwitch={false}
+                categories={categories}
+                isSuperAdmin={isSuperAdmin}
+                onBranchUpdated={(bId, patch) => {
+                  if (activeBranch?.id === bId) {
+                    setActiveBranch((prev: any) => (prev ? { ...prev, ...patch } : prev));
+                  }
+                }}
+              />
+            )}
+
+            <div className="flex items-center justify-between pt-2">
               <div>
                 <h3 className="text-sm font-black uppercase tracking-tight">Active Platform Directories</h3>
                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Franchise administrators possess global edit and deletion rights</p>
@@ -2399,11 +2430,21 @@ export default function FranchisePortal() {
                         <p className="text-[10px] text-slate-400 font-semibold">{activeOrd.vendorAddress || 'Main branch'}</p>
                       </div>
                       <div className="bg-slate-950 p-4 rounded-2xl border border-white/5 space-y-2">
-                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Customer Delivery Address</h4>
+                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Customer Contact &amp; Delivery Address</h4>
                         <p className="text-xs font-bold text-white">{activeOrd.customerName || activeOrd.userName || 'Anonymous Customer'}</p>
-                        <p className="text-[10px] text-slate-300 font-medium">{activeOrd.address || 'Standard Handover'}</p>
-                        {(activeOrd.phone || activeOrd.userPhone) && (
-                          <p className="text-[10px] font-mono text-slate-500 mt-1">📞 {activeOrd.phone || activeOrd.userPhone}</p>
+                        <p className="text-[10px] text-slate-300 font-medium">{activeOrd.deliveryAddress || activeOrd.address || 'Standard Handover'}</p>
+                        {(activeOrd.customerPhone || activeOrd.phone || activeOrd.userPhone) && (
+                          <a
+                            href={`tel:${activeOrd.customerPhone || activeOrd.phone || activeOrd.userPhone}`}
+                            className="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-lg mt-1"
+                          >
+                            📞 {activeOrd.customerPhone || activeOrd.phone || activeOrd.userPhone}
+                          </a>
+                        )}
+                        {activeOrd.paymentMethod && (
+                          <p className="text-[9px] font-black uppercase tracking-wider text-indigo-300 mt-1">
+                            Payment: {activeOrd.paymentMethod}
+                          </p>
                         )}
                       </div>
                     </div>
@@ -2779,6 +2820,40 @@ export default function FranchisePortal() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* VIEW 10: UNIVERSAL MY PROFILE */}
+        {activeTab === 'profile' && activeBranch && (
+          <div className="max-w-3xl mx-auto pb-8">
+            <UniversalProfileSection
+              appKey="branch"
+              themeMode="dark"
+              roleLabel="Franchise Branch Admin"
+              entityOverride={{
+                name: activeBranch.adminName || adminName || 'Branch Manager',
+                phone: activeBranch.contactPhone || adminPhone || localStorage.getItem('franchise_admin_phone') || '',
+                photo: activeBranch.adminPhoto || '',
+                branchId: activeBranch.id,
+                branchName: activeBranch.name || activeBranch.id,
+                subtitle: `${activeBranch.name} (${activeBranch.city || 'Region'})`,
+              }}
+              onSaveEntityProfile={async (updated) => {
+                await updateDoc(doc(db, 'branches', activeBranch.id), {
+                  adminName: updated.name,
+                  contactPhone: updated.phone,
+                  adminPhoto: updated.photo,
+                  updatedAt: serverTimestamp(),
+                });
+                setActiveBranch((prev: any) =>
+                  prev
+                    ? { ...prev, adminName: updated.name, contactPhone: updated.phone, adminPhoto: updated.photo }
+                    : prev
+                );
+              }}
+              onNavigateOrders={() => setActiveTab('orders')}
+              onLogoutSession={handleLogout}
+            />
           </div>
         )}
       </main>

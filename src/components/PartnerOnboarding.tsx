@@ -305,7 +305,7 @@ export default function PartnerOnboarding({ userId, defaultType, onClose, onSucc
           type: 'onboarding_otp',
           phoneNumber: formData.phone,
           code: secureCode,
-          message: `[Lokal Bharath Dispatch] Partner Onboarding Security Code: ${secureCode}. Do not disclose. Valid for ${otpExpiry} minutes.`,
+          message: `[Local Bandi Multi Services Dispatch] Partner Onboarding Security Code: ${secureCode}. Do not disclose. Valid for ${otpExpiry} minutes.`,
           status: 'DELIVERED',
           createdAt: serverTimestamp()
         });

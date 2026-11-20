@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Users, Truck, Bike, ShieldAlert, Layers, ChevronUp, X, ExternalLink, Building2, Store, Lock, Smartphone, Download } from 'lucide-react';
 import AppDownloadModal from '../AppDownloadModal';
+import { useFirebase, isStrictMasterAdminIdentity } from '../../contexts/FirebaseContext';
 
 interface AppInfo {
   id: 'customer' | 'vendor' | 'partner' | 'admin' | 'franchise';
@@ -13,30 +14,42 @@ interface AppInfo {
 }
 
 export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'customer' | 'vendor' | 'partner' | 'admin' | 'franchise' }) {
+  const { user, userProfile, isMasterAdmin: ctxIsMasterAdmin } = useFirebase();
   const [isOpen, setIsOpen] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
+
+  const isStrictMaster = Boolean(
+    ctxIsMasterAdmin ||
+    isStrictMasterAdminIdentity(
+      user?.email || userProfile?.email,
+      user?.phoneNumber || userProfile?.phone || localStorage.getItem('user_phone'),
+      user?.uid
+    )
+  );
+
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(() => {
-    return localStorage.getItem('admin_session_active') === 'true' || currentApp !== 'customer';
+    return isStrictMaster || currentApp !== 'customer';
   });
 
   useEffect(() => {
     const handleSessionChange = () => {
-      setIsAdminUnlocked(localStorage.getItem('admin_session_active') === 'true' || currentApp !== 'customer');
+      setIsAdminUnlocked(isStrictMaster || currentApp !== 'customer');
     };
+    handleSessionChange();
     window.addEventListener('admin_session_updated', handleSessionChange);
     window.addEventListener('storage', handleSessionChange);
     return () => {
       window.removeEventListener('admin_session_updated', handleSessionChange);
       window.removeEventListener('storage', handleSessionChange);
     };
-  }, [currentApp]);
+  }, [currentApp, isStrictMaster]);
 
   // Completely hide standalone gateway switcher from regular customer view
   if (!isAdminUnlocked && currentApp === 'customer') {
     return null;
   }
 
-  const apps: AppInfo[] = [
+  const allApps: AppInfo[] = [
     {
       id: 'customer',
       name: 'Customer App',
@@ -78,6 +91,8 @@ export default function FloatingAppSwitcher({ currentApp }: { currentApp: 'custo
       color: 'bg-red-500 text-red-500 border-red-500/20 hover:border-red-500/40 text-red-500 shadow-red-500/5',
     },
   ];
+
+  const apps = allApps.filter((a) => a.id !== 'admin' || isStrictMaster || currentApp === 'admin');
 
   const currentAppDetails = apps.find(a => a.id === currentApp) || apps[0];
 

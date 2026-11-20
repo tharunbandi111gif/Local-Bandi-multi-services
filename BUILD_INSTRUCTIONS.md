@@ -1,6 +1,6 @@
 # Local Bandi Multi Services — 5 Standalone Apps Build & Google Play Console Guide
 
-This repository contains the enterprise ecosystem for **Local Bandi Multi Services**, operating on the production domain **`https://localbundimultiservices.in`** with a unified secure Node.js backend, central Firestore database, Cashfree Payment Gateway, and Firebase Authentication.
+This repository contains the enterprise ecosystem for **Local Bandi Multi Services**, operating on the production domain **`https://localbandimultiservices.in`** with a unified secure Node.js backend, central Firestore database, Cashfree Payment Gateway, and Firebase Authentication.
 
 ---
 
@@ -8,13 +8,13 @@ This repository contains the enterprise ecosystem for **Local Bandi Multi Servic
 
 Each application functions as an independent standalone app with its own dedicated HTML entry point, PWA manifest, service worker, and Android package identifier:
 
-| App # | Application Name | Target Role | Production Web Link | Manifest | Package ID (Google Play) |
-|---|---|---|---|---|---|
-| **1** | **Customer App** | End-consumers (Food, Grocery, Hospital OPD, Services) | `https://localbundimultiservices.in/` | `/manifest.json` | `com.localbandi.customer` |
-| **2** | **Vendor & Merchant App** | Store & Restaurant Owners | `https://localbundimultiservices.in/vendor.html` | `/manifest-vendor.json` | `com.localbandi.vendor` |
-| **3** | **Delivery Partner App** | Delivery Fleet Riders | `https://localbundimultiservices.in/delivery.html` | `/manifest-delivery.json` | `com.localbandi.delivery` |
-| **4** | **Branch Admin App** | Regional Franchise & Hub Managers | `https://localbundimultiservices.in/branch-admin.html` | `/manifest-branch.json` | `com.localbandi.branch` |
-| **5** | **Master Admin Console** | Executive Command & Tarun Bandi | `https://localbundimultiservices.in/admin.html` | `/manifest-admin.json` | `com.localbandi.admin` |
+| App # | Application Name | Target Role | Production Web Link | Manifest | Package ID (Google Play) | Google Play Store Link |
+|---|---|---|---|---|---|---|
+| **1** | **Customer App** | End-consumers (Food, Grocery, Hospital OPD, Services) | `https://localbandimultiservices.in/` | `/manifest.json` | `com.localbandi.customer` | [Customer on Play Store](https://play.google.com/store/apps/details?id=com.localbandi.customer) |
+| **2** | **Vendor & Merchant App** | Store & Restaurant Owners | `https://localbandimultiservices.in/vendor.html` | `/manifest-vendor.json` | `com.localbandi.vendor` | [Vendor Hub on Play Store](https://play.google.com/store/apps/details?id=com.localbandi.vendor) |
+| **3** | **Delivery Partner App** | Delivery Fleet Riders | `https://localbandimultiservices.in/delivery.html` | `/manifest-delivery.json` | `com.localbandi.delivery` | [Rider Partner on Play Store](https://play.google.com/store/apps/details?id=com.localbandi.delivery) |
+| **4** | **Branch Admin App** | Regional Franchise & Hub Managers | `https://localbandimultiservices.in/branch-admin.html` | `/manifest-branch.json` | `com.localbandi.branchadmin` | [Branch Admin on Play Store](https://play.google.com/store/apps/details?id=com.localbandi.branchadmin) |
+| **5** | **Master Admin Console** | Executive Command & Tarun Bandi | `https://localbandimultiservices.in/admin.html` | `/manifest-admin.json` | `com.localbandi.masteradmin` | [Master Console on Play Store](https://play.google.com/store/apps/details?id=com.localbandi.masteradmin) |
 
 ---
 
@@ -42,11 +42,11 @@ You have 3 official methods to produce signed Android Application Bundles (`.aab
 ### Method A: 1-Click Cloud APK Builder (Microsoft PWABuilder - Fastest)
 
 1. Open the PWABuilder direct link for the app you wish to package:
-   - **Customer App**: [Generate Customer APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbundimultiservices.in%2F)
-   - **Vendor App**: [Generate Vendor APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbundimultiservices.in%2Fvendor.html)
-   - **Delivery Partner App**: [Generate Delivery APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbundimultiservices.in%2Fdelivery.html)
-   - **Branch Admin App**: [Generate Branch Admin APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbundimultiservices.in%2Fbranch-admin.html)
-   - **Master Admin App**: [Generate Master Admin APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbundimultiservices.in%2Fadmin.html)
+   - **Customer App**: [Generate Customer APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbandimultiservices.in%2F)
+   - **Vendor App**: [Generate Vendor APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbandimultiservices.in%2Fvendor.html)
+   - **Delivery Partner App**: [Generate Delivery APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbandimultiservices.in%2Fdelivery.html)
+   - **Branch Admin App**: [Generate Branch Admin APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbandimultiservices.in%2Fbranch-admin.html)
+   - **Master Admin App**: [Generate Master Admin APK](https://www.pwabuilder.com?site=https%3A%2F%2Flocalbandimultiservices.in%2Fadmin.html)
 2. Click **Package for Android**.
 3. Set the **Package ID** matching the table above (e.g., `com.localbandi.customer`).
 4. Set the app name, launcher icons, and signing key details.
@@ -68,35 +68,35 @@ npm install -g @bubblewrap/cli
 **Customer App:**
 ```bash
 mkdir -p build-customer && cd build-customer
-bubblewrap init --manifest="https://localbundimultiservices.in/manifest.json"
+bubblewrap init --manifest="https://localbandimultiservices.in/manifest.json"
 bubblewrap build
 ```
 
 **Vendor App:**
 ```bash
 mkdir -p build-vendor && cd build-vendor
-bubblewrap init --manifest="https://localbundimultiservices.in/manifest-vendor.json"
+bubblewrap init --manifest="https://localbandimultiservices.in/manifest-vendor.json"
 bubblewrap build
 ```
 
 **Delivery Partner App:**
 ```bash
 mkdir -p build-delivery && cd build-delivery
-bubblewrap init --manifest="https://localbundimultiservices.in/manifest-delivery.json"
+bubblewrap init --manifest="https://localbandimultiservices.in/manifest-delivery.json"
 bubblewrap build
 ```
 
 **Branch Admin App:**
 ```bash
 mkdir -p build-branch && cd build-branch
-bubblewrap init --manifest="https://localbundimultiservices.in/manifest-branch.json"
+bubblewrap init --manifest="https://localbandimultiservices.in/manifest-branch.json"
 bubblewrap build
 ```
 
 **Master Admin App:**
 ```bash
 mkdir -p build-admin && cd build-admin
-bubblewrap init --manifest="https://localbundimultiservices.in/manifest-admin.json"
+bubblewrap init --manifest="https://localbandimultiservices.in/manifest-admin.json"
 bubblewrap build
 ```
 
@@ -119,31 +119,70 @@ bubblewrap build
    - Add tester email addresses (e.g. `tharunbandi111@gmail.com`).
    - Copy the Play Store internal test link and open it on an Android device to install.
 5. **Digital Asset Links Verification**:
-   - The central server automatically serves `https://localbundimultiservices.in/.well-known/assetlinks.json` with the SHA-256 fingerprint matching your release keys, ensuring the app opens in full-screen standalone mode without any browser URL bar.
+   - The central server automatically serves `https://localbandimultiservices.in/.well-known/assetlinks.json` with the SHA-256 fingerprint matching your release keys, ensuring the app opens in full-screen standalone mode without any browser URL bar.
 - Master Admin Console: `http://localhost:3000/admin.html`
+
+## 4. Android Native Gradle Build (Local or CI/CD)
+
+The native Android Gradle project in `./android` is already configured with 5 product flavors matching all 5 standalone application IDs.
+
+To build all 5 production App Bundles (`.aab`) and release APKs in one command:
+```bash
+# Build all 5 standalone AAB bundles and APKs
+npm run bundle:all
+# Or run the script directly:
+bash android/build-all-apks.sh
+```
+
+To build individual App Bundles (`.aab`) for each app:
+```bash
+# 1. Customer App Bundle (com.localbandi.customer)
+npm run bundle:customer
+# Output: android/app/build/outputs/bundle/customerRelease/app-customer-release.aab
+
+# 2. Vendor Partner App Bundle (com.localbandi.vendor)
+npm run bundle:vendor
+# Output: android/app/build/outputs/bundle/vendorRelease/app-vendor-release.aab
+
+# 3. Delivery Partner App Bundle (com.localbandi.delivery)
+npm run bundle:delivery
+# Output: android/app/build/outputs/bundle/deliveryRelease/app-delivery-release.aab
+
+# 4. Branch Admin App Bundle (com.localbandi.branchadmin)
+npm run bundle:branch
+# Output: android/app/build/outputs/bundle/branchadminRelease/app-branchadmin-release.aab
+
+# 5. Master Admin Console Bundle (com.localbandi.masteradmin)
+npm run bundle:admin
+# Output: android/app/build/outputs/bundle/masteradminRelease/app-masteradmin-release.aab
+```
 
 ---
 
-## 4. Android APK & Capacitor Sync Commands
+## 5. Google Play Console Upload & Production Release Steps
 
-To package the built web assets into the Android native project:
+To publish all five apps and get live separate Google Play Store links:
 
-```bash
-# 1. Clean build
-npm run build
-
-# 2. Sync distribution assets and plugins to Android directory
-npm run cap:sync
-# Or:
-npx cap sync android
-
-# 3. Open in Android Studio to build signed release APK / AAB
-npx cap open android
-```
-
-### Direct Cloud APK Generation (PWABuilder)
-Each application can be compiled directly into a signed `.apk` without local Android Studio using Microsoft PWABuilder with the public app URL (`ais-pre-...`):
-- **Customer App:** [Generate APK](https://www.pwabuilder.com?site=https%3A%2F%2Fais-pre-nrxv6weliaidu3roycbqtf-790133860415.asia-southeast1.run.app%2F)
-- **Partner Hub:** [Generate APK](https://www.pwabuilder.com?site=https%3A%2F%2Fais-pre-nrxv6weliaidu3roycbqtf-790133860415.asia-southeast1.run.app%2Fpartner.html)
-- **Franchise App:** [Generate APK](https://www.pwabuilder.com?site=https%3A%2F%2Fais-pre-nrxv6weliaidu3roycbqtf-790133860415.asia-southeast1.run.app%2Ffranchise.html)
-- **Master Admin:** [Generate APK](https://www.pwabuilder.com?site=https%3A%2F%2Fais-pre-nrxv6weliaidu3roycbqtf-790133860415.asia-southeast1.run.app%2Fadmin.html)
+1. **Log into Google Play Console**: [https://play.google.com/console](https://play.google.com/console)
+2. **Create 5 Separate Applications**:
+   Click **Create app** for each of the 5 apps:
+   - App 1: Name: **Local Bandi - Fast Hyperlocal** | Package: `com.localbandi.customer`
+   - App 2: Name: **Local Bandi Vendor Hub** | Package: `com.localbandi.vendor`
+   - App 3: Name: **Local Bandi Delivery Partner** | Package: `com.localbandi.delivery`
+   - App 4: Name: **Local Bandi Branch Admin** | Package: `com.localbandi.branchadmin`
+   - App 5: Name: **Local Bandi Master Admin Console** | Package: `com.localbandi.masteradmin`
+3. **Upload the Respective App Bundle (`.aab`)**:
+   - Go to **Production** (or **Closed testing** / **Internal testing**) > **Create new release**.
+   - Drag and drop the corresponding `.aab` bundle file generated from Gradle or PWABuilder.
+   - Enter release notes (e.g., `v1.0.0 Production Release`).
+4. **Complete Store Listing Information**:
+   - App Title, Short Description (80 characters), Full Description (up to 4,000 characters) — copyable directly from the Master Admin **APK & Play Store Hub** (`/admin.html`).
+   - App Category, Content Rating Questionnaire (PEGI 3 / Everyone).
+   - Dedicated Privacy Policy URL (`/privacy-customer.html`, `/privacy-vendor.html`, `/privacy-delivery.html`, `/privacy-branch.html`, `/privacy-admin.html`).
+5. **Review and Roll Out**:
+   - Submit for Google review. Once reviewed and approved by Google Play, each app will become live on its own unique Google Play Store link:
+     - `https://play.google.com/store/apps/details?id=com.localbandi.customer`
+     - `https://play.google.com/store/apps/details?id=com.localbandi.vendor`
+     - `https://play.google.com/store/apps/details?id=com.localbandi.delivery`
+     - `https://play.google.com/store/apps/details?id=com.localbandi.branchadmin`
+     - `https://play.google.com/store/apps/details?id=com.localbandi.masteradmin`

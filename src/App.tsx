@@ -35,13 +35,17 @@ import DeliveryPartnerApp from './components/DeliveryPartnerApp';
 
 import { referralService } from './lib/referral';
 import { PRODUCTS, SERVICES, REWARDS, CATEGORIES } from './constants';
+import { getCategory3DAsset } from './utils/category3DAssets';
+import AllCategoriesExplorer from './components/AllCategoriesExplorer';
+import CustomerBottomNav from './components/CustomerBottomNav';
+import { HospitalOPForm } from './components/HospitalOPForm';
 import { VendorProfile } from './types';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
 import { useTranslation } from './i18n';
 import { serverTimestamp, collection, query, where, onSnapshot, doc, getDoc, setDoc, updateDoc, getDocs, addDoc, orderBy, limit } from 'firebase/firestore';
 import { resetSandbox } from './lib/firestore-wrapper';
 
-import { useFirebase } from './contexts/FirebaseContext';
+import { useFirebase, isStrictMasterAdminIdentity } from './contexts/FirebaseContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { 
   calculateDeliveryCharge, 
@@ -51,7 +55,15 @@ import {
 import { AlertCircle, Power, RefreshCw, Users, Truck, ArrowRight, ShieldCheck, ShieldAlert, Bike, Store, CheckCircle2, X } from 'lucide-react';
 import BranchManager from './components/BranchManager';
 import { Branch } from './types';
-import { isPointInBranchBoundaries, getCoordsFromAddress } from './lib/geofencing';
+import {
+  isPointInBranchBoundaries,
+  getCoordsFromAddress,
+  geocodeAddress,
+  reverseGeocodeCoords,
+  validateOrderGeofence,
+  findBestBranchForCoords,
+  getBranchCoordinates,
+} from './lib/geofencing';
 import { useSyncLatencyTracker } from './hooks/useSyncLatencyTracker';
 import { RealTimeSyncService } from './services/realTimeSyncService';
 
@@ -189,7 +201,7 @@ function AppModeSelector({ onSelect }: { onSelect: (mode: 'customer' | 'partner'
             </div>
             
             <div className="flex gap-4 items-start">
-              <div className="w-12 h-12 bg-yellow-505/10 rounded-2xl flex items-center justify-center border border-yellow-500/20 group-hover:bg-yellow-500/20 group-hover:border-yellow-500/30 transition-transform group-hover:scale-105">
+              <div className="w-12 h-12 bg-yellow-500/10 rounded-2xl flex items-center justify-center border border-yellow-500/20 group-hover:bg-yellow-500/20 group-hover:border-yellow-500/30 transition-transform group-hover:scale-105">
                 <ShieldAlert className="w-6 h-6 text-yellow-500" />
               </div>
               <div className="flex-1 space-y-1">
@@ -256,15 +268,11 @@ function AppContent() {
     };
   }, []);
 
-  // Segregated roles: Tarun (master admin) has absolute Super Admin control over all portals.
-  const isSuperAdmin = isFirebaseSuperAdmin || 
-                       user?.email === 'tharunbandi111@gmail.com' || 
-                       user?.email === 'tarunbandi111@gmail.com' ||
-                       user?.phoneNumber === '+918790729816' ||
-                       user?.phoneNumber === '+917416574197' ||
-                       passcodeAuthenticated;
-  const isBranchAdmin = isFirebaseBranchAdmin || isSuperAdmin || passcodeAuthenticated;
-  const isAdmin = isFirebaseAdmin || isSuperAdmin || passcodeAuthenticated || (localStorage.getItem('admin_session_active') === 'true');
+  // Strictly restrict Master Admin authority to 8790729816 / tharunbandi614@gmail.com
+  const isStrictMaster = isStrictMasterAdminIdentity(user?.email, user?.phoneNumber, user?.uid);
+  const isSuperAdmin = isStrictMaster || isFirebaseSuperAdmin;
+  const isBranchAdmin = isFirebaseBranchAdmin || isSuperAdmin;
+  const isAdmin = isFirebaseAdmin || isSuperAdmin || (isStrictMaster && passcodeAuthenticated);
 
   const [passcode, setPasscode] = useState('');
   const [passcodeError, setPasscodeError] = useState('');
@@ -343,6 +351,15 @@ function AppContent() {
   const [selectedReward, setSelectedReward] = useState<any | null>(null);
   const [wishlist, setWishlist] = useState<string[]>([]);
   const [location, setLocation] = useState(() => localStorage.getItem('lokal_user_location') || 'Select Location');
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(() => {
+    const lat = parseFloat(localStorage.getItem('lokal_user_lat') || '');
+    const lng = parseFloat(localStorage.getItem('lokal_user_lng') || '');
+    return !isNaN(lat) && !isNaN(lng) ? { lat, lng } : null;
+  });
+  const [locationSource, setLocationSource] = useState<'gps' | 'manual' | null>(() => {
+    const src = localStorage.getItem('lokal_location_source');
+    return src === 'gps' || src === 'manual' ? src : null;
+  });
   const [currentBranchId, setCurrentBranchId] = useState<string>(() => localStorage.getItem('lokal_branch_id') || 'khammam_main');
 
   // Lock branch for Branch Admins
@@ -354,8 +371,10 @@ function AppContent() {
   }, [isBranchAdmin, userBranchId, currentBranchId]);
 
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchControlsMap, setBranchControlsMap] = useState<Record<string, any>>({});
   const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [coverageZones, setCoverageZones] = useState<any[]>([]);
+  const hasAttemptedStartupGpsRef = React.useRef(false);
 
   useEffect(() => {
     if (!db) return;
@@ -368,9 +387,114 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    const selected = branches.find(b => b.id === currentBranchId);
+    if (!db) return;
+    const unsubControls = onSnapshot(collection(db, 'branch_service_controls'), { includeMetadataChanges: true }, (snap) => {
+      const nextMap: Record<string, any> = {};
+      snap.docs.forEach(d => {
+        nextMap[d.id] = d.data();
+      });
+      setBranchControlsMap(nextMap);
+    }, () => {});
+
+    // Sync Master maintenance mode & app config in real time
+    const unsubAppConfig = onSnapshot(doc(db, 'settings', 'app_config'), { includeMetadataChanges: true }, (snap) => {
+      if (snap.exists()) {
+        const d = snap.data();
+        if (typeof d.maintenanceMode === 'boolean') {
+          setIsMaintenanceMode(d.maintenanceMode);
+          try {
+            localStorage.setItem('lokal_maintenance_mode', d.maintenanceMode ? 'true' : 'false');
+          } catch {}
+        }
+      }
+    }, () => {});
+
+    // Sync payment gateway & settlement config in real time
+    const unsubPayConfig = onSnapshot(doc(db, 'settings', 'payment_config'), { includeMetadataChanges: true }, (snap) => {
+      if (snap.exists()) {
+        try {
+          localStorage.setItem('lokal_payment_config', JSON.stringify(snap.data()));
+          window.dispatchEvent(new CustomEvent('payment_config_updated', { detail: snap.data() }));
+        } catch {}
+      }
+    }, () => {});
+
+    // Cross-tab BroadcastChannel synchronization across all 5 apps
+    let bc: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        bc = new BroadcastChannel('localbandi_realtime_sync');
+        bc.onmessage = (evt) => {
+          const payload = evt?.data;
+          if (!payload) return;
+          if (payload.type === 'CATALOG_UPDATED' || payload.type === 'CATEGORY_UPDATED' || payload.type === 'BRANCH_CONTROL_UPDATED') {
+            try {
+              localStorage.removeItem('cached_local_inventory');
+              localStorage.removeItem('localInventory');
+            } catch {}
+            window.dispatchEvent(new CustomEvent('catalog_admin_updated', { detail: payload }));
+            window.dispatchEvent(new CustomEvent('branch_inventory_updated', { detail: payload }));
+          }
+        };
+      } catch {}
+    }
+
+    return () => {
+      unsubControls();
+      unsubAppConfig();
+      unsubPayConfig();
+      if (bc) bc.close();
+    };
+  }, []);
+
+  // Real-time visibility & regional category sync for active branch
+  useEffect(() => {
+    if (!db || !currentBranchId) return;
+    const unsubVis = onSnapshot(
+      doc(db, 'branch_catalog_visibility', currentBranchId),
+      { includeMetadataChanges: true },
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const vis = {
+            categories: data.categories || {},
+            products: data.products || {}
+          };
+          try {
+            localStorage.setItem(`local_branch_catalog_visibility_${currentBranchId}`, JSON.stringify(vis));
+          } catch {}
+          window.dispatchEvent(
+            new CustomEvent('branch_inventory_updated', {
+              detail: { branchId: currentBranchId, ...vis }
+            })
+          );
+        }
+      },
+      () => {}
+    );
+    return () => unsubVis();
+  }, [currentBranchId]);
+
+  const mergedBranches = React.useMemo(() => {
+    return branches.map(b => {
+      const ctrl = branchControlsMap[b.id];
+      if (!ctrl) return b;
+      return {
+        ...b,
+        serviceControls: { ...(b.serviceControls || {}), ...(ctrl.serviceControls || {}) },
+        disabledServices: Array.isArray(ctrl.disabledServices) ? ctrl.disabledServices : b.disabledServices,
+        serviceRadii: { ...(b.serviceRadii || {}), ...(ctrl.serviceRadii || {}) },
+        hiddenCategories: Array.isArray(ctrl.hiddenCategories) ? ctrl.hiddenCategories : b.hiddenCategories,
+        categoryConfigs: { ...(b.categoryConfigs || {}), ...(ctrl.categoryConfigs || {}) },
+        deliveryRadius: ctrl.deliveryRadius ?? b.deliveryRadius,
+      };
+    });
+  }, [branches, branchControlsMap]);
+
+  useEffect(() => {
+    const selected = mergedBranches.find(b => b.id === currentBranchId);
     setCurrentBranch(selected || null);
-  }, [branches, currentBranchId]);
+  }, [mergedBranches, currentBranchId]);
 
   const isBranchOffline = currentBranch?.status === 'Offline';
   const { language: selectedLanguage, setLanguage: setSelectedLanguage } = useTranslation();
@@ -381,8 +505,6 @@ function AppContent() {
     const unsub = onSnapshot(collection(db, 'branches'), (snap) => {
       const bList = snap.docs.map(d => ({ id: d.id, ...d.data() } as Branch));
       setBranches(bList);
-      
-      // If we are in "Select Location" or newly selecting, we might need to update branchId
     }, (err) => {
       console.warn("Failed to subscribe to branches (likely quota hit). Fallback to default branch.");
       setBranches([
@@ -503,52 +625,97 @@ function AppContent() {
     }
   }, [user, loading, isLoggingOut, currentScreen, location, navigateTo]);
 
+  // Automatic GPS Detection on Customer App Startup
   useEffect(() => {
-    // Automatic Location Detection
-    if (location === 'Select Location' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude } = position.coords;
-          try {
-            const response = await fetch(
-              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-              { headers: { 'Accept-Language': 'en' } }
-            );
-            const data = await response.json();
-            if (data && data.display_name) {
-              const detectedLoc = data.display_name;
-              setLocation(detectedLoc);
-              localStorage.setItem('lokal_user_location', detectedLoc);
-            }
-          } catch (e) {
-            console.error("Auto location error:", e);
-          }
-        },
-        (err) => console.log("Geolocation permission denied or error:", err),
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
-    }
-  }, [location]);
+    if (hasAttemptedStartupGpsRef.current) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
 
-  const handleLocationSelect = React.useCallback(async (newLoc: string) => {
+    // Respect explicit manual location override unless no location/coords exist yet
+    const savedSource = localStorage.getItem('lokal_location_source');
+    const hasCoords = Boolean(localStorage.getItem('lokal_user_lat') && localStorage.getItem('lokal_user_lng'));
+    if (savedSource === 'manual' && hasCoords && location !== 'Select Location') {
+      hasAttemptedStartupGpsRef.current = true;
+      return;
+    }
+
+    hasAttemptedStartupGpsRef.current = true;
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        setUserCoords({ lat: latitude, lng: longitude });
+        localStorage.setItem('lokal_user_lat', String(latitude));
+        localStorage.setItem('lokal_user_lng', String(longitude));
+        localStorage.setItem('lokal_location_source', 'gps');
+        setLocationSource('gps');
+
+        try {
+          const detectedLoc = await reverseGeocodeCoords(latitude, longitude);
+          if (detectedLoc) {
+            setLocation(detectedLoc);
+            localStorage.setItem('lokal_user_location', detectedLoc);
+          }
+        } catch (e) {
+          console.warn("Startup GPS reverse geocode fallback:", e);
+        }
+      },
+      (err) => {
+        console.log("Startup GPS permission denied or unavailable:", err);
+      },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+    );
+  }, []);
+
+  // Re-match best branch whenever live userCoords and mergedBranches update (unless Branch Admin locked)
+  useEffect(() => {
+    if (userCoords && mergedBranches.length > 0 && !isBranchAdmin) {
+      const best = findBestBranchForCoords(userCoords.lat, userCoords.lng, mergedBranches, coverageZones);
+      if (best.branch && best.branch.id !== currentBranchId && (best.inside || location === 'Select Location')) {
+        setCurrentBranchId(best.branch.id);
+        localStorage.setItem('lokal_branch_id', best.branch.id);
+      }
+    }
+  }, [userCoords, mergedBranches, coverageZones, isBranchAdmin]);
+
+  const handleLocationSelect = React.useCallback(async (
+    newLoc: string,
+    explicitCoords?: { lat: number; lng: number } | null,
+    source: 'gps' | 'manual' = 'manual',
+    preferredBranchId?: string
+  ) => {
+    // Empty string means "Keep current location & return"
+    if (!newLoc || !newLoc.trim()) {
+      setCurrentScreen('home');
+      return;
+    }
+
     setLocation(newLoc);
     localStorage.setItem('lokal_user_location', newLoc);
-    
-    // Clear old coords first
-    localStorage.removeItem('lokal_user_lat');
-    localStorage.removeItem('lokal_user_lng');
+    localStorage.setItem('lokal_location_source', source);
+    setLocationSource(source);
 
     try {
-      const coords = await getCoordsFromAddress(newLoc);
+      const coords = explicitCoords || await geocodeAddress(newLoc);
       if (coords) {
+        setUserCoords(coords);
         localStorage.setItem('lokal_user_lat', String(coords.lat));
         localStorage.setItem('lokal_user_lng', String(coords.lng));
-        
-        // Also update user profile if authenticated
+
+        if (preferredBranchId) {
+          setCurrentBranchId(preferredBranchId);
+          localStorage.setItem('lokal_branch_id', preferredBranchId);
+        } else if (mergedBranches.length > 0 && !isBranchAdmin) {
+          const best = findBestBranchForCoords(coords.lat, coords.lng, mergedBranches, coverageZones);
+          if (best.branch) {
+            setCurrentBranchId(best.branch.id);
+            localStorage.setItem('lokal_branch_id', best.branch.id);
+          }
+        }
+
         if (user) {
           await updateDoc(doc(db, 'users', user.uid), {
             latitude: coords.lat,
             longitude: coords.lng,
+            coordinates: { lat: coords.lat, lng: coords.lng },
             fullAddress: newLoc
           }).catch(err => console.warn("Failed to update profile coordinates:", err));
         }
@@ -558,7 +725,7 @@ function AppContent() {
     }
 
     setCurrentScreen('home');
-  }, [user]);
+  }, [user, mergedBranches, coverageZones, isBranchAdmin]);
   const [isMaintenanceMode, setIsMaintenanceMode] = useState(() => localStorage.getItem('lokal_maintenance_mode') === 'true');
   const [globalAnnouncement, setGlobalAnnouncement] = useState<string | null>(null);
   const [vendorApprovalToast, setVendorApprovalToast] = useState<{ storeName: string; id: string } | null>(null);
@@ -938,13 +1105,16 @@ function AppContent() {
           return;
         }
 
+        const existingDefault = CATEGORIES.find(c => c.id === docSnap.id || c.id === data.id);
+        const asset3D = getCategory3DAsset(docSnap.id || data.id);
+
         catMap.set(docSnap.id, {
           id: docSnap.id,
-          name: data.name || docSnap.id,
-          icon: data.icon || 'ShoppingBag',
-          color: data.color || 'bg-emerald-50',
-          image: data.image || data.img || '',
-          description: data.description || '',
+          name: data.name || existingDefault?.name || docSnap.id,
+          icon: data.icon || existingDefault?.icon || 'ShoppingBag',
+          color: (data.color && data.color.includes('gradient')) ? data.color : (existingDefault?.color || `bg-gradient-to-br ${asset3D.gradient}`),
+          image: (data.image && data.image.length > 25 && !data.image.includes('placeholder')) ? data.image : (existingDefault?.image || asset3D.image),
+          description: data.description || existingDefault?.description || '',
           ...data
         } as Category);
       });
@@ -1104,16 +1274,13 @@ function AppContent() {
           });
         
         const matchesBranch = (item: Product | Service) => {
-          return (
-            !item.branchId ||
-            item.branchId === 'global' ||
-            item.branchId === 'all' ||
-            item.branchId === '' ||
-            item.branchId === currentBranchId ||
-            currentBranchId === 'khammam_main' ||
-            currentBranchId === 'khammam-main' ||
-            currentBranchId === 'all'
-          );
+          const itemBranch = (item.branchId || '').trim();
+          if (!itemBranch || itemBranch === 'global' || itemBranch === 'all' || currentBranchId === 'all') {
+            return true;
+          }
+          if (itemBranch === currentBranchId) return true;
+          if (currentBranchId === 'khammam_main' && itemBranch === 'khammam-main') return true;
+          return false;
         };
 
         const merged = new Map<string, Product | Service>();
@@ -1366,21 +1533,30 @@ function AppContent() {
     };
 
     // Find matched branch or fallback to current branch / active branch seamlessly
-    const activeBranchToUse = checkMatchedBranch() || branches.find(b => b.id === currentBranchId) || branches[0] || { id: currentBranchId || 'main', name: 'Main Branch' };
+    const activeBranchToUse = checkMatchedBranch() || mergedBranches.find(b => b.id === currentBranchId) || mergedBranches[0] || { id: currentBranchId || 'main', name: 'Main Branch', status: 'Active' as const };
     const branchIdToSave = activeBranchToUse.id || currentBranchId || 'main';
 
-    // Geofencing check - log warning if out of bounds but DO NOT block checkout or redirect to customer care
-    try {
-      const coords = await getCoordsFromAddress(location, userProfile);
-      if (coords) {
-        const { lat, lng } = coords;
-        const { inside, hasZones } = isPointInBranchBoundaries(lat, lng, branchIdToSave, coverageZones);
-        if (hasZones && !inside) {
-          console.warn(`[Order Note]: Delivery location "${location}" is slightly outside designated boundary for branch "${activeBranchToUse.name}", proceeding with order placement.`);
-        }
-      }
-    } catch (err) {
-      console.warn("Geofencing check warning during checkout:", err);
+    // Strict Per-Service Geofencing & Service Status Validation
+    const resolvedCoords = userCoords || await getCoordsFromAddress(location, userProfile);
+    if (!resolvedCoords || !location || location === 'Select Location') {
+      const msg = "Please detect GPS or select a verified delivery location within an active service boundary before placing an order.";
+      alert(`📍 ${msg}`);
+      throw new Error(msg);
+    }
+
+    const cartServiceIds = Array.from(new Set(cart.map(c => c.category).filter(Boolean)));
+    const geoValidation = validateOrderGeofence({
+      lat: resolvedCoords.lat,
+      lng: resolvedCoords.lng,
+      branch: activeBranchToUse,
+      coverageZones,
+      serviceIds: cartServiceIds,
+    });
+
+    if (!geoValidation.eligible) {
+      const blockReason = geoValidation.reason || "Your selected delivery location is outside the operational radius for one or more services in your cart.";
+      alert(`🚫 Delivery Boundary Restriction:\n${blockReason}`);
+      throw new Error(blockReason);
     }
 
     const subtotal = cart.reduce((acc, i) => {
@@ -1451,16 +1627,16 @@ function AppContent() {
       userId: effectiveUserId,
       customerName: effectiveCustomerName,
       customerPhone: effectiveCustomerPhone,
-      deliveryAddress: location === 'Select Location' ? 'Khammam Main Center' : location,
-      deliveryLocation: { lat: 19.845, lng: 78.601 }, // Default to Wardha area if geolocation fails
+      deliveryAddress: location,
+      deliveryLocation: { lat: resolvedCoords.lat, lng: resolvedCoords.lng },
       items: orderItems.reduce((acc, i) => acc + i.quantity, 0),
       orderItems,
       rewardItem: selectedReward || null,
       total: finalTotal,
       subtotal: subtotal,
       deliveryFee: deliveryFee,
-      distanceKm: orderDistanceKm,
-      deliveryDistanceKm: orderDistanceKm,
+      distanceKm: geoValidation.distanceKm || orderDistanceKm,
+      deliveryDistanceKm: geoValidation.distanceKm || orderDistanceKm,
       deliveryBreakdown: deliveryBreakdown.breakdownText,
       tipAmount: tipAmount,
       vendorId: vendorId,
@@ -1639,29 +1815,17 @@ function AppContent() {
     }
   };
 
+  // Keep screen transition clean without overriding manual locations
   useEffect(() => {
-    if (user && currentScreen === 'location') {
-      // Auto-detect location on login/landing on location screen
-      const handleAutoDetect = async () => {
-        if ("geolocation" in navigator) {
-          navigator.geolocation.getCurrentPosition(async (position) => {
-            try {
-              const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${position.coords.latitude}&lon=${position.coords.longitude}`);
-              const data = await res.json();
-              if (data.display_name) {
-                handleLocationSelect(data.display_name);
-              }
-            } catch (e) {
-              console.warn("Auto-location failed", e);
-            }
-          }, (err) => {
-            console.warn("Geolocation permission denied or failed", err);
-          });
-        }
-      };
-      handleAutoDetect();
+    if (currentScreen === 'location' && !userCoords && navigator.geolocation && localStorage.getItem('lokal_location_source') !== 'manual') {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setUserCoords({ lat: position.coords.latitude, lng: position.coords.longitude });
+        },
+        () => {}
+      );
     }
-  }, [user, currentScreen]);
+  }, [currentScreen, userCoords]);
 
   const renderScreen = () => {
     switch (currentScreen) {
@@ -1699,6 +1863,9 @@ function AppContent() {
           onSelect={handleLocationSelect} 
           userProfile={userProfile}
           currentLocation={location}
+          branches={mergedBranches}
+          coverageZones={coverageZones}
+          userCoords={userCoords}
         /></SafeZone>;
       case 'home':
         return <SafeZone name="Home"><Home 
@@ -1724,6 +1891,8 @@ function AppContent() {
           currentBranchId={currentBranchId}
           onLocationChange={handleLocationSelect}
           currentBranch={currentBranch}
+          userCoords={userCoords}
+          coverageZones={coverageZones}
         /></SafeZone>;
       case 'branchManager':
         if (!isSuperAdmin && !isBranchAdmin && !isAdmin && userProfile?.role !== 'branchAdmin') {
@@ -1734,6 +1903,20 @@ function AppContent() {
           );
         }
         return <SafeZone name="Branch Manager"><BranchManager onBack={() => navigateTo('home')} masterAdminName="Tarun Bandi" /></SafeZone>;
+      case 'categories':
+        return (
+          <SafeZone name="All Categories">
+            <AllCategoriesExplorer 
+              categories={categories && categories.length > 0 ? categories : CATEGORIES}
+              language={selectedLanguage}
+              onBack={() => navigateTo('home')}
+              onCategoryClick={(cat) => viewCategory(cat)}
+              currentBranch={currentBranch}
+              userCoords={userCoords}
+              coverageZones={coverageZones}
+            />
+          </SafeZone>
+        );
       case 'category':
         return <SafeZone name="Category Listing"><CategoryListing 
           category={selectedCategory!}
@@ -1774,7 +1957,13 @@ function AppContent() {
       case 'product':
         return <SafeZone name="Product Details"><ProductDetails 
           product={selectedItem as Product}
-          onBack={() => navigateTo('category')}
+          onBack={() => {
+            if (selectedItem && (selectedItem as Product).category) {
+              const matched = (categories && categories.length > 0 ? categories : CATEGORIES).find(c => c.id === (selectedItem as Product).category);
+              if (matched) setSelectedCategory(matched);
+            }
+            navigateTo('category');
+          }}
           isInWishlist={wishlist.includes(selectedItem?.id || '')}
           onToggleWishlist={toggleWishlist}
           cart={cart}
@@ -1810,6 +1999,42 @@ function AppContent() {
           }}
           isAdmin={isAdmin}
         /></SafeZone>;
+      case 'hospitalOP':
+        return (
+          <SafeZone name="Hospital OP">
+            <div className="min-h-screen bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 pb-28">
+              <HospitalOPForm
+                prices={hospitalPrices || { general: { price: 150, isActive: true }, specialist: { price: 300, isActive: true }, emergency: { price: 500, isActive: true } }}
+                onBook={(data) => {
+                  (window as any).pendingLocalPayment = {
+                    amount: data.amount,
+                    type: 'hospital_booking',
+                    metadata: data,
+                    onComplete: async (method: string) => {
+                      try {
+                        const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+                        await addDoc(collection(db, 'hospital_bookings'), {
+                          ...data,
+                          userId: user?.uid,
+                          status: 'pending',
+                          paymentMethod: method,
+                          paymentStatus: method === 'cod' ? 'Hand Cash' : 'Paid (UPI)',
+                          createdAt: serverTimestamp()
+                        });
+                        alert("OP Booking Confirmed! Show confirmation at Hospital.");
+                        navigateTo('home');
+                      } catch (err) {
+                        console.error("Booking save error:", err);
+                      }
+                    }
+                  };
+                  navigateTo('payment');
+                }}
+                onClose={() => navigateTo('home')}
+              />
+            </div>
+          </SafeZone>
+        );
       case 'wishlist':
         return <SafeZone name="Wishlist"><Wishlist 
           wishlistIds={wishlist}
@@ -1823,9 +2048,20 @@ function AppContent() {
           service={selectedItem as Service}
           onBack={() => navigateTo('category')}
           location={location}
-          onUpdateLocation={(newLoc) => {
+          currentBranch={currentBranch}
+          coverageZones={coverageZones}
+          userCoords={userCoords}
+          onOpenLocationPicker={() => navigateTo('location')}
+          onUpdateLocation={async (newLoc) => {
             setLocation(newLoc);
             localStorage.setItem('lokal_user_location', newLoc);
+            localStorage.setItem('lokal_location_source', 'manual');
+            const coords = await geocodeAddress(newLoc);
+            if (coords) {
+              setUserCoords(coords);
+              localStorage.setItem('lokal_user_lat', String(coords.lat));
+              localStorage.setItem('lokal_user_lng', String(coords.lng));
+            }
           }}
           onBook={async (dateText, timeText) => {
             if (!user) {
@@ -1836,7 +2072,27 @@ function AppContent() {
             const svc = selectedItem as Service;
             if (!svc) return;
 
+            const resolvedCoords = userCoords || await getCoordsFromAddress(location, userProfile);
+            if (!resolvedCoords || !location || location === 'Select Location') {
+              alert("Please set a valid service location within active operational boundaries before booking.");
+              navigateTo('location');
+              return;
+            }
+
+            const geoCheck = validateOrderGeofence({
+              lat: resolvedCoords.lat,
+              lng: resolvedCoords.lng,
+              branch: currentBranch,
+              coverageZones,
+              serviceIds: [svc.category || 'services'],
+            });
+            if (!geoCheck.eligible) {
+              alert(`🚫 Service Boundary Restriction:\n${geoCheck.reason}`);
+              return;
+            }
+
             const orderId = 'ORD-' + Math.floor(1000 + Math.random() * 9000);
+            const branchHubCoords = getBranchCoordinates(currentBranch);
             const directItem: CartItem = {
               id: svc.id,
               name: svc.name + ` (${dateText} @ ${timeText})`,
@@ -1853,7 +2109,8 @@ function AppContent() {
               customerName: userProfile?.name || user.displayName || 'Guest User',
               customerPhone: userProfile?.phone || user.phoneNumber || '',
               deliveryAddress: location,
-              deliveryLocation: { lat: 17.2550, lng: 80.1600 },
+              deliveryLocation: { lat: resolvedCoords.lat, lng: resolvedCoords.lng },
+              deliveryDistanceKm: geoCheck.distanceKm,
               items: 1,
               orderItems: [
                 {
@@ -1870,8 +2127,8 @@ function AppContent() {
               vendorId: 'global',
               vendorName: 'Local Bandi Service Partner',
               vendorPhone: '',
-              pickupAddress: 'Service Hub Office',
-              pickupLocation: { lat: 17.2473, lng: 80.1514 },
+              pickupAddress: currentBranch?.location || 'Service Hub Office',
+              pickupLocation: branchHubCoords,
               branchId: currentBranchId,
               paymentMethod: 'cod',
               paymentStatus: 'Pending (COD)',
@@ -1925,6 +2182,11 @@ function AppContent() {
           promoCodes={promoCodes}
           isAdmin={isAdmin}
           onUpdateCartItem={handleUpdateCartItem}
+          currentBranch={currentBranch}
+          coverageZones={coverageZones}
+          userCoords={userCoords}
+          location={location}
+          onChangeLocation={() => navigateTo('location')}
         /></SafeZone>;
       case 'profile':
         return <SafeZone name="Profile"><Profile 
@@ -2010,6 +2272,11 @@ function AppContent() {
           distanceKm={paymentDistanceKm}
           userProfile={userProfile}
           currentLocation={location}
+          currentBranch={currentBranch}
+          coverageZones={coverageZones}
+          userCoords={userCoords}
+          cartItems={cart}
+          onChangeLocation={() => navigateTo('location')}
         /></SafeZone>;
       case 'confirmation':
         return <SafeZone name="Confirmation"><OrderConfirmation 
@@ -2294,6 +2561,17 @@ function AppContent() {
         isOpen={showAISuiteModal}
         onClose={() => setShowAISuiteModal(false)}
       />
+
+      {/* Customer Fixed Bottom Navigation Bar */}
+      {['home', 'categories', 'category', 'product', 'service', 'cart', 'wishlist', 'orders', 'notifications', 'marriageBureau', 'realEstate', 'hospitalOP'].includes(currentScreen) && (
+        <CustomerBottomNav
+          currentScreen={currentScreen}
+          onNavigate={(screen) => navigateTo(screen)}
+          wishlistCount={wishlist.length}
+          cartCount={cart.reduce((sum, item) => sum + item.quantity, 0)}
+          onOpenHospitalOP={() => navigateTo('hospitalOP')}
+        />
+      )}
     </>
   );
 }

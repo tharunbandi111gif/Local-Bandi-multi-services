@@ -1,6 +1,6 @@
 {
-  "name": "Local Bandi Franchise Hub",
-  "short_name": "Franchise Hub",
+  "name": "Local Bandi Multi Services",
+  "short_name": "Local Bandi Multi Services",
   "description": "Local Bandi Franchisee & Area Branch Management Portal",
   "id": "com.localbandi.franchise",
   "start_url": "/franchise.html",

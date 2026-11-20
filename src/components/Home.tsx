@@ -114,6 +114,7 @@ import { downloadCSV } from '../lib/exportUtils';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Product, Screen, Service, LanguageCode, VendorProfile, DeliveryPartnerProfile, SupportChat, SupportMessage, MarriageProfile, PlatformSettings, PartnerApplicationType } from '../types';
 import { CATEGORIES, PRODUCTS, SERVICES, LANGUAGES } from '../constants';
+import { getCategory3DAsset, CATEGORY_3D_ASSETS } from '../utils/category3DAssets';
 import { translations } from '../translations';
 import { useTranslation } from '../i18n';
 import { 
@@ -153,11 +154,16 @@ import { PriceDropToast } from './PriceDropToast';
 import { getSearchHistory, addSearchHistory, removeSearchHistoryItem, clearSearchHistory } from '../utils/searchHistory';
 import { checkAndNotifyPriceDrops } from '../utils/priceTracker';
 import { SearchHistoryItem } from '../types';
-import { useFirebase } from '../contexts/FirebaseContext';
+import { useFirebase, isStrictMasterAdminIdentity, MASTER_ADMIN_PIN } from '../contexts/FirebaseContext';
 import { db, auth, handleFirestoreError, OperationType, setupRecaptcha } from '../lib/firebase';
 import { User as AuthUser } from 'firebase/auth';
 import type { ConfirmationResult } from '../lib/firebase';
-import { collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, setDoc, orderBy, limit, increment } from 'firebase/firestore';
+import {
+  validateServiceGeofence,
+  getBranchCoordinates,
+  getServiceOperationalRadiusKm,
+} from '../lib/geofencing';
+import { doc, collection, onSnapshot, query, where, addDoc, updateDoc, deleteDoc, serverTimestamp, setDoc, orderBy, limit, increment } from 'firebase/firestore';
 
 interface HomeProps {
   location: string;
@@ -183,6 +189,8 @@ interface HomeProps {
   currentBranch?: any;
   branches?: any[];
   categories?: Category[];
+  userCoords?: { lat: number; lng: number } | null;
+  coverageZones?: any[];
 }
 
 const IconMap: Record<string, any> = {
@@ -314,13 +322,20 @@ export function Home({
   currentBranchId = 'khammam_main',
   currentBranch,
   branches = [],
-  categories: propCategories
+  categories: propCategories,
+  userCoords,
+  coverageZones = []
 }: HomeProps) {
   const { language: activeLang, setLanguage: setGlobalLanguage, t: translateKey } = useTranslation();
   const language = activeLang || propLanguage || 'en-IN';
   const homeScrollRef = useRef<HTMLDivElement>(null);
   const [showLangModal, setShowLangModal] = useState(false);
-  const { phoneLogin, logout } = useFirebase();
+  const { user: authUser, phoneLogin, logout } = useFirebase();
+  const isStrictMasterIdentity = isStrictMasterAdminIdentity(
+    authUser?.email || user?.email,
+    authUser?.phoneNumber || user?.phoneNumber,
+    authUser?.uid || user?.uid
+  );
   const [activeBanner, setActiveBanner] = useState(0);
   const [showHospitalOP, setShowHospitalOP] = useState(false);
   const [propertyChats, setPropertyChats] = useState<any[]>([]);
@@ -407,6 +422,36 @@ export function Home({
   const [isEditingPromoMode, setIsEditingPromoMode] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState(false);
   const [showMarketingQuizModal, setShowMarketingQuizModal] = useState(false);
+  const [showAllServicesDrawer, setShowAllServicesDrawer] = useState(false);
+  const [allServicesSearch, setAllServicesSearch] = useState('');
+  const [completedPaidOrdersCount, setCompletedPaidOrdersCount] = useState<number>(0);
+  useEffect(() => {
+    if (!user?.uid) {
+      setCompletedPaidOrdersCount(0);
+      return;
+    }
+    const unsub = onSnapshot(
+      collection(db, 'orders'),
+      (snap) => {
+        const count = snap.docs.filter((d) => {
+          const ord: any = d.data();
+          const belongsToUser = ord?.userId === user.uid || ord?.customerId === user.uid;
+          if (!belongsToUser) return false;
+          const isCompleted = ord?.status === 'Delivered' || ord?.status === 'Completed';
+          const isPaid =
+            ord?.paymentStatus === 'paid' ||
+            ord?.paymentStatus === 'Paid' ||
+            ord?.paymentStatus === 'completed' ||
+            ord?.isPaid === true ||
+            (isCompleted && Boolean(ord?.paymentMethod));
+          return isCompleted && isPaid;
+        }).length;
+        setCompletedPaidOrdersCount(count);
+      },
+      () => {}
+    );
+    return () => unsub();
+  }, [user?.uid]);
   const [userSuperCoins, setUserSuperCoins] = useState<number>(() => {
     try {
       return Number(localStorage.getItem('user_super_coins') || 100);
@@ -817,12 +862,23 @@ export function Home({
   
   // Top Banner Drag-to-Dismiss state
   const [isTopBannerDismissed, setIsTopBannerDismissed] = useState(false);
+  const [pausedServiceNotice, setPausedServiceNotice] = useState<(Category & { blockReason?: string; isOutOfRadius?: boolean }) | null>(null);
 
-  // Real-time distance calculation between Store and Customer
-  const storeLat = currentBranch?.lat || currentBranch?.coordinates?.lat || 17.2473;
-  const storeLng = currentBranch?.lng || currentBranch?.coordinates?.lng || 80.1514;
-  const customerLat = userProfile?.coordinates?.lat || (location?.toLowerCase().includes('wyra') ? 17.2000 : location?.toLowerCase().includes('kothagudem') ? 17.5500 : 17.2550);
-  const customerLng = userProfile?.coordinates?.lng || 80.1600;
+  const isServiceDisabledInBranch = (catId: string) => {
+    if (!currentBranch) return false;
+    const disabledList = Array.isArray(currentBranch.disabledServices) ? currentBranch.disabledServices : [];
+    if (disabledList.includes(catId)) return true;
+    if (currentBranch.serviceControls && currentBranch.serviceControls[catId] === false) return true;
+    if (currentBranch.categoryConfigs?.[catId]?.online === false) return true;
+    return false;
+  };
+
+  // Real-time distance calculation between Branch Hub and Customer GPS/Manual coordinates
+  const branchGeoCenter = getBranchCoordinates(currentBranch);
+  const storeLat = branchGeoCenter.lat;
+  const storeLng = branchGeoCenter.lng;
+  const customerLat = userCoords?.lat ?? userProfile?.coordinates?.lat ?? (location?.toLowerCase().includes('wyra') ? 17.1894 : location?.toLowerCase().includes('kothagudem') ? 17.5516 : 17.2550);
+  const customerLng = userCoords?.lng ?? userProfile?.coordinates?.lng ?? 80.1600;
 
   const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371; // km
@@ -836,6 +892,15 @@ export function Home({
   };
 
   const realtimeDistance = calculateDistanceKm(storeLat, storeLng, customerLat, customerLng);
+  const branchGeoCheck = React.useMemo(() => {
+    if (!userCoords) return null;
+    return validateServiceGeofence({
+      lat: userCoords.lat,
+      lng: userCoords.lng,
+      branch: currentBranch,
+      coverageZones,
+    });
+  }, [userCoords, currentBranch, coverageZones]);
   const estimatedDeliveryMinutes = Math.max(10, Math.round(Number(realtimeDistance) * 4 + 8));
 
   // Firebase Click-Tracking & Engagement Logger
@@ -1321,6 +1386,37 @@ export function Home({
       setCategories(propCategories);
     }
   }, [propCategories]);
+
+  const visibleRegionCategories = React.useMemo(() => {
+    const baseList = categories && categories.length > 0 ? categories : CATEGORIES;
+    const hiddenList = Array.isArray(currentBranch?.hiddenCategories) ? currentBranch.hiddenCategories : [];
+    const configs = currentBranch?.categoryConfigs || {};
+
+    return baseList
+      .filter((cat) => {
+        if (!cat || cat.deleted) return false;
+        if (hiddenList.includes(cat.id)) return false;
+        if (configs[cat.id]?.visible === false) return false;
+        return true;
+      })
+      .map((cat) => {
+        const cfg = configs[cat.id];
+        if (!cfg) return cat;
+        return {
+          ...cat,
+          name: cfg.name || cat.name,
+          image: cfg.image || cat.image,
+          icon: cfg.icon || cat.icon,
+          color: cfg.color || cat.color,
+          order: cfg.order ?? cat.order,
+        };
+      })
+      .sort((a, b) => {
+        const ordA = a.order ?? 999;
+        const ordB = b.order ?? 999;
+        return ordA - ordB;
+      });
+  }, [categories, currentBranch]);
   const [activeTrip, setActiveTrip] = useState<any>(null);
   const [showTripDetails, setShowTripDetails] = useState(false);
   const [vendors, setVendors] = useState<VendorProfile[]>([]);
@@ -1379,12 +1475,15 @@ export function Home({
 
           loadedCategories.forEach(c => {
             if (c && c.id) {
+              const asset3D = getCategory3DAsset(c.id);
+              const existingDefault = CATEGORIES.find(cat => cat.id === c.id);
               categoryMap.set(c.id, {
                 id: c.id,
-                name: c.name || c.id,
-                icon: c.icon || 'ShoppingBag',
-                color: c.color || 'bg-emerald-50',
-                image: c.image || c.img || '',
+                name: c.name || existingDefault?.name || c.id,
+                icon: c.icon || existingDefault?.icon || 'ShoppingBag',
+                color: (c.color && c.color.includes('gradient')) ? c.color : (existingDefault?.color || `bg-gradient-to-br ${asset3D.gradient}`),
+                image: (c.image && c.image.length > 25 && !c.image.includes('placeholder')) ? c.image : (existingDefault?.image || asset3D.image),
+                description: c.description || existingDefault?.description || '',
                 ...c
               });
             }
@@ -2856,7 +2955,7 @@ export function Home({
   const logoTapTimerRef = useRef<any>(null);
 
   const handleProtectedLogoInteraction = () => {
-    if (isAdminLoggedIn || localStorage.getItem('admin_session_active') === 'true') {
+    if (isStrictMasterIdentity && (isAdminLoggedIn || localStorage.getItem('admin_session_active') === 'true')) {
       setShowPanelSelection(true);
       return;
     }
@@ -2866,6 +2965,14 @@ export function Home({
 
     if (logoTapCountRef.current >= 4) {
       logoTapCountRef.current = 0;
+      if (!isStrictMasterIdentity) {
+        setZoomImage({
+          url: '/src/assets/images/local_bandi_logo_1785784124975.jpg',
+          title: 'Local Bandi Multi Services',
+          subtitle: 'Hyper-Local Super App'
+        });
+        return;
+      }
       setAdminView('dashboard');
       setAdminPass('');
       setShowAdminLogin(true);
@@ -3075,6 +3182,10 @@ export function Home({
   };
 
   const finalizeAdminLogin = () => {
+    if (!isStrictMasterIdentity) {
+      setLoginError('Restricted strictly to Master Admin (8790729816 / tharunbandi614@gmail.com).');
+      return;
+    }
     // Success Login
     setDeviceRegistry(prev => prev.map(d => 
       d.id === deviceId ? { ...d, failedAttempts: 0, lastLogin: Date.now(), isAuthorized: true } : d
@@ -3091,10 +3202,14 @@ export function Home({
   };
 
   const handleAdminAuth = () => {
+    if (!isStrictMasterIdentity) {
+      setLoginError('Access denied. Only Master Admin credentials (8790729816 / tharunbandi614@gmail.com) may unlock this portal.');
+      return;
+    }
     const currentDevice = deviceRegistry.find(d => d.id === deviceId);
     
-    // If password is correct, we can bypass the ban (Master Auth)
-    if (adminPass === adminPassword) {
+    // Validate 4-digit PIN (8790) or configured security passcode
+    if (adminPass === MASTER_ADMIN_PIN || adminPass === adminPassword) {
       // 1. Unban if necessary
       if (currentDevice && currentDevice.isBanned) {
         setDeviceRegistry(prev => prev.map(d => 
@@ -9777,14 +9892,134 @@ export function Home({
         )}
       </AnimatePresence>
 
-      {/* Marketing Quiz Floating Banner & Modal */}
-      <MarketingQuizFloatingBanner onOpenQuiz={() => setShowMarketingQuizModal(true)} />
+      {/* Permanent Speed Quiz Banner & Modal (Always visible for trial gameplay; 4th paid order one-time reward) */}
+      <MarketingQuizFloatingBanner
+        onOpenQuiz={() => setShowMarketingQuizModal(true)}
+        completedPaidOrdersCount={completedPaidOrdersCount}
+      />
       {showMarketingQuizModal && (
         <MarketingQuizModal
           isOpen={showMarketingQuizModal}
           onClose={() => setShowMarketingQuizModal(false)}
+          completedPaidOrdersCount={completedPaidOrdersCount}
+          userId={user?.uid}
         />
       )}
+
+      {/* Dedicated All Services Drawer */}
+      <AnimatePresence>
+        {showAllServicesDrawer && (
+          <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center bg-slate-950/70 backdrop-blur-sm">
+            <motion.div
+              initial={{ y: '100%', opacity: 0.4 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: '100%', opacity: 0.4 }}
+              transition={{ type: 'spring', damping: 28, stiffness: 280 }}
+              className="w-full sm:max-w-3xl max-h-[88vh] bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+            >
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/80">
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-slate-900 uppercase tracking-tight">
+                    All {visibleRegionCategories.length} Services
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Browse every active category available in your region
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAllServicesDrawer(false)}
+                  className="w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center cursor-pointer transition-colors"
+                  aria-label="Close All Services"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="px-5 py-3 border-b border-slate-100 bg-white">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={allServicesSearch}
+                    onChange={(e) => setAllServicesSearch(e.target.value)}
+                    placeholder={`Search across ${visibleRegionCategories.length} services...`}
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="p-5 overflow-y-auto grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3.5">
+                {visibleRegionCategories
+                  .filter((cat) => {
+                    if (!allServicesSearch.trim()) return true;
+                    const q = allServicesSearch.toLowerCase();
+                    const label = (currentBranch?.categoryConfigs?.[cat.id]?.name || getLocalizedCategoryName(cat.id, language) || cat.name || '').toLowerCase();
+                    return label.includes(q) || cat.id.toLowerCase().includes(q);
+                  })
+                  .map((cat) => {
+                    const asset3D = getCategory3DAsset(cat.id);
+                    const catImage = (cat.image && cat.image.length > 25 && !cat.image.includes('placeholder')) ? cat.image : asset3D.image;
+                    const isPaused = isServiceDisabledInBranch(cat.id);
+                    const serviceGeo = userCoords
+                      ? validateServiceGeofence({
+                          lat: userCoords.lat,
+                          lng: userCoords.lng,
+                          branch: currentBranch,
+                          coverageZones,
+                          serviceId: cat.id,
+                        })
+                      : null;
+                    const isOutOfRadius = Boolean(serviceGeo && serviceGeo.serviceOnline && !serviceGeo.eligible);
+                    const serviceRadiusKm = getServiceOperationalRadiusKm(currentBranch, cat.id);
+
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => {
+                          setShowAllServicesDrawer(false);
+                          if (isPaused) {
+                            setPausedServiceNotice({ ...cat, isOutOfRadius: false });
+                            return;
+                          }
+                          if (isOutOfRadius && serviceGeo) {
+                            setPausedServiceNotice({
+                              ...cat,
+                              isOutOfRadius: true,
+                              blockReason: serviceGeo.reason,
+                            });
+                            return;
+                          }
+                          onCategoryClick(cat);
+                        }}
+                        className={`flex flex-col items-center gap-2 p-2.5 rounded-2xl border border-slate-100 hover:border-indigo-200 hover:bg-indigo-50/40 transition-all cursor-pointer text-center ${
+                          isPaused || isOutOfRadius ? 'opacity-65' : ''
+                        }`}
+                      >
+                        <div className="relative w-14 h-14 rounded-2xl bg-gradient-to-b from-white to-slate-100 border border-slate-200/70 p-2 flex items-center justify-center shadow-sm">
+                          <img src={catImage} alt={cat.name} className="w-full h-full object-contain" loading="lazy" />
+                          {isPaused ? (
+                            <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-md bg-rose-600 text-white text-[7px] font-black uppercase">
+                              Paused
+                            </span>
+                          ) : isOutOfRadius ? (
+                            <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-md bg-amber-600 text-white text-[7px] font-black uppercase">
+                              &gt;{serviceRadiusKm}km
+                            </span>
+                          ) : null}
+                        </div>
+                        <span className="text-[11px] font-bold text-slate-800 line-clamp-2 leading-tight">
+                          {currentBranch?.categoryConfigs?.[cat.id]?.name || getLocalizedCategoryName(cat.id, language) || cat.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* SpinWheelModal */}
       {showSpinWheelModal && (
@@ -9838,18 +10073,32 @@ export function Home({
         {/* Top Header Bar */}
         <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md px-4 py-3 border-b border-gray-100">
           <div className="flex items-center justify-between gap-3 mb-3">
-            {/* Location Selector */}
+            {/* Location Selector - Opens LocationSelection for Manual Override / GPS */}
             <div 
-              onClick={() => onNavigate && onNavigate("profile" as any)}
+              onClick={() => onNavigate && onNavigate("location" as any)}
               className="flex items-center gap-2 cursor-pointer active:scale-95 transition-transform"
+              title="Tap to change delivery location or detect GPS"
             >
-              <div className="w-8 h-8 rounded-full bg-yellow-400/20 text-yellow-600 flex items-center justify-center">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                branchGeoCheck && !branchGeoCheck.eligible
+                  ? 'bg-rose-100 text-rose-600'
+                  : 'bg-yellow-400/20 text-yellow-600'
+              }`}>
                 <MapPin className="w-4 h-4" />
               </div>
               <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider leading-none">Delivering to</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider leading-none">Delivering to</span>
+                  {branchGeoCheck && (
+                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.2 rounded-full ${
+                      branchGeoCheck.eligible ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                    }`}>
+                      {branchGeoCheck.eligible ? `✓ ${branchGeoCheck.distanceKm} km` : '⚠ Out of Bounds'}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-1">
-                  <span className="text-xs font-black text-gray-900 truncate max-w-[140px]">{location || "Khammam"}</span>
+                  <span className="text-xs font-black text-gray-900 truncate max-w-[140px]">{location || "Select Location"}</span>
                   <ChevronDown className="w-3 h-3 text-gray-500" />
                 </div>
               </div>
@@ -9858,11 +10107,12 @@ export function Home({
             {/* Header Right Action Buttons */}
             <div className="flex items-center gap-2">
               <button 
-                onClick={() => setShowLangModal(true)}
-                className="w-8 h-8 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center hover:bg-gray-200 transition-colors"
-                title="Change Language"
+                onClick={() => onNavigate('profile')}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 hover:bg-amber-200 transition-colors text-[10px] font-black uppercase tracking-wider"
+                title="My Profile & Language Settings"
               >
-                <Globe className="w-4 h-4" />
+                <User className="w-3.5 h-3.5 text-amber-700" />
+                <span>My Profile</span>
               </button>
 
               <button 
@@ -10243,29 +10493,87 @@ export function Home({
           )}
         </AnimatePresence>
 
-        {/* Quick Categories Bar - All Services Clearly Visible */}
+        {/* Horizontally Swipeable Main Service Icons Slider */}
         <section className="px-4 py-2">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Explore Services & Categories</h3>
-            <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest cursor-pointer" onClick={() => onNavigate("categories" as any)}>
-              All {CATEGORIES.length} Services
-            </span>
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full bg-amber-500 shadow-sm shadow-amber-500/50" />
+              <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">Explore Services & Categories</h3>
+            </div>
+            <button 
+              type="button"
+              className="text-[10px] font-black text-indigo-600 hover:text-indigo-800 uppercase tracking-widest cursor-pointer flex items-center gap-1 transition-colors" 
+              onClick={() => {
+                setAllServicesSearch('');
+                setShowAllServicesDrawer(true);
+              }}
+            >
+              <span>All {visibleRegionCategories.length} Services</span>
+              <ChevronRight className="w-3 h-3" />
+            </button>
           </div>
-          <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
-            {CATEGORIES.map((cat) => {
-              const IconComp = IconMap[cat.icon] || ShoppingBag;
+          <div className="flex items-start gap-3 overflow-x-auto pb-2 snap-x snap-mandatory scroll-smooth no-scrollbar -mx-4 px-4">
+            {visibleRegionCategories.map((cat) => {
+              const asset3D = getCategory3DAsset(cat.id);
+              const catImage = (cat.image && cat.image.length > 25 && !cat.image.includes('placeholder')) ? cat.image : asset3D.image;
+              const isPaused = isServiceDisabledInBranch(cat.id);
+              const serviceGeo = userCoords
+                ? validateServiceGeofence({
+                    lat: userCoords.lat,
+                    lng: userCoords.lng,
+                    branch: currentBranch,
+                    coverageZones,
+                    serviceId: cat.id,
+                  })
+                : null;
+              const isOutOfRadius = Boolean(serviceGeo && serviceGeo.serviceOnline && !serviceGeo.eligible);
+              const serviceRadiusKm = getServiceOperationalRadiusKm(currentBranch, cat.id);
+
               return (
                 <motion.div
                   key={cat.id}
-                  whileTap={{ scale: 0.92 }}
-                  onClick={() => onCategoryClick(cat)}
-                  className="flex flex-col items-center gap-1.5 cursor-pointer group"
+                  whileHover={{ y: isPaused || isOutOfRadius ? 0 : -3, scale: isPaused || isOutOfRadius ? 1 : 1.04 }}
+                  whileTap={{ scale: 0.92, y: 1 }}
+                  onClick={() => {
+                    if (isPaused) {
+                      setPausedServiceNotice({ ...cat, isOutOfRadius: false });
+                      return;
+                    }
+                    if (isOutOfRadius && serviceGeo) {
+                      setPausedServiceNotice({
+                        ...cat,
+                        isOutOfRadius: true,
+                        blockReason: serviceGeo.reason,
+                      });
+                      return;
+                    }
+                    onCategoryClick(cat);
+                  }}
+                  className={`flex flex-col items-center gap-1.5 cursor-pointer group category-3d-card relative shrink-0 w-[76px] snap-start ${isPaused || isOutOfRadius ? 'opacity-70' : ''}`}
                 >
-                  <div className="w-14 h-14 rounded-2xl bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-700 shadow-sm group-hover:bg-yellow-400 group-hover:text-gray-900 transition-all">
-                    <IconComp className="w-6 h-6" />
+                  <div className="relative w-15 h-15 sm:w-16 sm:h-16 rounded-[1.25rem] p-1 flex items-center justify-center">
+                    <div className={`w-full h-full rounded-[1.15rem] p-1.5 flex items-center justify-center relative tile-3d-depth ${asset3D.shadow || 'shadow-slate-400/30'} bg-gradient-to-b from-white/95 to-slate-100/90 border border-white/80 ${isPaused || isOutOfRadius ? 'grayscale-[0.6]' : ''}`}>
+                      <img 
+                        src={catImage} 
+                        alt={cat.name} 
+                        className="w-full h-full object-contain filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.18)] transition-transform duration-200 group-hover:scale-110" 
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-x-1.5 top-1 h-2 rounded-t-lg bg-gradient-to-b from-white/80 to-transparent pointer-events-none" />
+                    </div>
+
+                    {isPaused ? (
+                      <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full bg-rose-600 text-white text-[7.5px] font-black uppercase tracking-wider shadow-md">
+                        Paused
+                      </span>
+                    ) : isOutOfRadius ? (
+                      <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full bg-amber-600 text-white text-[7px] font-black uppercase tracking-wider shadow-md">
+                        &gt;{serviceRadiusKm}km
+                      </span>
+                    ) : null}
                   </div>
-                  <span className="text-[10px] font-bold text-gray-700 text-center line-clamp-1 group-hover:text-gray-900">
-                    {getLocalizedCategoryName(cat.id, language) || cat.name}
+                  <span className="text-[10.5px] font-black text-gray-800 text-center line-clamp-1 group-hover:text-indigo-600 transition-colors tracking-tight w-full">
+                    {currentBranch?.categoryConfigs?.[cat.id]?.name || getLocalizedCategoryName(cat.id, language) || cat.name}
                   </span>
                 </motion.div>
               );
@@ -10404,94 +10712,178 @@ export function Home({
           </section>
         )}
 
-        {/* Popular Around You / Deals Section */}
-        {popularAroundYouItems.length > 0 && (
-          <section className="px-4 py-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
-                  {typeof getLocalizedPopularAroundYou(language) === "string" ? (getLocalizedPopularAroundYou(language) as unknown as string) : ((getLocalizedPopularAroundYou(language) as any)?.title || "Popular Around You")}
-                </h3>
+        {/* DISTINCT SECTION 1: OFFERS & EXCLUSIVE DEALS */}
+        <section className="px-4 py-4 border-t border-slate-100">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                Offers &amp; Exclusive Deals
+              </h3>
+              <p className="text-[10.5px] text-slate-500 font-medium">
+                Active branch savings &amp; limited-time discounts
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowMarketingQuizModal(true)}
+              className="text-[10px] font-black text-amber-600 hover:text-amber-700 uppercase tracking-wider cursor-pointer"
+            >
+              Speed Quiz Reward →
+            </button>
+          </div>
+
+          <div className="flex items-stretch gap-3 overflow-x-auto pb-2 snap-x snap-mandatory no-scrollbar -mx-4 px-4">
+            {(topBanners && topBanners.length > 0 ? topBanners : [
+              { id: 'offer-1', title: 'Flat ₹50 Off on Groceries', sub: 'Orders above ₹299 in your branch', color: 'bg-gradient-to-r from-emerald-600 to-teal-600' },
+              { id: 'offer-2', title: 'Free Delivery on Fresh Dairy', sub: 'Morning slot deliveries before 9 AM', color: 'bg-gradient-to-r from-amber-500 to-orange-600' },
+              { id: 'offer-3', title: '4th Paid Order Speed Quiz Bonus', sub: 'Play free trial now, unlock 1-time coupon on 4th order', color: 'bg-gradient-to-r from-indigo-600 to-slate-800' },
+            ]).map((offer: any, idx: number) => (
+              <div
+                key={offer.id || idx}
+                onClick={() => {
+                  if (offer.id === 'offer-3') {
+                    setShowMarketingQuizModal(true);
+                  } else {
+                    setShowAllServicesDrawer(true);
+                  }
+                }}
+                className={`shrink-0 w-[260px] sm:w-[290px] snap-start rounded-2xl p-4 text-white shadow-md cursor-pointer transition-transform active:scale-[0.98] flex flex-col justify-between ${offer.color || 'bg-gradient-to-r from-amber-500 to-orange-600'}`}
+              >
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-white/80">
+                    Limited Offer
+                  </span>
+                  <h4 className="text-sm font-black tracking-tight mt-1 leading-snug">
+                    {offer.title}
+                  </h4>
+                  <p className="text-[11px] text-white/90 mt-1 line-clamp-2">
+                    {offer.sub || offer.desc}
+                  </p>
+                </div>
+                <div className="pt-3 mt-3 border-t border-white/20 flex items-center justify-between text-[10px] font-black uppercase tracking-wider">
+                  <span>Tap to Explore</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </div>
               </div>
-              <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest cursor-pointer">
+            ))}
+          </div>
+        </section>
+
+        {/* DISTINCT SECTION 2: TRENDING ITEMS */}
+        {popularAroundYouItems.length > 0 && (
+          <section className="px-4 py-4 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                  Trending Items
+                </h3>
+                <p className="text-[10.5px] text-slate-500 font-medium">
+                  Most ordered products in your area right now
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllServicesDrawer(true)}
+                className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-widest cursor-pointer"
+              >
                 See All
-              </span>
+              </button>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {popularAroundYouItems.map((prod) => (
-                <div 
-                  key={prod.id}
-                  onClick={() => onProductClick(prod)}
-                  className="bg-white rounded-2xl p-3 border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="w-full aspect-square rounded-xl bg-gray-50 overflow-hidden mb-2 relative">
-                    {prod.image ? (
-                      <img src={prod.image} alt={prod.name} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-400">
-                        <Package className="w-8 h-8" />
-                      </div>
-                    )}
-                    {(prod as any).rating && (
-                      <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-lg bg-white/90 backdrop-blur-xs flex items-center gap-0.5 shadow-sm">
-                        <Star className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400" />
-                        <span className="text-[8px] font-black text-gray-800">{(prod as any).rating}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-black text-gray-900 truncate">{getLocalizedProductName(prod.id, language) || prod.name}</h4>
-                    <p className="text-[10px] text-gray-400 truncate mt-0.5 capitalize">{prod.category}</p>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-xs font-black text-emerald-600">₹{prod.price}</span>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onProductClick(prod);
-                        }}
-                        className="px-2.5 py-1 bg-yellow-400 text-gray-900 rounded-lg text-[9px] font-black uppercase tracking-wider hover:bg-yellow-500 transition-colors"
-                      >
-                        Add
-                      </button>
+              {popularAroundYouItems.map((prod) => {
+                const asset3D = getCategory3DAsset(prod.category);
+                const isGenericImg = !prod.image || prod.image.includes('placeholder') || prod.image.length < 25;
+                const displayImg = isGenericImg ? asset3D.image : prod.image;
+                return (
+                  <motion.div 
+                    key={prod.id}
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => onProductClick(prod)}
+                    className="clay-card-3d p-3 border border-slate-100 hover:border-indigo-200/60 shadow-[0_8px_20px_-4px_rgba(0,0,0,0.1)] transition-all cursor-pointer flex flex-col justify-between group active:scale-[0.98]"
+                  >
+                    <div className="w-full aspect-square rounded-2xl bg-gradient-to-b from-slate-50 to-slate-100 overflow-hidden mb-2 relative p-1.5 border border-white/60 shadow-inner">
+                      <img 
+                        src={displayImg} 
+                        alt={prod.name} 
+                        className={`w-full h-full ${isGenericImg ? 'object-contain p-2 filter drop-shadow-[0_6px_8px_rgba(0,0,0,0.15)]' : 'object-cover rounded-xl'} transition-transform duration-300 group-hover:scale-105`} 
+                        loading="lazy"
+                      />
+                      {(prod as any).rating && (
+                        <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-lg bg-white/95 backdrop-blur-xs flex items-center gap-0.5 shadow-sm border border-slate-100">
+                          <Star className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400" />
+                          <span className="text-[8px] font-black text-gray-800">{(prod as any).rating}</span>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                </div>
-              ))}
+                    <div>
+                      <h4 className="text-xs font-black text-gray-900 truncate leading-snug group-hover:text-indigo-600 transition-colors">
+                        {getLocalizedProductName(prod.id, language) || prod.name}
+                      </h4>
+                      <p className="text-[10px] text-gray-400 truncate mt-0.5 font-bold capitalize flex items-center gap-1">
+                        <span>{asset3D.emoji}</span>
+                        <span>{prod.category}</span>
+                      </p>
+                      <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-100">
+                        <span className="text-xs font-black text-emerald-600">₹{prod.price}</span>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onProductClick(prod);
+                          }}
+                          className="px-3 py-1 bg-yellow-400 hover:bg-yellow-500 text-gray-900 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all shadow-sm active:translate-y-0.5"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
             </div>
           </section>
         )}
 
         {/* Trending Services */}
         {trendingServicesItems.length > 0 && (
-          <section className="px-4 py-4 bg-gray-50/50 rounded-3xl my-2">
+          <section className="px-4 py-4 bg-gradient-to-b from-gray-50/80 to-slate-100/50 rounded-3xl my-2 border border-slate-100/80 shadow-xs">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
-                {typeof getLocalizedTrendingServices(language) === "string" ? (getLocalizedTrendingServices(language) as unknown as string) : ((getLocalizedTrendingServices(language) as any)?.title || "Trending Services")}
-              </h3>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-indigo-500 shadow-sm shadow-indigo-500/50" />
+                <h3 className="text-xs font-black text-gray-900 uppercase tracking-wider">
+                  {typeof getLocalizedTrendingServices(language) === "string" ? (getLocalizedTrendingServices(language) as unknown as string) : ((getLocalizedTrendingServices(language) as any)?.title || "Trending Services")}
+                </h3>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {trendingServicesItems.map((serv) => (
-                <div
-                  key={serv.id}
-                  onClick={() => onProductClick(serv)}
-                  className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-                      <Wrench className="w-5 h-5" />
+              {trendingServicesItems.map((serv) => {
+                const asset3D = getCategory3DAsset(serv.category || 'services');
+                return (
+                  <motion.div
+                    key={serv.id}
+                    whileHover={{ y: -3 }}
+                    whileTap={{ scale: 0.96 }}
+                    onClick={() => onProductClick(serv)}
+                    className="clay-card-3d p-3.5 border border-slate-100 hover:border-indigo-200/60 shadow-[0_8px_20px_-4px_rgba(0,0,0,0.1)] transition-all cursor-pointer flex flex-col justify-between group active:scale-[0.98]"
+                  >
+                    <div className="flex items-center gap-3 mb-2.5">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-50 to-slate-100 border border-white p-1.5 shadow-md flex items-center justify-center shrink-0">
+                        <img src={asset3D.image} alt={serv.name} className="w-full h-full object-contain filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.15)]" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-xs font-black text-gray-900 truncate leading-snug group-hover:text-indigo-600 transition-colors">
+                          {getLocalizedServiceName(serv.id, language) || serv.name}
+                        </h4>
+                        <span className="text-[10px] font-black text-emerald-600">₹{serv.price} onwards</span>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <h4 className="text-xs font-black text-gray-900 truncate">{getLocalizedServiceName(serv.id, language) || serv.name}</h4>
-                      <span className="text-[9px] font-bold text-gray-400">₹{serv.price} onwards</span>
-                    </div>
-                  </div>
-                  <button className="w-full py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors">
-                    Book Service
-                  </button>
-                </div>
-              ))}
+                    <button className="w-full py-1.5 bg-slate-900 hover:bg-indigo-600 text-white rounded-xl text-[9px] font-black uppercase tracking-wider transition-colors shadow-sm active:translate-y-0.5">
+                      Book Service
+                    </button>
+                  </motion.div>
+                );
+              })}
             </div>
           </section>
         )}
@@ -10538,12 +10930,14 @@ export function Home({
             >
               Register as Partner
             </button>
-            <button 
-              onClick={() => setShowAdminLogin(true)}
-              className="px-4 py-2 bg-gray-900 hover:bg-black text-yellow-400 rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors"
-            >
-              Founder Admin Access
-            </button>
+            {isStrictMasterIdentity && (
+              <button 
+                onClick={() => setShowAdminLogin(true)}
+                className="px-4 py-2 bg-gray-900 hover:bg-black text-yellow-400 rounded-xl text-[10px] font-black uppercase tracking-wider transition-colors"
+              >
+                Master Admin Access
+              </button>
+            )}
           </div>
           <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
             Khammam Direct Hyperlocal Delivery © 2026
@@ -10562,6 +10956,68 @@ export function Home({
             setVendors(prev => prev.map(v => v.id === storeId ? { ...v, lat, lng, coordinates: { lat, lng } } : v));
           }}
         />
+      )}
+
+      {/* Branch Paused or Out-of-Radius Service Notice Modal */}
+      {pausedServiceNotice && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="max-w-sm w-full bg-white rounded-3xl p-6 shadow-2xl text-center space-y-4 border border-rose-100"
+          >
+            <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 mx-auto flex items-center justify-center text-3xl shadow-inner border border-rose-100">
+              {pausedServiceNotice.isOutOfRadius ? '📍' : '⏸️'}
+            </div>
+            <div>
+              <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                pausedServiceNotice.isOutOfRadius ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-700'
+              }`}>
+                {pausedServiceNotice.isOutOfRadius ? 'Outside Service Operational Radius' : 'Service Offline in Region'}
+              </span>
+              <h3 className="text-lg font-black text-slate-900 mt-2">
+                {pausedServiceNotice.name}
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                {pausedServiceNotice.blockReason ||
+                  `Logistics, merchant dispatch, and ordering for ${pausedServiceNotice.name} are temporarily offline in ${currentBranch?.name || 'your region'}.`}
+              </p>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-2xl text-[10px] text-slate-600 font-mono text-left space-y-1 border border-slate-100">
+              <div className="flex justify-between">
+                <span>Branch:</span>
+                <span className="font-bold text-slate-900">{currentBranch?.name || 'Khammam'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Service Radius:</span>
+                <span className="font-bold text-slate-900">{getServiceOperationalRadiusKm(currentBranch, pausedServiceNotice.id)} km</span>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              {pausedServiceNotice.isOutOfRadius && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPausedServiceNotice(null);
+                    onNavigate('location' as any);
+                  }}
+                  className="w-full py-3 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md active:scale-95 cursor-pointer"
+                >
+                  Change Delivery Location
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setPausedServiceNotice(null)}
+                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black uppercase tracking-wider rounded-xl transition-all shadow-md active:scale-95 cursor-pointer"
+              >
+                Browse Other Available Services
+              </button>
+            </div>
+          </motion.div>
+        </div>
       )}
 
       {/* Floating Scroll-to-Top Button */}

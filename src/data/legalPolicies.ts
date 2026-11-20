@@ -72,7 +72,7 @@ export const LEGAL_ENTITIES = {
   companyName: "Local Bandi Multi Services Private Limited",
   brandName: "Local Bandi",
   tradeMark: "Local Bandi® Multi Services",
-  contactEmail: "tharunbandi111@gmail.com",
+  contactEmail: "tharunbandi614@gmail.com",
   supportEmail: "support@localbandi.app",
   grievanceOfficer: "Tharun Bandi",
   grievanceAddress: "Local Bandi Multi Services Pvt. Ltd., Legal Compliance & Grievance Division, Telangana / Andhra Pradesh, India",
@@ -236,7 +236,7 @@ export const APP_LEGAL_POLICIES: Record<string, AppLegalDocument> = {
         "Tap 'Request Account Closure & Data Erasure'.",
         "Confirm OTP verification. Your profile will be deactivated immediately."
       ],
-      emailProcedure: "Email Tharun Bandi (Grievance Officer) at tharunbandi111@gmail.com with subject 'Delivery Partner Account Deletion - [Registered Phone Number]'. Deletion is completed within 7 business days.",
+      emailProcedure: "Email Tharun Bandi (Grievance Officer) at tharunbandi614@gmail.com with subject 'Delivery Partner Account Deletion - [Registered Phone Number]'. Deletion is completed within 7 business days.",
       retentionExceptions: "Regulatory transaction logs, tax invoices, and closed dispute records are maintained for statutory periods under the Indian Income Tax Act 1961.",
       timeline: "Personal data, selfie photos, vehicle photos, and location history are permanently scrubbed within 30 calendar days."
     },
@@ -419,7 +419,7 @@ export const APP_LEGAL_POLICIES: Record<string, AppLegalDocument> = {
         "Select 'Delete My Account & Personal Data'.",
         "Verify your mobile number via OTP. Your account and active sessions will be terminated immediately."
       ],
-      emailProcedure: "Send an email from your registered email ID to tharunbandi111@gmail.com with the subject 'Account Deletion Request - Local Bandi Customer App'.",
+      emailProcedure: "Send an email from your registered email ID to tharunbandi614@gmail.com with the subject 'Account Deletion Request - Local Bandi Customer App'.",
       retentionExceptions: "Past invoices, GST tax audit data, and records of fulfilled orders must be retained for the statutory period mandated by law.",
       timeline: "Personal contact details, delivery addresses, and saved preferences are permanently scrubbed within 14 calendar days."
     },
@@ -598,7 +598,7 @@ export const APP_LEGAL_POLICIES: Record<string, AppLegalDocument> = {
         "Click 'Request Store Offboarding & Deletion'.",
         "Settle all pending orders and COD balances with the platform."
       ],
-      emailProcedure: "Submit a formal store closure request to tharunbandi111@gmail.com with your Store ID, Registered Phone Number, and Trade License.",
+      emailProcedure: "Submit a formal store closure request to tharunbandi614@gmail.com with your Store ID, Registered Phone Number, and Trade License.",
       retentionExceptions: "GST invoices, completed order receipts, and tax records are retained in compliance with statutory Indian accounting obligations.",
       timeline: "Storefront listing is removed within 24 hours; non-statutory data is scrubbed within 30 days of final ledger settlement."
     },
@@ -757,7 +757,7 @@ export const APP_LEGAL_POLICIES: Record<string, AppLegalDocument> = {
         "Finalize all regional driver COD reconciliations and pending dispute settlements.",
         "Master Admin initiates administrative deactivation and key revocation."
       ],
-      emailProcedure: "Email Tharun Bandi at tharunbandi111@gmail.com with subject 'Branch Admin Offboarding & Data Deletion - [Branch Name]'.",
+      emailProcedure: "Email Tharun Bandi at tharunbandi614@gmail.com with subject 'Branch Admin Offboarding & Data Deletion - [Branch Name]'.",
       retentionExceptions: "Statutory financial audit documents, regional revenue records, and dispute resolutions are retained for legal audit compliance.",
       timeline: "Access tokens revoked within 2 hours; personal administrator records archived/scrubbed within 30 days."
     },
@@ -896,7 +896,7 @@ export const APP_LEGAL_POLICIES: Record<string, AppLegalDocument> = {
         "Executive account retirement is managed through the platform Security Officer console.",
         "Administrative privileges are revoked and TOTP keys invalidated immediately."
       ],
-      emailProcedure: "Direct communication with the Corporate Board / Founder at tharunbandi111@gmail.com.",
+      emailProcedure: "Direct communication with the Corporate Board / Founder at tharunbandi614@gmail.com.",
       retentionExceptions: "Administrative audit trails cannot be deleted due to financial integrity and legal compliance requirements.",
       timeline: "Active credentials revoked within 60 seconds; administrative records archived per statutory norms."
     },

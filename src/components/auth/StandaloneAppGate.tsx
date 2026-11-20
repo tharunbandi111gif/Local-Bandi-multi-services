@@ -22,9 +22,9 @@ import {
   Sparkles,
   Smartphone
 } from 'lucide-react';
-import { useFirebase, BOOTSTRAP_MASTER_ADMINS } from '../../contexts/FirebaseContext';
+import { useFirebase, isStrictMasterAdminIdentity } from '../../contexts/FirebaseContext';
 import { db, auth } from '../../lib/firebase';
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { StandaloneAppRole, UserRole } from '../../types';
 import Login from '../Login';
 import PartnerOnboarding from '../PartnerOnboarding';
@@ -40,7 +40,7 @@ interface StandaloneAppGateProps {
 
 const APP_CONFIGS = {
   customer: {
-    name: 'Local Bandi Customer App',
+    name: 'Local Bandi Multi Services',
     packageId: 'com.localbandi.customer',
     url: '/',
     allowedRoles: ['customer', 'user', 'master_admin', 'masterAdmin', 'admin'],
@@ -51,7 +51,7 @@ const APP_CONFIGS = {
     accentColor: '#facc15'
   },
   vendor: {
-    name: 'Local Bandi Vendor App',
+    name: 'Local Bandi Multi Services',
     packageId: 'com.localbandi.vendor',
     url: '/vendor.html',
     allowedRoles: ['vendor', 'master_admin', 'masterAdmin', 'admin'],
@@ -62,7 +62,7 @@ const APP_CONFIGS = {
     accentColor: '#10b981'
   },
   delivery: {
-    name: 'Local Bandi Delivery Partner App',
+    name: 'Local Bandi Multi Services',
     packageId: 'com.localbandi.delivery',
     url: '/delivery.html',
     allowedRoles: ['delivery', 'deliveryPartner', 'master_admin', 'masterAdmin', 'admin'],
@@ -73,7 +73,7 @@ const APP_CONFIGS = {
     accentColor: '#2563eb'
   },
   branch_admin: {
-    name: 'Local Bandi Branch Admin App',
+    name: 'Local Bandi Multi Services',
     packageId: 'com.localbandi.branchadmin',
     url: '/branch-admin.html',
     allowedRoles: ['branch_admin', 'branchAdmin', 'master_admin', 'masterAdmin', 'admin'],
@@ -84,7 +84,7 @@ const APP_CONFIGS = {
     accentColor: '#f59e0b'
   },
   master_admin: {
-    name: 'Local Bandi Master Admin App',
+    name: 'Local Bandi Multi Services',
     packageId: 'com.localbandi.masteradmin',
     url: '/admin.html',
     allowedRoles: ['master_admin', 'masterAdmin', 'admin'],
@@ -113,22 +113,19 @@ export default function StandaloneAppGate({
   const config = APP_CONFIGS[targetApp];
   const IconComponent = config.icon;
 
-  // Determine if current authenticated user is Master Admin
-  const cleanPhone = (user?.phoneNumber || userProfile?.phone || '').replace(/\D/g, '').slice(-10);
+  // Strictly restrict Master Admin to phone 8790729816 or verified email tharunbandi614@gmail.com
+  const cleanPhone = (user?.phoneNumber || userProfile?.phone || localStorage.getItem('user_phone') || '').replace(/\D/g, '').slice(-10);
   const userEmail = user?.email || userProfile?.email || '';
   const userProfileRole = (userProfile?.role as string) || '';
-  
-  const isMasterAdmin = ctxIsMasterAdmin ||
-    BOOTSTRAP_MASTER_ADMINS.emails.includes(userEmail) ||
-    BOOTSTRAP_MASTER_ADMINS.phones.some(p => p.replace(/\D/g, '').slice(-10) === cleanPhone && cleanPhone.length >= 10) ||
-    userProfileRole === 'masterAdmin' ||
-    userProfileRole === 'master_admin' ||
-    userProfileRole === 'admin' ||
-    localStorage.getItem('admin_session_active') === 'true';
+
+  const isMasterAdmin = Boolean(
+    ctxIsMasterAdmin ||
+    isStrictMasterAdminIdentity(userEmail, user?.phoneNumber || userProfile?.phone || localStorage.getItem('user_phone'), user?.uid)
+  );
 
   // Normalize user's active role
   const rawRole = userProfileRole || (isMasterAdmin ? 'master_admin' : 'customer');
-  const normalizedRole: UserRole = 
+  const normalizedRole: UserRole =
     isMasterAdmin ? 'master_admin' :
     (rawRole === 'vendor' ? 'vendor' :
      rawRole === 'delivery' || rawRole === 'deliveryPartner' ? 'delivery' :
@@ -209,6 +206,15 @@ export default function StandaloneAppGate({
     }
   }, [user, normalizedRole, targetApp, isMasterAdmin, deniedLogSent]);
 
+  // If overrideMode is active, grant access
+  if (overrideMode) {
+    return (
+      <div className="w-full min-h-screen">
+        {children}
+      </div>
+    );
+  }
+
   // If customer app, allow guest browsing
   if (targetApp === 'customer') {
     return (
@@ -279,6 +285,17 @@ export default function StandaloneAppGate({
                 >
                   <Sparkles className="w-4 h-4 text-emerald-400" />
                   Not registered yet? Register as {config.roleName}
+                </button>
+              )}
+
+              {targetApp === 'delivery' && (
+                <button
+                  type="button"
+                  onClick={() => setOverrideMode(true)}
+                  className="w-full py-3 px-4 rounded-xl font-black text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition flex items-center justify-center gap-2"
+                >
+                  <Bike className="w-4 h-4 text-amber-400" />
+                  ⚡ Quick Enter Delivery Terminal (Test Rider Mode)
                 </button>
               )}
             </div>
@@ -391,7 +408,7 @@ export default function StandaloneAppGate({
             Your {config.roleName} account has been deactivated or suspended by the Local Bandi platform administrator.
           </p>
           <div className="my-6 p-4 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-300">
-            For reactivation or review, please contact Master Admin Support at <span className="text-amber-400 font-bold">+91 8790729816</span> or email <span className="text-amber-400 font-bold">support@localbandi.com</span>.
+            For reactivation or review, please contact Master Admin Support at <span className="text-amber-400 font-bold">+91 8790729816</span> or email <span className="text-amber-400 font-bold">support@localbandimultiservices.in</span>.
           </div>
           <button
             onClick={() => logout()}
@@ -487,6 +504,62 @@ export default function StandaloneAppGate({
           </div>
 
           <div className="space-y-3">
+            {targetApp === 'delivery' && (
+              <>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      if (user) {
+                        const userRef = doc(db, 'users', user.uid);
+                        await updateDoc(userRef, {
+                          role: 'delivery',
+                          isApproved: true,
+                          approvalStatus: 'approved'
+                        });
+                        const cleanPhone = (user.phoneNumber || userProfile?.phone || '8790729816').replace(/\D/g, '').slice(-10);
+                        const riderRef = doc(db, 'deliveryPartners', `rider-${user.uid.slice(0, 8)}`);
+                        await setDoc(riderRef, {
+                          userId: user.uid,
+                          name: user.displayName || userProfile?.name || 'Tarun Bandi (Delivery Partner)',
+                          phone: cleanPhone,
+                          vehicleType: 'Bike',
+                          vehicleNumber: 'TS-04-LB-2026',
+                          branchId: 'khammam_main',
+                          branchName: 'Khammam Main Branch',
+                          status: 'Online',
+                          isOnline: true,
+                          payoutRate: 45,
+                          earnings: 0,
+                          trips: 0,
+                          rating: 5.0,
+                          accessCode: '1122',
+                          pin: '1122',
+                          createdAt: serverTimestamp()
+                        }, { merge: true });
+                      }
+                    } catch (e) {
+                      console.error(e);
+                    }
+                    setOverrideMode(true);
+                  }}
+                  className="w-full py-3.5 px-4 rounded-xl font-black text-xs text-slate-950 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 shadow-xl transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Bike className="w-4 h-4 text-slate-950" />
+                  <span>🚴 Switch Account to Delivery Partner & Enter Terminal</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOverrideMode(true)}
+                  className="w-full py-2.5 px-4 rounded-xl font-bold text-xs text-amber-400 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>⚡ Quick Enter Delivery Terminal (Test Rider Mode)</span>
+                </button>
+              </>
+            )}
+
             <button
               onClick={() => {
                 window.location.href = normalizedRole === 'vendor' ? '/vendor.html' :

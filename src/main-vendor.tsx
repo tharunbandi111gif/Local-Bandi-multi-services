@@ -49,7 +49,7 @@ createRoot(document.getElementById('root')!).render(
         <ThemeProvider>
           <StandaloneAppGate 
             targetApp="vendor"
-            appName="Local Bandi Vendor App"
+            appName="Local Bandi Multi Services"
             appDescription="Merchant Catalog, Live Order Dispatch & Daily Revenue Settlements"
             themeColor="emerald"
           >

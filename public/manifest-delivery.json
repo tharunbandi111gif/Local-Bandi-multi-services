@@ -1,6 +1,6 @@
 {
-  "name": "Local Bandi Delivery Partner",
-  "short_name": "Rider App",
+  "name": "Local Bandi Multi Services",
+  "short_name": "Local Bandi Multi Services",
   "description": "Local Bandi Delivery Partner App with GPS tracking, order routing, and earnings ledger",
   "id": "com.localbandi.delivery",
   "start_url": "/delivery.html",

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Search, Filter, ShoppingCart, Star, Calendar, Mic, MicOff, ChevronDown, Check, X, ClipboardList, MessageSquare, Phone, ZoomIn, Edit3, Trash2, Camera, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Category, Product, Service, LanguageCode } from '../types';
 import { PRODUCTS, SERVICES, CATEGORIES } from '../constants';
+import { getCategory3DAsset } from '../utils/category3DAssets';
 import MarriageBureau from './MarriageBureau';
 import { HospitalOPForm } from './HospitalOPForm';
 import { translations } from '../translations';
@@ -10,7 +11,7 @@ import { getLocalizedCategoryName, getLocalizedSubcategoryName, getLocalizedProd
 import { performSmartSearch } from '../utils/smartSearch';
 import { AdminInput } from './common/AdminInput';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { deleteDoc, doc, updateDoc, setDoc } from 'firebase/firestore';
+import { deleteDoc, doc, updateDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { compressImage } from '../lib/imageUtils';
 
 interface CategoryListingProps {
@@ -61,6 +62,65 @@ export default function CategoryListing({
     message: string;
     onConfirm: () => void | Promise<void>;
   } | null>(null);
+
+  // Franchise catalog visibility controls
+  const [branchCatalogVisibility, setBranchCatalogVisibility] = useState<{
+    categories: Record<string, boolean>;
+    products: Record<string, boolean>;
+  } | null>(() => {
+    try {
+      const activeBranch = currentBranchId || 'khammam_main';
+      const saved = localStorage.getItem(`local_branch_catalog_visibility_${activeBranch}`);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    const activeBranch = currentBranchId || 'khammam_main';
+    const storageKey = `local_branch_catalog_visibility_${activeBranch}`;
+
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) setBranchCatalogVisibility(JSON.parse(saved));
+    } catch (e) {}
+
+    const handleLocalUpdate = (e: any) => {
+      if (e?.detail && (e.detail.branchId === activeBranch || e.detail.branchId === 'all')) {
+        setBranchCatalogVisibility({
+          categories: e.detail.categories || {},
+          products: e.detail.products || {}
+        });
+      }
+    };
+    window.addEventListener('branch_inventory_updated', handleLocalUpdate);
+
+    let unsubVisibility: (() => void) | undefined;
+    try {
+      const docRef = doc(db, 'branch_catalog_visibility', activeBranch);
+      unsubVisibility = onSnapshot(docRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const visibilityObj = {
+            categories: data.categories || {},
+            products: data.products || {}
+          };
+          setBranchCatalogVisibility(visibilityObj);
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(visibilityObj));
+          } catch (e) {}
+        }
+      }, (err) => {
+        console.warn("CategoryListing branch catalog visibility notice:", err);
+      });
+    } catch (e) {}
+
+    return () => {
+      window.removeEventListener('branch_inventory_updated', handleLocalUpdate);
+      if (unsubVisibility) unsubVisibility();
+    };
+  }, [currentBranchId]);
 
   const handleDeleteCatalogItem = (id: string, name: string) => {
     setDeleteConfirm({
@@ -260,9 +320,21 @@ export default function CategoryListing({
         currentBranchId === 'khammam-main' ||
         currentBranchId === 'all';
 
-      return matchesCategory && matchesBranch;
+      if (!matchesCategory || !matchesBranch) return false;
+
+      // Check franchise catalog visibility
+      if (branchCatalogVisibility) {
+        if (branchCatalogVisibility.categories && branchCatalogVisibility.categories[category.id] === false) {
+          return false;
+        }
+        if (branchCatalogVisibility.products && branchCatalogVisibility.products[p.id] === false) {
+          return false;
+        }
+      }
+
+      return true;
     });
-  }, [localInventory, category?.id, category?.name, currentBranchId]);
+  }, [localInventory, category?.id, category?.name, currentBranchId, branchCatalogVisibility]);
 
   const searchResult = React.useMemo(() => {
     if (!searchQuery.trim()) {
@@ -414,6 +486,44 @@ export default function CategoryListing({
       </header>
 
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+        {/* 3D Category Visual Hero Banner */}
+        {(() => {
+          const asset3D = getCategory3DAsset(category.id);
+          const catImg = (category.image && category.image.length > 25 && !category.image.includes('placeholder')) ? category.image : asset3D.image;
+          return (
+            <div className="relative overflow-hidden rounded-[2.2rem] p-4.5 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white shadow-xl shadow-slate-900/10 border border-slate-800/80">
+              {/* Ambient Glow */}
+              <div className="absolute top-0 right-0 w-36 h-36 bg-indigo-500/20 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none" />
+              
+              <div className="relative z-10 flex items-center gap-4">
+                <div className="w-16 h-16 sm:w-18 sm:h-18 rounded-2xl p-1 bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center shrink-0 shadow-lg">
+                  <div className={`w-full h-full rounded-xl p-1 flex items-center justify-center relative tile-3d-depth ${asset3D.shadow} bg-gradient-to-b from-white to-slate-100`}>
+                    <img src={catImg} alt={categoryDisplayName} className="w-full h-full object-contain filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.2)]" />
+                    <div className="absolute inset-x-1 top-0.5 h-2 rounded-t-lg bg-gradient-to-b from-white/90 to-transparent pointer-events-none" />
+                  </div>
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/15 backdrop-blur-xs text-amber-300 border border-white/10">
+                      Direct Hyperlocal
+                    </span>
+                    <span className="text-[9px] font-bold text-slate-300">
+                      {sortedItems.length} Available
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-black text-white italic tracking-tight mt-1 truncate">
+                    {categoryDisplayName}
+                  </h3>
+                  <p className="text-[10px] text-slate-300 font-medium line-clamp-1 mt-0.5">
+                    Fast 15-30 min doorstep delivery & direct booking across Khammam
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {searchResult.didYouMean && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-3 flex items-center justify-between text-xs">
             <span className="font-medium text-yellow-900">
@@ -503,52 +613,56 @@ export default function CategoryListing({
             </div>
           )}
           {sortedItems.length > 0 ? (
-            sortedItems.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => onProductClick(item as any)}
-                className="bg-white rounded-[2rem] border border-gray-100 p-3 shadow-sm text-left flex flex-col active:scale-95 transition-all cursor-pointer"
-              >
-                <div className="relative mb-3">
-                  {isAdmin && (
-                    <div className="absolute top-2 left-2 flex gap-1.5 z-[20]">
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingItem({ ...item });
-                          setShowEditModal(true);
-                        }}
-                        className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:scale-90 transition-all shadow-md flex items-center justify-center border border-indigo-500/20"
-                        title="Edit Item"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteCatalogItem(item.id, item.name);
-                        }}
-                        className="p-1.5 bg-rose-500 text-white rounded-lg hover:bg-rose-600 active:scale-90 transition-all shadow-md flex items-center justify-center border border-rose-400/20"
-                        title="Delete Item"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  )}
-                  {item.image && (
+            sortedItems.map((item) => {
+              const asset3D = getCategory3DAsset(item.category || category.id);
+              const isGenericImg = !item.image || item.image.includes('placeholder') || item.image.length < 25;
+              const displayImg = isGenericImg ? asset3D.image : item.image;
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => onProductClick(item as any)}
+                  className="clay-card-3d border border-slate-100/90 hover:border-indigo-200/80 p-3.5 shadow-[0_8px_20px_-4px_rgba(0,0,0,0.1)] text-left flex flex-col active:scale-95 transition-all cursor-pointer group"
+                >
+                  <div className="relative mb-3">
+                    {isAdmin && (
+                      <div className="absolute top-2 left-2 flex gap-1.5 z-[20]">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingItem({ ...item });
+                            setShowEditModal(true);
+                          }}
+                          className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 active:scale-90 transition-all shadow-md flex items-center justify-center border border-indigo-500/20"
+                          title="Edit Item"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteCatalogItem(item.id, item.name);
+                          }}
+                          className="p-1.5 bg-rose-500 text-white rounded-lg hover:bg-rose-600 active:scale-90 transition-all shadow-md flex items-center justify-center border border-rose-400/20"
+                          title="Delete Item"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                     <div 
                       onClick={(e) => {
-                        if (isChitFund) {
+                        if (isChitFund && item.image) {
                           e.stopPropagation();
-                          setLightboxImage({ url: item.image!, name: item.name });
+                          setLightboxImage({ url: item.image, name: item.name });
                         }
                       }}
-                      className={`relative overflow-hidden rounded-2xl cursor-pointer ${isChitFund ? 'cursor-zoom-in' : ''}`}
+                      className={`relative overflow-hidden rounded-2xl cursor-pointer ${isChitFund ? 'cursor-zoom-in' : ''} bg-gradient-to-b from-slate-50 to-slate-100 p-1 border border-white/60 shadow-inner`}
                     >
                       <img 
-                        src={item.image} 
-                        className={`w-full ${isChitFund ? 'h-48 object-contain bg-slate-50 border border-indigo-100/60 p-2' : 'h-40 object-cover'} rounded-2xl transition-all hover:scale-105 duration-300`} 
+                        src={displayImg} 
+                        className={`w-full ${isChitFund ? 'h-48 object-contain bg-slate-50 border border-indigo-100/60 p-2' : isGenericImg ? 'h-40 object-contain p-3 filter drop-shadow-[0_6px_8px_rgba(0,0,0,0.15)]' : 'h-40 object-cover rounded-xl'} rounded-xl transition-all group-hover:scale-105 duration-300`} 
                         alt={item.name} 
+                        loading="lazy"
                       />
                       {isChitFund && (
                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-2 text-center pointer-events-none">
@@ -558,31 +672,30 @@ export default function CategoryListing({
                         </div>
                       )}
                     </div>
-                  )}
-                  <div className="absolute top-2 right-2 flex flex-col gap-2">
-                    <div className="bg-white/90 backdrop-blur-sm p-1.5 rounded-lg flex items-center gap-1 shadow-sm">
-                      <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-                      {(item as Service).rating && (
-                        <span className="text-[10px] font-bold text-gray-700">{(item as Service).rating}</span>
+                    <div className="absolute top-2 right-2 flex flex-col gap-2">
+                      <div className="bg-white/90 backdrop-blur-sm p-1.5 rounded-lg flex items-center gap-1 shadow-sm">
+                        <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
+                        {(item as Service).rating && (
+                          <span className="text-[10px] font-bold text-gray-700">{(item as Service).rating}</span>
+                        )}
+                      </div>
+                      {!isServiceCategory && (
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleCompare(item as Product);
+                          }}
+                          className={`p-1.5 rounded-lg backdrop-blur-sm transition-all shadow-sm ${
+                            compareItems.find(i => i.id === item.id) 
+                            ? 'bg-yellow-400 text-gray-900 border border-yellow-500' 
+                            : 'bg-white/80 text-gray-400 hover:text-gray-900'
+                          }`}
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
-                    {!isServiceCategory && (
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleCompare(item as Product);
-                        }}
-                        className={`p-1.5 rounded-lg backdrop-blur-sm transition-all shadow-sm ${
-                          compareItems.find(i => i.id === item.id) 
-                          ? 'bg-yellow-400 text-gray-900 border border-yellow-500' 
-                          : 'bg-white/80 text-gray-400 hover:text-gray-900'
-                        }`}
-                      >
-                        <ClipboardList className="w-4 h-4" />
-                      </button>
-                    )}
                   </div>
-                </div>
                 <h3 className="font-extrabold text-sm text-gray-900 mb-1 leading-tight">{getLocalizedProductName(item.name, language)}</h3>
                 {(item as Product).hotelName && (
                   <p className="text-[10px] text-gray-400 font-bold mb-1">{(item as Product).hotelName}</p>
@@ -631,7 +744,8 @@ export default function CategoryListing({
                   </div>
                 )}
               </div>
-            ))
+            );
+          })
           ) : (
             <div className="col-span-2 py-20 text-center flex flex-col items-center">
               <div className="bg-gray-100 p-8 rounded-full mb-4">

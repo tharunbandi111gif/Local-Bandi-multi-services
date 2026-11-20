@@ -254,7 +254,7 @@ export default function Settings({
               <div className="p-8 space-y-6">
                 <div className="space-y-4">
                   <p className="text-sm font-bold text-gray-800 leading-relaxed">
-                    At <span className="text-yellow-600 font-black italic">Local Bharath</span>, our mission is to provide pure and healthy services to our community without any cheating or compromise.
+                    At <span className="text-yellow-600 font-black italic">Local Bandi Multi Services</span>, our mission is to provide pure and healthy services to our community without any cheating or compromise.
                   </p>
                   <p className="text-[11px] text-gray-500 font-medium leading-relaxed">
                     We treat every service like we're working for our own family. Whether it's complex construction, professional painting, AC/cooler repairs, or bore motor mechanics—we deliver excellence with honesty.

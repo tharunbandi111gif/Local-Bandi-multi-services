@@ -52,7 +52,7 @@ createRoot(document.getElementById('root')!).render(
         <LanguageProvider>
           <StandaloneAppGate 
             targetApp="customer"
-            appName="Local Bandi Customer App"
+            appName="Local Bandi Multi Services"
             appDescription="Order Food, Groceries, Local Services & Marriage Bureau"
             themeColor="yellow"
           >

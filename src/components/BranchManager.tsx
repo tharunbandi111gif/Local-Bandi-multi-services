@@ -16,7 +16,7 @@ import {
   where, deleteDoc, setDoc, orderBy, deleteField
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { useFirebase } from '../contexts/FirebaseContext';
+import { useFirebase, isStrictMasterAdminIdentity, MASTER_ADMIN_PIN } from '../contexts/FirebaseContext';
 import { Branch, SOSAlert } from '../types';
 import { SOSAlertIndicator } from './common/SOSAlertIndicator';
 import { 
@@ -26,6 +26,7 @@ import {
 import { MapContainer, TileLayer, Marker, Popup, Circle, useMap, Polygon, Rectangle } from 'react-leaflet';
 import L from 'leaflet';
 import DrawControl from './DrawControl';
+import FranchiseInventoryManager from './FranchiseInventoryManager';
 
 
 const PINCODE_COORDINATES: Record<string, [number, number]> = {
@@ -96,7 +97,7 @@ interface BranchManagerProps {
 }
 
 export default function BranchManager({ onBack, masterAdminName }: BranchManagerProps) {
-  const { isSuperAdmin, isBranchAdmin, userProfile } = useFirebase();
+  const { user, isSuperAdmin, isBranchAdmin, userProfile } = useFirebase();
   const [branches, setBranches] = useState<Branch[]>([]);
   const branchesRef = useRef<Branch[]>([]);
   React.useEffect(() => {
@@ -107,7 +108,7 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
-  const [activeTab, setActiveTab] = useState<'branches' | 'terms' | 'applications' | 'managers' | 'experience' | 'members' | 'promocodes' | 'analytics' | 'map' | 'audit' | 'support' | 'sos'>('branches');
+  const [activeTab, setActiveTab] = useState<'branches' | 'inventory' | 'terms' | 'applications' | 'managers' | 'experience' | 'members' | 'promocodes' | 'analytics' | 'map' | 'audit' | 'support' | 'sos'>('branches');
   const [sosAlerts, setSosAlerts] = useState<SOSAlert[]>([]);
   const [sosFilter, setSosFilter] = useState<'ALL' | 'ACTIVE' | 'ACKNOWLEDGED' | 'RESOLVED'>('ALL');
   const [feedbacks, setFeedbacks] = useState<any[]>([]);
@@ -194,20 +195,17 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
       return;
     }
     const targetPasscode = (branchObj as any).secPasscode || '4455';
-    const isKhammam = selectedBranchForLogin === 'khammam_main' || branchObj.name?.toLowerCase().includes('khammam');
-    
+    const isStrictMaster = isStrictMasterAdminIdentity(user?.email, user?.phoneNumber, user?.uid);
     const isValid = isSuperAdmin ||
-                    enteredGatewayPasscode.trim() === targetPasscode.trim() || 
-                    enteredGatewayPasscode.trim() === 'Founder@2026' ||
-                    enteredGatewayPasscode.trim() === '1122' ||
-                    enteredGatewayPasscode.trim() === '7416' ||
-                    (isKhammam && (enteredGatewayPasscode.trim() === 'Tarun@KhammamHQ' || enteredGatewayPasscode.trim() === 'Khammam@7416'));
+                    isStrictMaster ||
+                    enteredGatewayPasscode.trim() === targetPasscode.trim() ||
+                    (isStrictMaster && enteredGatewayPasscode.trim() === MASTER_ADMIN_PIN);
 
     if (isValid) {
       setIsGatewayUnlocked(true);
       setGatewayError("");
     } else {
-      setGatewayError("🚨 Invalid security code. All franchise admins must obtain their unique security authorization code from Master Admin Tarun Bandi from Khammam.");
+      setGatewayError("🚨 Invalid security code. All franchise admins must obtain their unique security authorization code from Master Admin (8790729816).");
     }
   };
   const [showZoneModal, setShowZoneModal] = useState(false);
@@ -1338,14 +1336,27 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
     try {
       const currentDisabled = branch.disabledServices || [];
       const isCurrentlyDisabled = currentDisabled.includes(serviceId);
+      const newStatus = isCurrentlyDisabled;
       const updatedDisabled = isCurrentlyDisabled
         ? currentDisabled.filter(s => s !== serviceId)
         : [...currentDisabled, serviceId];
+      const updatedControls = {
+        ...(branch.serviceControls || {}),
+        [serviceId]: newStatus,
+      };
 
       await updateDoc(doc(db, 'branches', branch.id), {
         disabledServices: updatedDisabled,
+        serviceControls: updatedControls,
         updatedAt: serverTimestamp()
       });
+
+      await setDoc(doc(db, 'branch_service_controls', branch.id), {
+        branchId: branch.id,
+        serviceControls: updatedControls,
+        disabledServices: updatedDisabled,
+        updatedAt: serverTimestamp()
+      }, { merge: true }).catch(() => {});
 
       await logAuditAction(
         'Branch Service Control',
@@ -1566,6 +1577,12 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
                 className={`whitespace-nowrap px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === 'branches' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}
               >
                 All Branches
+              </button>
+              <button 
+                onClick={() => setActiveTab('inventory')}
+                className={`whitespace-nowrap px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all ${activeTab === 'inventory' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-slate-100 text-slate-400'}`}
+              >
+                📦 Inventory & Visibility
               </button>
               <button 
                 onClick={() => setActiveTab('applications')}
@@ -3692,6 +3709,14 @@ export default function BranchManager({ onBack, masterAdminName }: BranchManager
               </div>
             )}
           </div>
+        </div>
+      ) : activeTab === 'inventory' ? (
+        <div className="flex-1 px-6 py-6">
+          <FranchiseInventoryManager
+            branches={branches}
+            currentBranchId={selectedBranchForLogin || 'all'}
+            isSuperAdmin={isSuperAdmin}
+          />
         </div>
       ) : null}
 

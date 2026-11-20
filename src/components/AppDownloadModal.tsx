@@ -14,6 +14,7 @@ export interface AppEntry {
   shortName: string;
   role: string;
   packageId: string;
+  playStoreUrl: string;
   path: string;
   publicUrl: string;
   manifestPath: string;
@@ -34,6 +35,7 @@ export const FIVE_APPS: AppEntry[] = [
     shortName: 'LocalBandi Customer',
     role: 'General Users & Shoppers',
     packageId: 'com.localbandi.customer',
+    playStoreUrl: 'https://play.google.com/store/apps/details?id=com.localbandi.customer',
     path: '/',
     publicUrl: `${PUBLIC_BASE_URL}/`,
     manifestPath: '/manifest.json',
@@ -57,6 +59,7 @@ export const FIVE_APPS: AppEntry[] = [
     shortName: 'LocalBandi Partner',
     role: 'Store Owners & Merchants',
     packageId: 'com.localbandi.vendor',
+    playStoreUrl: 'https://play.google.com/store/apps/details?id=com.localbandi.vendor',
     path: '/vendor.html',
     publicUrl: `${PUBLIC_BASE_URL}/vendor.html`,
     manifestPath: '/manifest-vendor.json',
@@ -80,6 +83,7 @@ export const FIVE_APPS: AppEntry[] = [
     shortName: 'LocalBandi Rider',
     role: 'Drivers & Fleet Riders',
     packageId: 'com.localbandi.delivery',
+    playStoreUrl: 'https://play.google.com/store/apps/details?id=com.localbandi.delivery',
     path: '/delivery.html',
     publicUrl: `${PUBLIC_BASE_URL}/delivery.html`,
     manifestPath: '/manifest-delivery.json',
@@ -103,6 +107,7 @@ export const FIVE_APPS: AppEntry[] = [
     shortName: 'LocalBandi Branch',
     role: 'Regional Franchise & Branch Managers',
     packageId: 'com.localbandi.branch',
+    playStoreUrl: 'https://play.google.com/store/apps/details?id=com.localbandi.branchadmin',
     path: '/branch-admin.html',
     publicUrl: `${PUBLIC_BASE_URL}/branch-admin.html`,
     manifestPath: '/manifest-branch.json',
@@ -126,6 +131,7 @@ export const FIVE_APPS: AppEntry[] = [
     shortName: 'LocalBandi Admin',
     role: 'Super Admins & Founders',
     packageId: 'com.localbandi.admin',
+    playStoreUrl: 'https://play.google.com/store/apps/details?id=com.localbandi.masteradmin',
     path: '/admin.html',
     publicUrl: `${PUBLIC_BASE_URL}/admin.html`,
     manifestPath: '/manifest-admin.json',
@@ -280,14 +286,42 @@ export default function AppDownloadModal({ isOpen, onClose, defaultAppId = 'cust
                 </div>
               </div>
 
-              {/* Action Buttons: 3 Installation / Download Options */}
+              {/* Action Buttons: 4 Installation / Download Options */}
               <div className="pt-2 border-t border-white/5 space-y-3">
                 <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest font-mono">
-                  APK &amp; Install Options
+                  Google Play &amp; Installation Options
                 </h5>
                 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Option 1: PWABuilder 1-Click Cloud APK */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* Option 1: Official Google Play Store Link */}
+                  <div className="p-4 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/30 rounded-2xl flex flex-col justify-between space-y-2 transition-all group">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-black uppercase tracking-wider text-emerald-300">Google Play</span>
+                      <ExternalLink className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-white uppercase">Google Play Store</div>
+                      <p className="text-[9px] text-slate-400 mt-0.5 font-mono truncate">{currentApp.packageId}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <a
+                        href={currentApp.playStoreUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-wider text-center"
+                      >
+                        Open Store
+                      </a>
+                      <button
+                        onClick={() => handleCopy(currentApp.playStoreUrl, `play_${currentApp.id}`)}
+                        className="px-2 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg text-[9px] font-bold border border-white/10"
+                      >
+                        {copiedLink === `play_${currentApp.id}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Option 2: PWABuilder 1-Click Cloud APK */}
                   <a
                     href={currentApp.pwabuilderUrl}
                     target="_blank"
@@ -295,7 +329,7 @@ export default function AppDownloadModal({ isOpen, onClose, defaultAppId = 'cust
                     className="p-4 bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-500/30 rounded-2xl flex flex-col justify-between space-y-2 transition-all group cursor-pointer"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-indigo-300">Option 1</span>
+                      <span className="text-[9px] font-black uppercase tracking-wider text-indigo-300">Cloud Build</span>
                       <ExternalLink className="w-3.5 h-3.5 text-indigo-400 group-hover:scale-110 transition-transform" />
                     </div>
                     <div>
@@ -305,10 +339,10 @@ export default function AppDownloadModal({ isOpen, onClose, defaultAppId = 'cust
                     <span className="text-[9px] font-black text-indigo-400 uppercase tracking-wider">Generate Package &rarr;</span>
                   </a>
 
-                  {/* Option 2: Instant Chrome Native Install */}
+                  {/* Option 3: Instant Chrome Native Install */}
                   <div className="p-4 bg-slate-900 border border-white/10 rounded-2xl flex flex-col justify-between space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400">Option 2</span>
+                      <span className="text-[9px] font-black uppercase tracking-wider text-emerald-400">PWA Native</span>
                       <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
                     </div>
                     <div>
@@ -318,10 +352,10 @@ export default function AppDownloadModal({ isOpen, onClose, defaultAppId = 'cust
                     <span className="text-[9px] font-mono font-bold text-emerald-400">No Store Required</span>
                   </div>
 
-                  {/* Option 3: Terminal Bubblewrap CLI */}
+                  {/* Option 4: Terminal Bubblewrap CLI */}
                   <div className="p-4 bg-slate-900 border border-white/10 rounded-2xl flex flex-col justify-between space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-amber-400">Option 3</span>
+                      <span className="text-[9px] font-black uppercase tracking-wider text-amber-400">CLI TWA</span>
                       <Terminal className="w-3.5 h-3.5 text-amber-400" />
                     </div>
                     <div>

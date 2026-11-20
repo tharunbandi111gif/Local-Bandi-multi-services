@@ -896,7 +896,7 @@ const PropertyChat = ({ isOpen, onClose, property }: { isOpen: boolean, onClose:
 
   useEffect(() => {
     if (isOpen && property && user) {
-      // Chat is with Local Bharath Support regarding this property
+      // Chat is with Local Bandi Multi Services Support regarding this property
       const q = query(
         collection(db, 'support_chats'),
         where('propertyId', '==', property.id),
@@ -983,7 +983,7 @@ const PropertyChat = ({ isOpen, onClose, property }: { isOpen: boolean, onClose:
             </button>
             <div>
                <h3 className="text-sm font-black text-slate-900 truncate max-w-[200px]">{property.title}</h3>
-               <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest italic leading-none">Local Bharath Support</p>
+               <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest italic leading-none">Local Bandi Multi Services Support</p>
             </div>
          </div>
          <div className="flex items-center gap-2">

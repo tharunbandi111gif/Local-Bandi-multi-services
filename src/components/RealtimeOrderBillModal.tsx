@@ -359,7 +359,7 @@ export default function RealtimeOrderBillModal({
                 {/* Footer Note */}
                 <div className="pt-4 border-t border-dashed border-slate-200 text-center text-[10px] text-slate-400 leading-relaxed">
                   <p>This is a computer-generated tax invoice and requires no signature.</p>
-                  <p>Support: <span className="text-slate-600 font-bold">support@localbandi.com</span> &bull; Helpline: <span className="text-slate-600 font-bold">+91 8790729816</span></p>
+                  <p>Support: <span className="text-slate-600 font-bold">support@localbandimultiservices.in</span> &bull; Helpline: <span className="text-slate-600 font-bold">+91 8790729816</span></p>
                 </div>
               </div>
             ) : (

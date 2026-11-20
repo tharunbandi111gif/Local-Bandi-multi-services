@@ -1,8 +1,8 @@
 {
-  "name": "Local Bandi Master Admin",
-  "short_name": "Master Admin",
+  "name": "Local Bandi Multi Services",
+  "short_name": "Local Bandi Multi Services",
   "description": "Local Bandi Executive Admin & Command Center",
-  "id": "com.localbandi.admin",
+  "id": "com.localbandi.masteradmin",
   "start_url": "/admin.html",
   "scope": "/",
   "display": "standalone",

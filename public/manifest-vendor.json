@@ -1,6 +1,6 @@
 {
-  "name": "Local Bandi Vendor Hub",
-  "short_name": "Vendor App",
+  "name": "Local Bandi Multi Services",
+  "short_name": "Local Bandi Multi Services",
   "description": "Local Bandi Merchant & Vendor Partner Portal for orders and catalog management",
   "id": "com.localbandi.vendor",
   "start_url": "/vendor.html",

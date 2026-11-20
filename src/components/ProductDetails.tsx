@@ -9,6 +9,7 @@ import { getLocalizedProductName, getLocalizedProductDescription } from '../util
 import ImageZoom from './ImageZoomModal';
 import { PriceTrackerModal } from './PriceTrackerModal';
 import { isProductTracked } from '../utils/priceTracker';
+import { getCategory3DAsset } from '../utils/category3DAssets';
 
 interface ProductDetailsProps {
   product: Product;
@@ -206,14 +207,21 @@ export default function ProductDetails({
   return (
     <div className="h-full w-full bg-white flex flex-col overflow-y-auto">
       <div className="relative h-2/5 shrink-0 overflow-hidden bg-slate-100">
-        {product.image && (
-          <ImageZoom 
-            src={product.image} 
-            alt={product.name}
-            containerClassName="w-full h-full"
-            className={`w-full h-full ${isChitFund ? 'object-contain bg-slate-50 p-4' : 'object-cover'}`}
-          />
-        )}
+        {(() => {
+          const asset3D = getCategory3DAsset(product.category);
+          const isGeneric = !product.image || product.image.includes('placeholder') || product.image.length < 25;
+          const displayImg = isGeneric ? asset3D.image : product.image;
+          return (
+            <div className={`w-full h-full flex items-center justify-center ${isGeneric ? 'p-8 bg-gradient-to-b from-slate-100 to-slate-200/80' : ''}`}>
+              <ImageZoom 
+                src={displayImg} 
+                alt={product.name}
+                containerClassName="w-full h-full flex items-center justify-center"
+                className={`w-full h-full ${isChitFund || isGeneric ? 'object-contain p-4 filter drop-shadow-[0_10px_15px_rgba(0,0,0,0.2)]' : 'object-cover'}`}
+              />
+            </div>
+          );
+        })()}
         <div className="absolute top-0 inset-x-0 p-6 pt-12 flex items-center justify-between bg-gradient-to-b from-black/40 to-transparent">
           <button onClick={onBack} className="p-2 bg-white/20 backdrop-blur-md rounded-2xl border border-white/30 text-white transition-colors">
             <ArrowLeft className="w-6 h-6" />
@@ -232,9 +240,20 @@ export default function ProductDetails({
       <div className="flex-1 bg-white -mt-10 rounded-t-[3rem] p-8 shadow-2xl relative z-10 space-y-6 pb-32">
         <div>
           <div className="flex items-center justify-between mb-2">
-            <div className="bg-yellow-100 px-3 py-1 rounded-lg">
-              <span className="text-xs font-bold text-yellow-700 uppercase tracking-wider">{product.category}</span>
-            </div>
+            {(() => {
+              const asset3D = getCategory3DAsset(product.category);
+              return (
+                <div className="flex items-center gap-2">
+                  <div className={`px-3 py-1 rounded-xl bg-gradient-to-r ${asset3D.gradient} text-white shadow-sm flex items-center gap-1.5`}>
+                    <span className="text-xs">{asset3D.emoji}</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider">{product.category}</span>
+                  </div>
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                    Direct Hyperlocal
+                  </span>
+                </div>
+              );
+            })()}
             <div className="flex items-center gap-1">
               <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
               <span className="font-black text-gray-900">

@@ -12,7 +12,8 @@ import {
   Cell,
   LineChart,
   Line,
-  Legend
+  Legend,
+  ComposedChart
 } from 'recharts';
 import { 
   TrendingUp, 
@@ -47,7 +48,7 @@ export const VendorAnalyticsTab: React.FC<VendorAnalyticsTabProps> = ({
 }) => {
   // Default to 30 days as requested by user
   const [timeRange, setTimeRange] = useState<'7d' | '14d' | '30d'>('30d');
-  const [activeMetric, setActiveMetric] = useState<'revenue' | 'orders' | 'growth'>('revenue');
+  const [activeMetric, setActiveMetric] = useState<'combined' | 'revenue' | 'orders' | 'growth'>('combined');
 
   const storeName = profile?.businessName || profile?.storeName || 'Verified Merchant Store';
 
@@ -348,10 +349,20 @@ export const VendorAnalyticsTab: React.FC<VendorAnalyticsTabProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto bg-gray-50 p-1 rounded-2xl border border-gray-100">
+          <div className="flex items-center gap-1.5 self-start sm:self-auto bg-gray-50 p-1 rounded-2xl border border-gray-100 overflow-x-auto max-w-full">
+            <button
+              onClick={() => setActiveMetric('combined')}
+              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition cursor-pointer whitespace-nowrap ${
+                activeMetric === 'combined'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              Volume & Growth
+            </button>
             <button
               onClick={() => setActiveMetric('revenue')}
-              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition cursor-pointer whitespace-nowrap ${
                 activeMetric === 'revenue'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-gray-500 hover:text-gray-900'
@@ -361,7 +372,7 @@ export const VendorAnalyticsTab: React.FC<VendorAnalyticsTabProps> = ({
             </button>
             <button
               onClick={() => setActiveMetric('orders')}
-              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition cursor-pointer whitespace-nowrap ${
                 activeMetric === 'orders'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-gray-500 hover:text-gray-900'
@@ -371,13 +382,13 @@ export const VendorAnalyticsTab: React.FC<VendorAnalyticsTabProps> = ({
             </button>
             <button
               onClick={() => setActiveMetric('growth')}
-              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition cursor-pointer ${
+              className={`px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition cursor-pointer whitespace-nowrap ${
                 activeMetric === 'growth'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-gray-500 hover:text-gray-900'
               }`}
             >
-              Revenue Growth
+              Growth Curve
             </button>
           </div>
         </div>
@@ -385,7 +396,66 @@ export const VendorAnalyticsTab: React.FC<VendorAnalyticsTabProps> = ({
         {/* Recharts Visualization */}
         <div className="h-80 w-full pt-2">
           <ResponsiveContainer width="100%" height="100%">
-            {activeMetric === 'growth' ? (
+            {activeMetric === 'combined' ? (
+              <ComposedChart data={dailyData} margin={{ top: 10, right: 15, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="combRevGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.25} />
+                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis 
+                  dataKey="displayDate" 
+                  tickLine={false} 
+                  axisLine={{ stroke: '#e2e8f0' }} 
+                  tick={{ fontSize: 9, fontWeight: 700, fill: '#64748b' }}
+                  interval={Math.floor(daysCount / 8)}
+                />
+                <YAxis 
+                  yAxisId="left"
+                  tickLine={false} 
+                  axisLine={false} 
+                  tick={{ fontSize: 9, fontWeight: 700, fill: '#6366f1' }}
+                  allowDecimals={false}
+                />
+                <YAxis 
+                  yAxisId="right"
+                  orientation="right"
+                  tickLine={false} 
+                  axisLine={false} 
+                  tick={{ fontSize: 9, fontWeight: 700, fill: '#10b981' }}
+                  tickFormatter={(val) => `₹${val >= 1000 ? `${(val/1000).toFixed(0)}k` : val}`}
+                />
+                <Tooltip 
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      return (
+                        <div className="bg-gray-900 text-white p-3 rounded-2xl shadow-xl border border-gray-800 text-xs">
+                          <p className="font-black text-amber-400 uppercase tracking-widest text-[9px] mb-1">
+                            {data.shortDay}, {data.displayDate}
+                          </p>
+                          <p className="text-xs font-black text-indigo-300">
+                            Orders Volume: {data.ordersCount} Orders
+                          </p>
+                          <p className="text-sm font-black text-emerald-400 mt-0.5">
+                            Daily Revenue: ₹{data.revenue.toLocaleString()}
+                          </p>
+                          <p className="text-[10px] text-gray-400 mt-1">
+                            30-Day Cumulative: ₹{data.cumulativeRevenue.toLocaleString()}
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: 10, fontWeight: 700, paddingTop: 8 }} />
+                <Bar yAxisId="left" dataKey="ordersCount" name="Daily Orders Volume" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="revenue" name="Daily Revenue (₹)" stroke="#10b981" strokeWidth={3} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 6 }} />
+              </ComposedChart>
+            ) : activeMetric === 'growth' ? (
               <AreaChart data={cumulativeRevenueData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="growthGradient" x1="0" y1="0" x2="0" y2="1">
